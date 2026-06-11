@@ -1,0 +1,486 @@
+package com.jpassbolt.api.controller;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.jpassbolt.api.dto.AuthDto;
+import com.jpassbolt.api.model.AuthenticationToken;
+import com.jpassbolt.api.model.GpgKey;
+import com.jpassbolt.api.model.User;
+import com.jpassbolt.api.repository.AuthenticationTokenRepository;
+import com.jpassbolt.api.repository.GpgKeyRepository;
+import com.jpassbolt.api.repository.UserRepository;
+import com.jpassbolt.api.service.GpgService;
+import com.jpassbolt.api.util.GpgTestHelper;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.MediaType;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
+
+import java.time.LocalDateTime;
+import java.util.UUID;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
+
+/**
+ * Compatibility tests for GPG authentication.
+ * These tests are ported from Passbolt PHP AuthLoginControllerTest.php
+ * to verify our Java implementation matches the original behavior.
+ */
+@SpringBootTest
+@AutoConfigureMockMvc
+class AuthControllerCompatibilityTest {
+
+    @Autowired
+    private MockMvc mockMvc;
+
+    @Autowired
+    private UserRepository userRepository;
+
+    @Autowired
+    private GpgKeyRepository gpgKeyRepository;
+
+    @Autowired
+    private AuthenticationTokenRepository tokenRepository;
+
+    @Autowired
+    private ObjectMapper objectMapper;
+
+    @Autowired
+    private GpgService gpgService;
+
+    private User activeUser;
+    private GpgKey activeUserGpgKey;
+    private String testFingerprint;
+
+    @BeforeEach
+    void setUp() {
+        tokenRepository.deleteAll();
+        gpgKeyRepository.deleteAll();
+        userRepository.deleteAll();
+
+        // Create active test user with server's key (for testing)
+        String serverPublicKey = gpgService.getServerPublicKey();
+        testFingerprint = gpgService.getServerKeyFingerprint();
+        String serverKeyId = GpgTestHelper.fingerprintToKeyId(testFingerprint);
+
+        activeUser = new User();
+        activeUser.setUsername("ada@passbolt.com");
+        activeUser.setRoleId("user");
+        activeUser.setActive(true);
+        activeUser.setDeleted(false);
+        userRepository.save(activeUser);
+
+        activeUserGpgKey = new GpgKey();
+        activeUserGpgKey.setUserId(activeUser.getId());
+        activeUserGpgKey.setKeyId(serverKeyId);
+        activeUserGpgKey.setFingerprint(testFingerprint);
+        activeUserGpgKey.setUid("Ada Lovelace <ada@passbolt.com>");
+        activeUserGpgKey.setArmoredKey(serverPublicKey);
+        activeUserGpgKey.setType("RSA");
+        activeUserGpgKey.setBits(4096);
+        activeUserGpgKey.setDeleted(false);
+        gpgKeyRepository.save(activeUserGpgKey);
+    }
+
+    // ==================== HEADER TESTS ====================
+
+    @Nested
+    @DisplayName("GPGAuth Headers Tests")
+    class HeaderTests {
+
+        /**
+         * PHP: testAuthLoginController_GetHeaders
+         * Check that GPGAuth headers are set on GET /auth/login
+         */
+        @Test
+        @DisplayName("GET /auth/verify.json should return GPGAuth headers")
+        void testVerifyEndpointReturnsHeaders() throws Exception {
+            mockMvc.perform(get("/auth/verify.json"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.body.fingerprint").exists())
+                    .andExpect(jsonPath("$.body.keydata").exists())
+                    .andExpect(jsonPath("$.header.status").value("success"));
+        }
+
+        /**
+         * PHP: testAuthLoginController_GetHeadersPost
+         * Check that POST returns proper progress header
+         */
+        @Test
+        @DisplayName("POST /auth/login.json should return X-GPGAuth-Progress header")
+        void testLoginPostReturnsProgressHeader() throws Exception {
+            AuthDto.LoginRequest request = createLoginRequest(testFingerprint, null, null);
+
+            mockMvc.perform(post("/auth/login.json")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(request)))
+                    .andExpect(status().isOk())
+                    .andExpect(header().exists("X-GPGAuth-Progress"));
+        }
+    }
+
+    // ==================== USER STATUS TESTS ====================
+
+    @Nested
+    @DisplayName("User Status Tests")
+    class UserStatusTests {
+
+        /**
+         * PHP: testRecoverAuthLoginController_Error_UserLoginAsDeletedUser
+         * Test login with deleted user account
+         */
+        @Test
+        @DisplayName("Deleted user login should return error with debug header")
+        void testDeletedUserLogin() throws Exception {
+            // Mark user as deleted
+            activeUser.setDeleted(true);
+            userRepository.save(activeUser);
+
+            AuthDto.LoginRequest request = createLoginRequest(testFingerprint, null, null);
+
+            mockMvc.perform(post("/auth/login.json")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(request)))
+                    .andExpect(status().isOk())
+                    .andExpect(header().string("X-GPGAuth-Error", "true"))
+                    .andExpect(jsonPath("$.header.status").value("error"));
+        }
+
+        /**
+         * PHP: testAuthLoginController_Error_UserLoginAsDisabledUser
+         * Test login with disabled user account
+         */
+        @Test
+        @DisplayName("Disabled user login should return error")
+        void testDisabledUserLogin() throws Exception {
+            // Mark user as disabled
+            activeUser.setDisabled(LocalDateTime.now());
+            userRepository.save(activeUser);
+
+            AuthDto.LoginRequest request = createLoginRequest(testFingerprint, null, null);
+
+            mockMvc.perform(post("/auth/login.json")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(request)))
+                    .andExpect(status().isOk())
+                    .andExpect(header().string("X-GPGAuth-Error", "true"));
+        }
+
+        /**
+         * PHP: testAuthLoginController_Error_UserLoginAsInactiveUser
+         * Test login with inactive user account
+         */
+        @Test
+        @DisplayName("Inactive user login should return error")
+        void testInactiveUserLogin() throws Exception {
+            // Mark user as inactive
+            activeUser.setActive(false);
+            userRepository.save(activeUser);
+
+            AuthDto.LoginRequest request = createLoginRequest(testFingerprint, null, null);
+
+            mockMvc.perform(post("/auth/login.json")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(request)))
+                    .andExpect(status().isOk())
+                    .andExpect(header().string("X-GPGAuth-Error", "true"));
+        }
+    }
+
+    // ==================== FINGERPRINT VALIDATION TESTS ====================
+
+    @Nested
+    @DisplayName("Fingerprint Validation Tests")
+    class FingerprintTests {
+
+        /**
+         * PHP: testAuthLoginController_AllStagesFingerprint
+         * Test authentication with various fingerprint formats
+         */
+        @ParameterizedTest
+        @ValueSource(strings = {
+                "", // empty
+                "XXX", // too short
+                "333788B5464B797FDF10A98F2FE96B47C7FF421B", // non-existent
+                "333788B5464B797FDF10A98F2FE96B47C7FF421AB", // 41 chars
+                "333788B5464B797FDF10A98F2FE96\\47C7FF41AB" // invalid chars
+        })
+        @DisplayName("Invalid fingerprint should return error")
+        void testInvalidFingerprints(String invalidFingerprint) throws Exception {
+            AuthDto.LoginRequest request = createLoginRequest(invalidFingerprint, null, null);
+
+            MvcResult result = mockMvc.perform(post("/auth/login.json")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(request)))
+                    .andExpect(status().isOk())
+                    .andExpect(header().string("X-GPGAuth-Authenticated", "false"))
+                    .andExpect(header().string("X-GPGAuth-Error", "true"))
+                    .andReturn();
+
+            // Should not reach stage2 or complete
+            String progress = result.getResponse().getHeader("X-GPGAuth-Progress");
+            assertThat(progress).isNotEqualTo("complete");
+        }
+
+        /**
+         * PHP: testAuthLoginController_AllStagesFingerprint (valid cases)
+         * Valid fingerprint should proceed to stage1
+         */
+        @Test
+        @DisplayName("Valid fingerprint (uppercase) should proceed to stage1")
+        void testValidFingerprintUppercase() throws Exception {
+            AuthDto.LoginRequest request = createLoginRequest(testFingerprint.toUpperCase(), null, null);
+
+            mockMvc.perform(post("/auth/login.json")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(request)))
+                    .andExpect(status().isOk())
+                    .andExpect(header().string("X-GPGAuth-Authenticated", "false"))
+                    .andExpect(header().string("X-GPGAuth-Progress", "stage1"))
+                    .andExpect(header().doesNotExist("X-GPGAuth-Error"));
+        }
+
+        @Test
+        @DisplayName("Valid fingerprint (lowercase) should proceed to stage1")
+        void testValidFingerprintLowercase() throws Exception {
+            AuthDto.LoginRequest request = createLoginRequest(testFingerprint.toLowerCase(), null, null);
+
+            mockMvc.perform(post("/auth/login.json")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(request)))
+                    .andExpect(status().isOk())
+                    .andExpect(header().string("X-GPGAuth-Progress", "stage1"));
+        }
+    }
+
+    // ==================== STAGE 1 TESTS ====================
+
+    @Nested
+    @DisplayName("Stage 1 (User Token) Tests")
+    class Stage1Tests {
+
+        /**
+         * PHP: testAuthLoginController_Stage1UserToken
+         * Stage 1: Authenticate user - verify token format
+         */
+        @Test
+        @DisplayName("Stage 1 should return encrypted user token in correct format")
+        void testStage1ReturnsValidToken() throws Exception {
+            AuthDto.LoginRequest request = createLoginRequest(testFingerprint, null, null);
+
+            MvcResult result = mockMvc.perform(post("/auth/login.json")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(request)))
+                    .andExpect(status().isOk())
+                    .andExpect(header().string("X-GPGAuth-Authenticated", "false"))
+                    .andExpect(header().string("X-GPGAuth-Progress", "stage1"))
+                    .andExpect(header().exists("X-GPGAuth-User-Auth-Token"))
+                    .andReturn();
+
+            // Get and decode the encrypted token
+            String encodedToken = result.getResponse().getHeader("X-GPGAuth-User-Auth-Token");
+            assertThat(encodedToken).isNotEmpty();
+
+            String encryptedNonce = java.net.URLDecoder.decode(encodedToken, java.nio.charset.StandardCharsets.UTF_8);
+
+            // Decrypt using server's key (since test user uses server key)
+            String decryptedNonce = gpgService.decrypt(encryptedNonce);
+
+            // Verify nonce format: gpgauthv1.3.0|36|{UUID}|gpgauthv1.3.0
+            assertThat(GpgTestHelper.isValidNonce(decryptedNonce))
+                    .as("Decrypted nonce should match Passbolt format: " + decryptedNonce)
+                    .isTrue();
+
+            // Verify UUID can be extracted
+            String uuid = GpgTestHelper.extractUuidFromNonce(decryptedNonce);
+            assertThat(uuid).isNotNull();
+
+            // Verify token is stored in database
+            assertThat(tokenRepository.findByToken(uuid)).isPresent();
+        }
+    }
+
+    // ==================== STAGE 2 TESTS ====================
+
+    @Nested
+    @DisplayName("Stage 2 (Complete Authentication) Tests")
+    class Stage2Tests {
+
+        /**
+         * PHP: testAuthLoginController_Stage2_Success
+         * Stage 2: Complete authentication successfully
+         */
+        @Test
+        @DisplayName("Stage 2 with valid token should complete authentication")
+        void testStage2Success() throws Exception {
+            // Create authentication token directly
+            String tokenUuid = UUID.randomUUID().toString();
+            AuthenticationToken authToken = new AuthenticationToken();
+            authToken.setUserId(activeUser.getId());
+            authToken.setToken(tokenUuid);
+            authToken.setType("login");
+            authToken.setActive(true);
+            tokenRepository.save(authToken);
+
+            // Create valid nonce with the token
+            String validNonce = GpgTestHelper.formatNonce(tokenUuid);
+
+            AuthDto.LoginRequest request = createLoginRequest(testFingerprint, null, validNonce);
+
+            mockMvc.perform(post("/auth/login.json")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(request)))
+                    .andExpect(status().isOk())
+                    .andExpect(header().string("X-GPGAuth-Authenticated", "true"))
+                    .andExpect(header().string("X-GPGAuth-Progress", "complete"))
+                    .andExpect(header().exists("Authorization"))
+                    .andExpect(jsonPath("$.header.status").value("success"))
+                    .andExpect(jsonPath("$.body.user.username").value("ada@passbolt.com"));
+
+            // Verify token is now inactive
+            AuthenticationToken updatedToken = tokenRepository.findByToken(tokenUuid).orElseThrow();
+            assertThat(updatedToken.getActive()).isFalse();
+        }
+
+        /**
+         * PHP: testAuthLoginController_Stage2_ErrorInvalidUserToken
+         * Stage 2: Invalid token format should fail
+         */
+        @ParameterizedTest
+        @ValueSource(strings = {
+                "gpgauthv1.3.0|36|foo", // incomplete
+                "invalid-token", // wrong format
+                "gpgauthv1.2.0|36|12345678-1234-1234-1234-123456789012|gpgauthv1.3.0" // wrong version
+        })
+        @DisplayName("Stage 2 with invalid token format should fail")
+        void testStage2InvalidTokenFormat(String invalidToken) throws Exception {
+            AuthDto.LoginRequest request = createLoginRequest(testFingerprint, null, invalidToken);
+
+            mockMvc.perform(post("/auth/login.json")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(request)))
+                    .andExpect(status().isOk())
+                    .andExpect(header().string("X-GPGAuth-Authenticated", "false"))
+                    .andExpect(header().string("X-GPGAuth-Error", "true"));
+        }
+
+        /**
+         * Test Stage 2 with non-existent token
+         */
+        @Test
+        @DisplayName("Stage 2 with non-existent token should fail")
+        void testStage2NonExistentToken() throws Exception {
+            String nonExistentUuid = UUID.randomUUID().toString();
+            String validFormatNonce = GpgTestHelper.formatNonce(nonExistentUuid);
+
+            AuthDto.LoginRequest request = createLoginRequest(testFingerprint, null, validFormatNonce);
+
+            mockMvc.perform(post("/auth/login.json")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(request)))
+                    .andExpect(status().isOk())
+                    .andExpect(header().string("X-GPGAuth-Authenticated", "false"))
+                    .andExpect(header().string("X-GPGAuth-Error", "true"));
+        }
+
+        /**
+         * Test Stage 2 with already used (inactive) token
+         */
+        @Test
+        @DisplayName("Stage 2 with inactive token should fail")
+        void testStage2InactiveToken() throws Exception {
+            // Create inactive authentication token
+            String tokenUuid = UUID.randomUUID().toString();
+            AuthenticationToken authToken = new AuthenticationToken();
+            authToken.setUserId(activeUser.getId());
+            authToken.setToken(tokenUuid);
+            authToken.setType("login");
+            authToken.setActive(false); // Already used
+            tokenRepository.save(authToken);
+
+            String validNonce = GpgTestHelper.formatNonce(tokenUuid);
+
+            AuthDto.LoginRequest request = createLoginRequest(testFingerprint, null, validNonce);
+
+            mockMvc.perform(post("/auth/login.json")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(request)))
+                    .andExpect(status().isOk())
+                    .andExpect(header().string("X-GPGAuth-Authenticated", "false"))
+                    .andExpect(header().string("X-GPGAuth-Error", "true"));
+        }
+    }
+
+    // ==================== FULL FLOW TESTS ====================
+
+    @Nested
+    @DisplayName("Full Authentication Flow Tests")
+    class FullFlowTests {
+
+        /**
+         * Complete Stage 1 + Stage 2 flow
+         */
+        @Test
+        @DisplayName("Complete Stage 1 + Stage 2 flow should authenticate user")
+        void testCompleteAuthenticationFlow() throws Exception {
+            // Stage 1: Get encrypted token
+            AuthDto.LoginRequest stage1Request = createLoginRequest(testFingerprint, null, null);
+
+            MvcResult stage1Result = mockMvc.perform(post("/auth/login.json")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(stage1Request)))
+                    .andExpect(status().isOk())
+                    .andExpect(header().string("X-GPGAuth-Progress", "stage1"))
+                    .andReturn();
+
+            // Decrypt the token
+            String encodedToken = stage1Result.getResponse().getHeader("X-GPGAuth-User-Auth-Token");
+            String encryptedNonce = java.net.URLDecoder.decode(encodedToken, java.nio.charset.StandardCharsets.UTF_8);
+            String decryptedNonce = gpgService.decrypt(encryptedNonce);
+
+            // Stage 2: Complete authentication
+            AuthDto.LoginRequest stage2Request = createLoginRequest(testFingerprint, null, decryptedNonce);
+
+            mockMvc.perform(post("/auth/login.json")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(stage2Request)))
+                    .andExpect(status().isOk())
+                    .andExpect(header().string("X-GPGAuth-Authenticated", "true"))
+                    .andExpect(header().string("X-GPGAuth-Progress", "complete"))
+                    .andExpect(header().exists("Authorization"))
+                    .andExpect(jsonPath("$.body.user.username").value("ada@passbolt.com"));
+        }
+    }
+
+    // ==================== HELPER METHODS ====================
+
+    private AuthDto.LoginRequest createLoginRequest(String keyId, String serverVerifyToken, String userTokenResult) {
+        AuthDto.LoginRequest request = new AuthDto.LoginRequest();
+        AuthDto.DataWrapper data = new AuthDto.DataWrapper();
+        AuthDto.GpgAuth gpgAuth = new AuthDto.GpgAuth();
+
+        if (keyId != null) {
+            gpgAuth.setKeyid(keyId);
+        }
+        if (serverVerifyToken != null) {
+            gpgAuth.setServerVerifyToken(serverVerifyToken);
+        }
+        if (userTokenResult != null) {
+            gpgAuth.setUserTokenResult(userTokenResult);
+        }
+
+        data.setGpgAuth(gpgAuth);
+        request.setData(data);
+        return request;
+    }
+}

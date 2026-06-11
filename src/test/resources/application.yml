@@ -1,0 +1,24 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;MODE=MySQL
+    username: sa
+    password:
+    driver-class-name: org.h2.Driver
+  jpa:
+    database-platform: org.hibernate.dialect.H2Dialect
+    hibernate:
+      ddl-auto: create-drop
+    properties:
+      hibernate:
+        format_sql: true
+  
+jpassbolt:
+  jwt:
+    secret: REDACTED-LEGACY-HMAC
+    expiration: 3600000
+  gpg:
+    server-key:
+      private-location: classpath:gpg/server_private.asc
+      public-location: classpath:gpg/server_public.asc
+      passphrase: password
+

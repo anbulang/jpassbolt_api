@@ -1,0 +1,35 @@
+server:
+  port: 8080
+  servlet:
+    context-path: /api
+
+spring:
+  application:
+    name: jpassbolt_api
+  datasource:
+    url: jdbc:mysql://REDACTED-DB-HOST:3307/jpassbolt?useSSL=false&serverTimezone=UTC&characterEncoding=UTF-8&allowPublicKeyRetrieval=true
+    username: root
+    password: REDACTED-ROTATED-DB-PW
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MySQLDialect
+        format_sql: true
+  
+logging:
+  level:
+    org.springframework.web: DEBUG
+    com.jpassbolt.api: DEBUG
+
+jpassbolt:
+  jwt:
+    secret: REDACTED-LEGACY-HMAC
+    expiration: 3600000 # 1 hour
+  gpg:
+    server-key:
+      private-location: classpath:gpg/server_private.asc
+      public-location: classpath:gpg/server_public.asc
+      passphrase: password
