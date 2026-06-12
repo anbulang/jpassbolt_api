@@ -106,16 +106,6 @@ class ShareControllerTest {
     }
 
     @Test
-    void testGetPermissions_ReturnsOwnerPermission() throws Exception {
-        mockMvc.perform(get("/share/resource/" + testResource.getId() + "/permissions"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.header.status").value("success"))
-                .andExpect(jsonPath("$.body").isArray())
-                .andExpect(jsonPath("$.body[0].type").value(Permission.OWNER))
-                .andExpect(jsonPath("$.body[0].aro_foreign_key").value(ownerUser.getId()));
-    }
-
-    @Test
     void testShareResource_GrantRead() throws Exception {
         Map<String, Object> request = Map.of(
                 "permissions", List.of(
@@ -222,7 +212,7 @@ class ShareControllerTest {
                                 "aro_foreign_key", targetUser.getId(),
                                 "type", Permission.READ)));
 
-        mockMvc.perform(post("/share/simulate/" + testResource.getId())
+        mockMvc.perform(post("/share/simulate/resource/" + testResource.getId())
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isOk())

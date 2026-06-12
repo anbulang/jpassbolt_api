@@ -31,6 +31,19 @@ public interface PermissionRepository extends JpaRepository<Permission, String> 
         Optional<Permission> findByAcoForeignKeyAndAroForeignKey(String acoForeignKey, String aroForeignKey);
 
         /**
+         * Locate a permission by id scoped to its ACO (PHP getPermission does
+         * the same id + aco_foreign_key lookup, preventing cross-resource id
+         * injection in share payloads).
+         */
+        Optional<Permission> findByIdAndAcoForeignKey(String id, String acoForeignKey);
+
+        /**
+         * All permission rows of an ACO for one ARO kind ("User" or "Group") —
+         * used by getUsersIdsHavingAccessTo to fan groups out to their members.
+         */
+        List<Permission> findByAcoForeignKeyAndAro(String acoForeignKey, String aro);
+
+        /**
          * Check if a user has at least the specified permission level on a resource.
          */
         @Query("SELECT CASE WHEN COUNT(p) > 0 THEN true ELSE false END FROM Permission p " +
