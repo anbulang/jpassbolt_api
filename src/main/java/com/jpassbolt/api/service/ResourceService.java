@@ -4,6 +4,7 @@ import com.jpassbolt.api.dto.ResourceDto;
 import com.jpassbolt.api.model.Permission;
 import com.jpassbolt.api.model.Resource;
 import com.jpassbolt.api.model.Secret;
+import com.jpassbolt.api.repository.FavoriteRepository;
 import com.jpassbolt.api.repository.PermissionRepository;
 import com.jpassbolt.api.repository.ResourceRepository;
 import com.jpassbolt.api.repository.SecretRepository;
@@ -27,6 +28,7 @@ public class ResourceService {
     private final ResourceRepository resourceRepository;
     private final SecretRepository secretRepository;
     private final PermissionRepository permissionRepository;
+    private final FavoriteRepository favoriteRepository;
 
     /**
      * Get all non-deleted resources that the user has at least READ access to.
@@ -182,6 +184,9 @@ public class ResourceService {
                     resource.setDeleted(true);
                     resource.setModifiedBy(userId);
                     resourceRepository.save(resource);
+                    // Cascade: hard-delete favorites of a soft-deleted resource
+                    // (PHP ResourcesTable::softDelete), same transaction.
+                    favoriteRepository.deleteByForeignKey(id);
                     return true;
                 })
                 .orElse(false);

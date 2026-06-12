@@ -33,3 +33,20 @@ jpassbolt:
       private-location: classpath:gpg/server_private.asc
       public-location: classpath:gpg/server_public.asc
       passphrase: password
+  version: 4.9.0
+  healthcheck:
+    index-endpoint-enabled: true
+  settings:
+    full-base-url: http://localhost:8080
+    edition: ce
+    version-number: "5.7.2"
+    version-name: "Gnossienne No. 1"
+    privacy-policy-url: ""
+    terms-url: https://www.passbolt.com/terms
+    plugins:
+      jwtAuthentication: true
+      previewPassword: true
+      export: false
+      import: false
+      mobile: false
+      desktop: false

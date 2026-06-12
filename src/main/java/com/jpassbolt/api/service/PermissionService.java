@@ -3,6 +3,7 @@ package com.jpassbolt.api.service;
 import com.jpassbolt.api.model.Permission;
 import com.jpassbolt.api.model.Resource;
 import com.jpassbolt.api.model.Secret;
+import com.jpassbolt.api.repository.FavoriteRepository;
 import com.jpassbolt.api.repository.PermissionRepository;
 import com.jpassbolt.api.repository.ResourceRepository;
 import com.jpassbolt.api.repository.SecretRepository;
@@ -25,6 +26,7 @@ public class PermissionService {
     private final PermissionRepository permissionRepository;
     private final ResourceRepository resourceRepository;
     private final SecretRepository secretRepository;
+    private final FavoriteRepository favoriteRepository;
 
     /**
      * Get all permissions for a resource.
@@ -126,12 +128,18 @@ public class PermissionService {
             List<Map<String, String>> secrets) {
         validateShareRequest(resourceId, userId);
 
+        // ARO user ids whose permission gets deleted in this call — needed
+        // afterwards to clean up favorites of users who lost access
+        // (PHP ResourcesTable::deleteLostAccessFavorites).
+        Set<String> removedAroUserIds = new HashSet<>();
+
         for (Map<String, Object> change : permissionChanges) {
             String aroForeignKey = (String) change.get("aro_foreign_key");
             String aro = (String) change.getOrDefault("aro", Permission.USER_ARO);
             boolean isDelete = change.containsKey("delete") && Boolean.TRUE.equals(change.get("delete"));
 
             if (isDelete) {
+                removedAroUserIds.add(aroForeignKey);
                 // Remove permission
                 permissionRepository.findByAcoForeignKeyAndAroForeignKey(resourceId, aroForeignKey)
                         .ifPresent(permissionRepository::delete);
@@ -196,6 +204,15 @@ public class PermissionService {
                 .anyMatch(p -> p.getType() == Permission.OWNER);
         if (!hasOwner) {
             throw new IllegalStateException("Cannot remove all owners from a resource.");
+        }
+
+        // Cascade: hard-delete favorites of users who lost access through this
+        // share operation (PHP ResourcesTable::deleteLostAccessFavorites).
+        for (String affectedUserId : removedAroUserIds) {
+            if (!permissionRepository.userHasAccess(resourceId, affectedUserId, Permission.READ)) {
+                favoriteRepository.findByUserIdAndForeignKey(affectedUserId, resourceId)
+                        .ifPresent(favoriteRepository::delete);
+            }
         }
     }
 

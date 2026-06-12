@@ -1,6 +1,7 @@
 spring:
   datasource:
-    url: jdbc:h2:mem:jpassbolt;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;MODE=MySQL
+    # NON_KEYWORDS: organization_settings.value and the future groups table collide with H2 reserved words
+    url: jdbc:h2:mem:jpassbolt;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;MODE=MySQL;NON_KEYWORDS=GROUPS,VALUE
     username: sa
     password:
     driver-class-name: org.h2.Driver

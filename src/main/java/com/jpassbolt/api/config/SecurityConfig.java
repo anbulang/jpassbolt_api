@@ -39,7 +39,15 @@ public class SecurityConfig {
                                 .sessionManagement(session -> session
                                                 .sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                                 .authorizeHttpRequests(auth -> auth
-                                                .requestMatchers("/auth/**", "/health-check").permitAll()
+                                                // Servlet-internal paths (context-path /api not included).
+                                                // - /healthcheck/status*: public liveness probe (old /health-check removed with controller rewrite)
+                                                // - /settings*: anonymous callers get the reduced guest view
+                                                // - /avatars/view/** ONLY (not /avatars/**): <img src> loads carry no JWT
+                                                .requestMatchers("/auth/**",
+                                                                "/healthcheck/status", "/healthcheck/status.json",
+                                                                "/settings", "/settings.json",
+                                                                "/avatars/view/**")
+                                                .permitAll()
                                                 .anyRequest().authenticated())
                                 .addFilterBefore(jwtAuthenticationFilter,
                                                 UsernamePasswordAuthenticationFilter.class);

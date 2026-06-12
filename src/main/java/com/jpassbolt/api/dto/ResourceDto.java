@@ -80,6 +80,12 @@ public class ResourceDto {
 
         // Optionally include secrets in response
         private List<SecretResponse> secrets;
+
+        // Optionally include the current user's favorite (contain[favorite]=1);
+        // null when not favorited. Kept at Jackson default (always serialized,
+        // "favorite": null) to match PHP contain semantics — the spec allows it
+        // (favorite is not in the resource schema's required list).
+        private FavoriteDto.Response favorite;
     }
 
     @Data

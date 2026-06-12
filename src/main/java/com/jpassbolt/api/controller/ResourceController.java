@@ -1,13 +1,16 @@
 package com.jpassbolt.api.controller;
 
+import com.jpassbolt.api.dto.FavoriteDto;
 import com.jpassbolt.api.dto.ResourceDto;
 import com.jpassbolt.api.exception.PassboltApiException;
+import com.jpassbolt.api.model.Favorite;
 import com.jpassbolt.api.model.Permission;
 import com.jpassbolt.api.model.Resource;
 import com.jpassbolt.api.model.Secret;
 import com.jpassbolt.api.model.User;
 import com.jpassbolt.api.repository.PermissionRepository;
 import com.jpassbolt.api.repository.UserRepository;
+import com.jpassbolt.api.service.FavoriteService;
 import com.jpassbolt.api.service.ResourceService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -26,27 +29,64 @@ import java.util.stream.Collectors;
 /**
  * ResourceController provides REST endpoints for managing password resources.
  * All endpoints enforce permission-based access control.
+ *
+ * Note on mappings: no class-level @RequestMapping. With Boot 3's
+ * PathPatternParser, a class-level "/resources" combined with a method-level
+ * ".json" yields "/resources/.json" (NOT "/resources.json"), so the official
+ * plugin's suffixed URLs would 404. Full method-level paths avoid that.
  */
 @Slf4j
 @RestController
-@RequestMapping("/resources")
 @RequiredArgsConstructor
 public class ResourceController {
 
         private final ResourceService resourceService;
+        private final FavoriteService favoriteService;
         private final UserRepository userRepository;
         private final PermissionRepository permissionRepository;
 
         /**
          * GET /resources.json
          * Returns all non-deleted resources the current user has READ access to.
+         * Supports filter[is-favorite] (OpenAPI filterIsFavorite) and
+         * contain[favorite] (OpenAPI containFavorite, enum [0,1]).
          */
-        @GetMapping(value = { "", ".json" })
-        public ResponseEntity<Map<String, Object>> getAllResources() {
+        @GetMapping({ "/resources", "/resources.json" })
+        public ResponseEntity<Map<String, Object>> getAllResources(
+                        @RequestParam(name = "filter[is-favorite]", required = false) Boolean isFavorite,
+                        @RequestParam(name = "contain[favorite]", required = false) Integer containFavorite) {
                 String userId = getCurrentUserId();
                 List<Resource> resources = resourceService.getAccessibleResources(userId);
+
+                Map<String, Favorite> favMap = (Boolean.TRUE.equals(isFavorite)
+                                || Integer.valueOf(1).equals(containFavorite))
+                                                ? favoriteService.getFavoritesByResourceId(userId)
+                                                : Map.of();
+                if (Boolean.TRUE.equals(isFavorite)) {
+                        resources = resources.stream()
+                                        .filter(r -> favMap.containsKey(r.getId()))
+                                        .collect(Collectors.toList());
+                }
+
                 List<ResourceDto.Response> responseList = resources.stream()
-                                .map(this::toResponseDto)
+                                .map(r -> {
+                                        ResourceDto.Response dto = toResponseDto(r);
+                                        if (Integer.valueOf(1).equals(containFavorite)) {
+                                                Favorite f = favMap.get(r.getId());
+                                                // PHP contain semantics: not favorited => "favorite": null
+                                                if (f != null) {
+                                                        dto.setFavorite(FavoriteDto.Response.builder()
+                                                                        .id(f.getId())
+                                                                        .userId(f.getUserId())
+                                                                        .foreignKey(f.getForeignKey())
+                                                                        .foreignModel(f.getForeignModel())
+                                                                        .created(f.getCreated())
+                                                                        .modified(f.getModified())
+                                                                        .build());
+                                                }
+                                        }
+                                        return dto;
+                                })
                                 .collect(Collectors.toList());
 
                 return ResponseEntity.ok(createResponse("success", "The operation was successful.",
@@ -57,7 +97,7 @@ public class ResourceController {
          * GET /resources/{id}.json
          * Returns a single resource by ID. Requires READ permission.
          */
-        @GetMapping("/{id}.json")
+        @GetMapping("/resources/{id}.json")
         public ResponseEntity<Map<String, Object>> getResource(@PathVariable String id) {
                 String userId = getCurrentUserId();
 
@@ -88,7 +128,7 @@ public class ResourceController {
          * POST /resources.json
          * Creates a new resource. Creator automatically gets OWNER permission.
          */
-        @PostMapping(value = { "", ".json" })
+        @PostMapping({ "/resources", "/resources.json" })
         public ResponseEntity<Map<String, Object>> createResource(@RequestBody ResourceDto.CreateRequest request) {
                 String userId = getCurrentUserId();
 
@@ -115,7 +155,7 @@ public class ResourceController {
          * PUT /resources/{id}.json
          * Updates an existing resource. Requires UPDATE permission.
          */
-        @PutMapping("/{id}.json")
+        @PutMapping("/resources/{id}.json")
         public ResponseEntity<Map<String, Object>> updateResource(
                         @PathVariable String id,
                         @RequestBody ResourceDto.UpdateRequest request) {
@@ -143,7 +183,7 @@ public class ResourceController {
          * DELETE /resources/{id}.json
          * Soft deletes a resource. Requires OWNER permission.
          */
-        @DeleteMapping("/{id}.json")
+        @DeleteMapping("/resources/{id}.json")
         public ResponseEntity<Map<String, Object>> deleteResource(@PathVariable String id) {
                 String userId = getCurrentUserId();
 

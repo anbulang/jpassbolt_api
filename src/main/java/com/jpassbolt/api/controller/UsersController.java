@@ -16,10 +16,14 @@ import java.util.stream.Collectors;
  * UsersController provides REST endpoints for user management.
  * Essential for the sharing workflow — users need to know who they can share
  * with.
+ *
+ * Note on mappings: no class-level @RequestMapping. With Boot 3's
+ * PathPatternParser, a class-level "/users" combined with a method-level
+ * ".json" yields "/users/.json" (NOT "/users.json"), so the official
+ * plugin's suffixed URLs would 404. Full method-level paths avoid that.
  */
 @Slf4j
 @RestController
-@RequestMapping("/users")
 @RequiredArgsConstructor
 public class UsersController {
 
@@ -29,7 +33,7 @@ public class UsersController {
          * GET /users.json
          * Returns all active, non-deleted users.
          */
-        @GetMapping(value = { "", ".json" })
+        @GetMapping({ "/users", "/users.json" })
         public ResponseEntity<Map<String, Object>> getAllUsers() {
                 List<User> users = userRepository.findAll().stream()
                                 .filter(u -> Boolean.TRUE.equals(u.getActive()) && !Boolean.TRUE.equals(u.getDeleted()))
@@ -47,7 +51,7 @@ public class UsersController {
          * GET /users/{id}.json
          * Returns a single user by ID.
          */
-        @GetMapping(value = { "/{id}", "/{id}.json" })
+        @GetMapping({ "/users/{id}", "/users/{id}.json" })
         public ResponseEntity<Map<String, Object>> getUser(@PathVariable String id) {
                 return userRepository.findById(id)
                                 .filter(u -> Boolean.TRUE.equals(u.getActive()) && !Boolean.TRUE.equals(u.getDeleted()))
