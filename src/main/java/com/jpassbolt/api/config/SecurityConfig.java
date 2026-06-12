@@ -46,7 +46,8 @@ public class SecurityConfig {
                                                 .requestMatchers("/auth/**",
                                                                 "/healthcheck/status", "/healthcheck/status.json",
                                                                 "/settings", "/settings.json",
-                                                                "/avatars/view/**")
+                                                                "/avatars/view/**",
+                                                                "/setup/**")
                                                 .permitAll()
                                                 .anyRequest().authenticated())
                                 .addFilterBefore(jwtAuthenticationFilter,

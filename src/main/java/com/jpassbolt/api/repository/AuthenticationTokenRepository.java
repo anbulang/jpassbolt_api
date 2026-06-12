@@ -11,4 +11,11 @@ public interface AuthenticationTokenRepository extends JpaRepository<Authenticat
     Optional<AuthenticationToken> findByToken(String token);
 
     Optional<AuthenticationToken> findByUserIdAndTypeAndActiveTrue(String userId, String type);
+
+    /**
+     * Setup start/complete token assertion: active register token belonging
+     * to the user. Expiry (created + N days) is checked in the service layer
+     * — the table has no expiry column.
+     */
+    Optional<AuthenticationToken> findByTokenAndUserIdAndTypeAndActiveTrue(String token, String userId, String type);
 }

@@ -71,11 +71,13 @@ public class Permission extends BaseEntity {
     // --- Relationships ---
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "aco_foreign_key", referencedColumnName = "id", insertable = false, updatable = false)
+    @JoinColumn(name = "aco_foreign_key", referencedColumnName = "id", insertable = false, updatable = false,
+            foreignKey = @ForeignKey(ConstraintMode.NO_CONSTRAINT))
     private Resource resource;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "aro_foreign_key", referencedColumnName = "id", insertable = false, updatable = false)
+    @JoinColumn(name = "aro_foreign_key", referencedColumnName = "id", insertable = false, updatable = false,
+            foreignKey = @ForeignKey(ConstraintMode.NO_CONSTRAINT))
     private User user;
 
     /**

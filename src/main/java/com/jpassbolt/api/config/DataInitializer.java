@@ -1,10 +1,13 @@
 package com.jpassbolt.api.config;
 
+import com.jpassbolt.api.model.AuthenticationToken;
 import com.jpassbolt.api.model.GpgKey;
 import com.jpassbolt.api.model.ResourceType;
 import com.jpassbolt.api.model.Role;
 import com.jpassbolt.api.model.User;
+import com.jpassbolt.api.repository.AuthenticationTokenRepository;
 import com.jpassbolt.api.repository.GpgKeyRepository;
+import com.jpassbolt.api.repository.ProfileRepository;
 import com.jpassbolt.api.repository.ResourceTypeRepository;
 import com.jpassbolt.api.repository.RoleRepository;
 import com.jpassbolt.api.repository.UserRepository;
@@ -30,6 +33,8 @@ public class DataInitializer implements CommandLineRunner {
     private final UserRepository userRepository;
     private final GpgKeyRepository gpgKeyRepository;
     private final ResourceTypeRepository resourceTypeRepository;
+    private final ProfileRepository profileRepository;
+    private final AuthenticationTokenRepository authenticationTokenRepository;
     private final GpgService gpgService;
 
     @Override
@@ -58,6 +63,16 @@ public class DataInitializer implements CommandLineRunner {
         testUser.setDeleted(false);
         userRepository.save(testUser);
 
+        // Profile rows so /users.json renders profile (the plugin UI shows
+        // blank entries otherwise). NOTE: the model class is referenced fully
+        // qualified because org.springframework.context.annotation.Profile is
+        // already imported for @Profile("local").
+        com.jpassbolt.api.model.Profile adaProfile = new com.jpassbolt.api.model.Profile();
+        adaProfile.setUserId(testUser.getId());
+        adaProfile.setFirstName("Ada");
+        adaProfile.setLastName("Lovelace");
+        profileRepository.save(adaProfile);
+
         // Use the server's own public key as the user's GPG key
         // This way, the server can decrypt the auth nonce during GPG login.
         // To log in via the browser, paste the server's PRIVATE key file
@@ -85,6 +100,12 @@ public class DataInitializer implements CommandLineRunner {
         adminUser.setDeleted(false);
         userRepository.save(adminUser);
 
+        com.jpassbolt.api.model.Profile adminProfile = new com.jpassbolt.api.model.Profile();
+        adminProfile.setUserId(adminUser.getId());
+        adminProfile.setFirstName("Admin");
+        adminProfile.setLastName("User");
+        profileRepository.save(adminProfile);
+
         // Reuse the server's own public key so the admin can log in with the
         // server private key (same pattern as ada@passbolt.com above)
         GpgKey adminGpgKey = new GpgKey();
@@ -107,6 +128,30 @@ public class DataInitializer implements CommandLineRunner {
         log.info("Login with the SERVER's private key (src/main/resources/gpg/server_private.asc)");
         log.info("Passphrase: password");
         log.info("==============================");
+
+        // Pending (not yet activated) user + register token so the /setup
+        // flow can be exercised end-to-end locally.
+        User pending = new User();
+        pending.setUsername("betty@passbolt.com");
+        pending.setRoleId(userRole.getId());
+        pending.setActive(false);
+        pending.setDeleted(false);
+        userRepository.save(pending);
+
+        com.jpassbolt.api.model.Profile bettyProfile = new com.jpassbolt.api.model.Profile();
+        bettyProfile.setUserId(pending.getId());
+        bettyProfile.setFirstName("Betty");
+        bettyProfile.setLastName("Holberton");
+        profileRepository.save(bettyProfile);
+
+        AuthenticationToken regToken = new AuthenticationToken();
+        regToken.setUserId(pending.getId());
+        regToken.setToken("d4c0c497-be4f-47c5-8f50-cb618a4a1d32");
+        regToken.setType("register");
+        regToken.setActive(true);
+        authenticationTokenRepository.save(regToken);
+
+        log.info("Setup URL: /setup/start/{}/d4c0c497-be4f-47c5-8f50-cb618a4a1d32.json", pending.getId());
     }
 
     /**

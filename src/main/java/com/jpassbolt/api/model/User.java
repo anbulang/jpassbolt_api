@@ -17,7 +17,14 @@ public class User extends BaseEntity {
     @Column(name = "role_id", nullable = false, length = 36, columnDefinition = "char(36)")
     private String roleId;
 
-    @Column(name = "username", nullable = false, length = 255, unique = true)
+    /**
+     * No unique=true: the official Passbolt schema has NO unique key on
+     * username (only KEY deleted). Uniqueness is a business rule scoped to
+     * deleted=false users (re-inviting the username of a soft-deleted user
+     * must succeed) and is enforced by UserService
+     * (existsByUsernameAndDeletedFalse + lowercase normalization).
+     */
+    @Column(name = "username", nullable = false, length = 255)
     private String username;
 
     @Column(name = "active", nullable = false)

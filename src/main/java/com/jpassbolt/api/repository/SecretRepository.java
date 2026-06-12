@@ -15,4 +15,12 @@ public interface SecretRepository extends JpaRepository<Secret, String> {
     Optional<Secret> findByResourceIdAndUserId(String resourceId, String userId);
 
     void deleteByResourceId(String resourceId);
+
+    List<Secret> findByUserId(String userId);
+
+    /**
+     * Hard-delete every secret of a user (user deletion cascade).
+     * Caller must be @Transactional.
+     */
+    void deleteByUserId(String userId);
 }

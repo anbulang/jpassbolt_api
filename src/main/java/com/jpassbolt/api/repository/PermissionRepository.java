@@ -73,4 +73,29 @@ public interface PermissionRepository extends JpaRepository<Permission, String> 
         List<String> findAccessibleResourceIds(
                         @Param("userId") String userId,
                         @Param("minType") int minType);
+
+        /**
+         * Resource ids where the user is the sole OWNER of a SHARED resource
+         * (exactly one OWNER permission, more than one permission in total) —
+         * PHP findSharedAcosByAroIsSoleOwner, simplified to the User ARO only.
+         * TODO(groups-crud): add the group dimension once Groups land.
+         */
+        @Query("SELECT p.acoForeignKey FROM Permission p WHERE p.aco = 'Resource' AND p.aro = 'User' AND p.aroForeignKey = :userId AND p.type = 15 " +
+                        "AND (SELECT COUNT(p2) FROM Permission p2 WHERE p2.acoForeignKey = p.acoForeignKey AND p2.type = 15) = 1 " +
+                        "AND (SELECT COUNT(p3) FROM Permission p3 WHERE p3.acoForeignKey = p.acoForeignKey) > 1")
+        List<String> findSharedResourceIdsWhereUserIsSoleOwner(@Param("userId") String userId);
+
+        /**
+         * Resource ids only this user can access (single permission row) —
+         * PHP findAcosOnlyAroCanAccess; soft-deleted along with the user.
+         */
+        @Query("SELECT p.acoForeignKey FROM Permission p WHERE p.aco = 'Resource' AND p.aro = 'User' AND p.aroForeignKey = :userId " +
+                        "AND (SELECT COUNT(p2) FROM Permission p2 WHERE p2.acoForeignKey = p.acoForeignKey) = 1")
+        List<String> findResourceIdsOnlyAccessibleByUser(@Param("userId") String userId);
+
+        /**
+         * Hard-delete every permission row of an ARO (user deletion cascade).
+         * Caller must be @Transactional.
+         */
+        void deleteByAroAndAroForeignKey(String aro, String aroForeignKey);
 }

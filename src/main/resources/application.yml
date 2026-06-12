@@ -25,6 +25,8 @@ logging:
     com.jpassbolt.api: DEBUG
 
 jpassbolt:
+  auth:
+    register-token-expiry-days: 10   # 对照 PHP PASSBOLT_AUTH_REGISTER_TOKEN_EXPIRY 默认 '10 days'
   jwt:
     secret: REDACTED-LEGACY-HMAC
     expiration: 3600000 # 1 hour

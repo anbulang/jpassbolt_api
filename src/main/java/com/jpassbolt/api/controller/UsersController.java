@@ -1,21 +1,39 @@
 package com.jpassbolt.api.controller;
 
+import com.jpassbolt.api.config.SettingsProperties;
+import com.jpassbolt.api.dto.UserDto;
+import com.jpassbolt.api.exception.PassboltApiException;
+import com.jpassbolt.api.model.GpgKey;
+import com.jpassbolt.api.model.Profile;
+import com.jpassbolt.api.model.Role;
 import com.jpassbolt.api.model.User;
+import com.jpassbolt.api.repository.GpgKeyRepository;
+import com.jpassbolt.api.repository.ProfileRepository;
+import com.jpassbolt.api.repository.RoleRepository;
 import com.jpassbolt.api.repository.UserRepository;
+import com.jpassbolt.api.service.UserDeleteService;
+import com.jpassbolt.api.service.UserService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
- * UsersController provides REST endpoints for user management.
- * Essential for the sharing workflow — users need to know who they can share
- * with.
+ * UsersController provides REST endpoints for user management:
+ * index/view plus admin invite-style creation, whitelist edit, soft delete
+ * and delete dry-run (ported from PHP UsersAddController /
+ * UsersEditController / UsersDeleteController).
  *
  * Note on mappings: no class-level @RequestMapping. With Boot 3's
  * PathPatternParser, a class-level "/users" combined with a method-level
@@ -27,11 +45,21 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class UsersController {
 
+        private static final Pattern UUID_PATTERN = Pattern.compile(
+                        "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$");
+
         private final UserRepository userRepository;
+        private final RoleRepository roleRepository;
+        private final ProfileRepository profileRepository;
+        private final GpgKeyRepository gpgKeyRepository;
+        private final SettingsProperties settingsProperties;
+        private final UserService userService;
+        private final UserDeleteService userDeleteService;
 
         /**
          * GET /users.json
-         * Returns all active, non-deleted users.
+         * Returns all active, non-deleted users in userIndexAndView shape
+         * (the official plugin needs profile/role/gpgkey on the index).
          */
         @GetMapping({ "/users", "/users.json" })
         public ResponseEntity<Map<String, Object>> getAllUsers() {
@@ -40,7 +68,7 @@ public class UsersController {
                                 .collect(Collectors.toList());
 
                 List<Map<String, Object>> userList = users.stream()
-                                .map(this::toUserMap)
+                                .map(this::toUserDetailMap)
                                 .collect(Collectors.toList());
 
                 return ResponseEntity.ok(createResponse("success", "The operation was successful.",
@@ -49,41 +77,362 @@ public class UsersController {
 
         /**
          * GET /users/{id}.json
-         * Returns a single user by ID.
+         * Returns a single user by ID. Supports the "me" alias (the plugin
+         * uses GET /users/me.json heavily); any other non-UUID id is a 400.
          */
         @GetMapping({ "/users/{id}", "/users/{id}.json" })
         public ResponseEntity<Map<String, Object>> getUser(@PathVariable String id) {
-                return userRepository.findById(id)
+                String url = "/users/" + id + ".json";
+
+                String targetId;
+                if ("me".equals(id)) {
+                        targetId = getCurrentUserId();
+                } else if (!isUuid(id)) {
+                        return ResponseEntity.status(400).body(createResponse("error",
+                                        "The user identifier should be a valid UUID.", null, url));
+                } else {
+                        targetId = id;
+                }
+
+                return userRepository.findById(targetId)
                                 .filter(u -> Boolean.TRUE.equals(u.getActive()) && !Boolean.TRUE.equals(u.getDeleted()))
                                 .map(user -> ResponseEntity.ok(createResponse("success",
-                                                "The operation was successful.", toUserMap(user),
-                                                "/users/" + id + ".json")))
+                                                "The operation was successful.", toUserDetailMap(user), url)))
                                 .orElse(ResponseEntity.status(404)
-                                                .body(createResponse("error", "The user does not exist.", null,
-                                                                "/users/" + id + ".json")));
+                                                .body(createResponse("error", "The user does not exist.", null, url)));
         }
 
-        private Map<String, Object> toUserMap(User user) {
+        /**
+         * POST /users.json
+         * Admin invite-style creation: the user is saved inactive together
+         * with its profile and a register token; activation happens through
+         * /setup/complete. The OpenAPI operation only declares 200/400/401
+         * but PHP returns 403 for non-admins — PHP behaviour wins.
+         */
+        @PostMapping({ "/users", "/users.json" })
+        public ResponseEntity<Map<String, Object>> addUser(@RequestBody UserDto.CreateRequest request) {
+                String url = "/users.json";
+                getCurrentUserId(); // 401/404 guard via PassboltApiException
+
+                if (!isCurrentUserAdmin()) {
+                        return ResponseEntity.status(403).body(createResponse("error",
+                                        "Only administrators can add new users.", null, url));
+                }
+
+                try {
+                        User created = userService.createUser(request);
+                        return ResponseEntity.ok(createResponse("success",
+                                        "The user was successfully added. This user now need to complete the setup.",
+                                        toUserDetailMap(created), url));
+                } catch (UserService.UserValidationException e) {
+                        return ResponseEntity.status(400)
+                                        .body(createResponse("error", e.getMessage(), e.getErrors(), url));
+                } catch (IllegalArgumentException e) {
+                        return ResponseEntity.status(400)
+                                        .body(createResponse("error", e.getMessage(), null, url));
+                }
+        }
+
+        /**
+         * PUT|POST /users/{id}.json (PHP registers both, routes.php L273).
+         * Whitelist edit: profile names for self/admin, role_id/disabled for
+         * admin only. Validation order strictly follows the PHP controller.
+         */
+        @RequestMapping(value = { "/users/{id}", "/users/{id}.json" }, method = { RequestMethod.PUT,
+                        RequestMethod.POST })
+        public ResponseEntity<Map<String, Object>> updateUser(
+                        @PathVariable String id,
+                        @RequestBody UserDto.UpdateRequest request) {
+                String url = "/users/" + id + ".json";
+                String actorId = getCurrentUserId();
+                boolean actorIsAdmin = isCurrentUserAdmin();
+
+                // (1) non-admin may only edit themselves
+                if (!actorIsAdmin && !actorId.equals(id)) {
+                        return ResponseEntity.status(403).body(createResponse("error",
+                                        "You are not authorized to access that location.", null, url));
+                }
+                // (2) id must be a UUID
+                if (!isUuid(id)) {
+                        return ResponseEntity.status(400).body(createResponse("error",
+                                        "The user identifier should be a valid UUID.", null, url));
+                }
+                // (3) empty payload
+                if (request == null || (request.getRoleId() == null && request.getDisabled() == null
+                                && request.getProfile() == null && request.getGpgkey() == null
+                                && request.getGroupsUser() == null && request.getRole() == null)) {
+                        return ResponseEntity.status(400).body(createResponse("error",
+                                        "Some user data should be provided.", null, url));
+                }
+                // (4) gpgkey can never be updated here
+                if (request.getGpgkey() != null) {
+                        return ResponseEntity.status(400).body(createResponse("error",
+                                        "Updating the OpenPGP key is not allowed.", null, url));
+                }
+                // (5) groups can never be updated here
+                if (request.getGroupsUser() != null) {
+                        return ResponseEntity.status(400).body(createResponse("error",
+                                        "Updating the groups is not allowed.", null, url));
+                }
+                // (6) only admins may touch the role
+                if (!actorIsAdmin && (request.getRole() != null || request.getRoleId() != null)) {
+                        return ResponseEntity.status(403).body(createResponse("error",
+                                        "You are not authorized to edit the role.", null, url));
+                }
+                // (7) target must exist and not be soft-deleted.
+                // NOTE: PHP throws BadRequestException here (400), NOT the 404
+                // the OpenAPI spec declares — the plugin relies on 400.
+                Optional<User> target = userRepository.findById(id)
+                                .filter(u -> !Boolean.TRUE.equals(u.getDeleted()));
+                if (target.isEmpty()) {
+                        return ResponseEntity.status(400).body(createResponse("error",
+                                        "The user does not exist or has been deleted.", null, url));
+                }
+
+                try {
+                        User updated = userService.updateUser(id, request, actorId, actorIsAdmin);
+                        return ResponseEntity.ok(createResponse("success",
+                                        "The user has been updated successfully.", toUserDetailMap(updated), url));
+                } catch (UserService.UserValidationException e) {
+                        return ResponseEntity.status(400)
+                                        .body(createResponse("error", e.getMessage(), e.getErrors(), url));
+                } catch (IllegalArgumentException e) {
+                        return ResponseEntity.status(400)
+                                        .body(createResponse("error", e.getMessage(), null, url));
+                }
+        }
+
+        /**
+         * DELETE /users/{id}.json
+         * Admin-only soft delete with optional ownership transfer and
+         * sole-owner protection. Success body is JSON null (nullBody).
+         */
+        @DeleteMapping({ "/users/{id}", "/users/{id}.json" })
+        public ResponseEntity<Map<String, Object>> deleteUser(
+                        @PathVariable String id,
+                        @RequestBody(required = false) UserDto.DeleteRequest request) {
+                String url = "/users/" + id + ".json";
+
+                ResponseEntity<Map<String, Object>> guard = validateDeletePreconditions(id, url);
+                if (guard != null) {
+                        return guard;
+                }
+                if (request != null && request.getTransfer() != null
+                                && request.getTransfer().getOwners() != null) {
+                        for (UserDto.TransferOwner owner : request.getTransfer().getOwners()) {
+                                if (!isUuid(owner.getId())) {
+                                        return ResponseEntity.status(400).body(createResponse("error",
+                                                        "The permissions identifiers must be valid UUID.", null, url));
+                                }
+                        }
+                }
+
+                try {
+                        userDeleteService.deleteUser(id, getCurrentUserId(), request);
+                        return ResponseEntity.ok(createNullBodyResponse("success",
+                                        "The user has been deleted successfully.", url));
+                } catch (UserDeleteService.UserDeleteConflictException e) {
+                        return ResponseEntity.status(400)
+                                        .body(createResponse("error", e.getMessage(), e.getBody(), url));
+                } catch (IllegalArgumentException e) {
+                        return ResponseEntity.status(400)
+                                        .body(createResponse("error", e.getMessage(), null, url));
+                }
+        }
+
+        /**
+         * DELETE /users/{id}/dry-run.json
+         * Same preconditions as the real delete, then only the sole-owner
+         * check — never reads a transfer, never writes.
+         */
+        @DeleteMapping({ "/users/{id}/dry-run", "/users/{id}/dry-run.json" })
+        public ResponseEntity<Map<String, Object>> deleteUserDryRun(@PathVariable String id) {
+                String url = "/users/" + id + "/dry-run.json";
+
+                ResponseEntity<Map<String, Object>> guard = validateDeletePreconditions(id, url);
+                if (guard != null) {
+                        return guard;
+                }
+
+                try {
+                        userDeleteService.validateDelete(id);
+                        return ResponseEntity.ok(createNullBodyResponse("success",
+                                        "The user can be deleted.", url));
+                } catch (UserDeleteService.UserDeleteConflictException e) {
+                        return ResponseEntity.status(400)
+                                        .body(createResponse("error", e.getMessage(), e.getBody(), url));
+                }
+        }
+
+        /**
+         * Shared preconditions of DELETE and dry-run (PHP
+         * UsersDeleteController::_validateRequestData): admin-only(403) →
+         * UUID(400) → not-self(400) → exists & not deleted(404).
+         */
+        private ResponseEntity<Map<String, Object>> validateDeletePreconditions(String id, String url) {
+                String actorId = getCurrentUserId();
+                if (!isCurrentUserAdmin()) {
+                        return ResponseEntity.status(403).body(createResponse("error",
+                                        "You are not authorized to access that location.", null, url));
+                }
+                if (!isUuid(id)) {
+                        return ResponseEntity.status(400).body(createResponse("error",
+                                        "The user identifier should be a valid UUID.", null, url));
+                }
+                if (actorId.equals(id)) {
+                        return ResponseEntity.status(400).body(createResponse("error",
+                                        "You are not allowed to delete yourself.", null, url));
+                }
+                Optional<User> target = userRepository.findById(id)
+                                .filter(u -> !Boolean.TRUE.equals(u.getDeleted()));
+                if (target.isEmpty()) {
+                        return ResponseEntity.status(404).body(createResponse("error",
+                                        "The user does not exist or has been already deleted.", null, url));
+                }
+                return null;
+        }
+
+        // ------------------------------------------------------------------
+        // Rendering helpers
+        // ------------------------------------------------------------------
+
+        /**
+         * userIndexAndView shape: base user fields + groups_users (empty
+         * until groups-crud lands) + profile (with mandatory avatar default
+         * URLs) + role + gpgkey + last_logged_in (not tracked yet).
+         */
+        private Map<String, Object> toUserDetailMap(User user) {
                 Map<String, Object> map = new LinkedHashMap<>();
                 map.put("id", user.getId());
-                map.put("username", user.getUsername());
                 map.put("role_id", user.getRoleId());
+                map.put("username", user.getUsername());
                 map.put("active", user.getActive());
+                map.put("deleted", user.getDeleted());
+                map.put("disabled", user.getDisabled());
                 map.put("created", user.getCreated());
                 map.put("modified", user.getModified());
+                map.put("last_logged_in", null);
+                // TODO(groups-crud): render real groups_users memberships.
+                map.put("groups_users", List.of());
+                map.put("profile", profileRepository.findByUserId(user.getId())
+                                .map(this::toProfileMap).orElse(null));
+                map.put("role", roleRepository.findById(user.getRoleId())
+                                .map(this::toRoleMap).orElse(null));
+                map.put("gpgkey", gpgKeyRepository.findByUserId(user.getId()).stream()
+                                .filter(key -> !Boolean.TRUE.equals(key.getDeleted()))
+                                .findFirst()
+                                .map(this::toGpgKeyMap).orElse(null));
                 return map;
         }
+
+        /**
+         * profile.avatar is a REQUIRED child of profile in the OpenAPI spec:
+         * always emit the default placeholder URLs (real avatar storage
+         * belongs to the avatars cluster).
+         */
+        private Map<String, Object> toProfileMap(Profile profile) {
+                Map<String, Object> map = new LinkedHashMap<>();
+                map.put("id", profile.getId());
+                map.put("user_id", profile.getUserId());
+                map.put("first_name", profile.getFirstName());
+                map.put("last_name", profile.getLastName());
+                map.put("created", profile.getCreated());
+                map.put("modified", profile.getModified());
+                String base = settingsProperties.getFullBaseUrl();
+                Map<String, Object> url = new LinkedHashMap<>();
+                url.put("medium", base + "/img/avatar/user_medium.png");
+                url.put("small", base + "/img/avatar/user.png");
+                Map<String, Object> avatar = new LinkedHashMap<>();
+                avatar.put("url", url);
+                map.put("avatar", avatar);
+                return map;
+        }
+
+        private Map<String, Object> toRoleMap(Role role) {
+                Map<String, Object> map = new LinkedHashMap<>();
+                map.put("id", role.getId());
+                map.put("name", role.getName());
+                map.put("description", role.getDescription());
+                map.put("created", role.getCreated());
+                map.put("modified", role.getModified());
+                return map;
+        }
+
+        private Map<String, Object> toGpgKeyMap(GpgKey key) {
+                Map<String, Object> map = new LinkedHashMap<>();
+                map.put("id", key.getId());
+                map.put("user_id", key.getUserId());
+                map.put("armored_key", key.getArmoredKey());
+                map.put("bits", key.getBits());
+                map.put("uid", key.getUid());
+                map.put("key_id", key.getKeyId());
+                map.put("fingerprint", key.getFingerprint());
+                map.put("type", key.getType());
+                map.put("expires", key.getExpires());
+                map.put("key_created", key.getKeyCreated());
+                map.put("deleted", key.getDeleted());
+                map.put("created", key.getCreated());
+                map.put("modified", key.getModified());
+                return map;
+        }
+
+        // ------------------------------------------------------------------
+        // Security helpers
+        // ------------------------------------------------------------------
+
+        private String getCurrentUserId() {
+                Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+                if (auth == null || auth.getName() == null) {
+                        throw new PassboltApiException(HttpStatus.UNAUTHORIZED, "No authenticated user");
+                }
+                String username = auth.getName();
+                return userRepository.findByUsername(username)
+                                .map(User::getId)
+                                .orElseThrow(() -> new PassboltApiException(HttpStatus.NOT_FOUND,
+                                                "User not found: " + username));
+        }
+
+        private boolean isCurrentUserAdmin() {
+                return userService.isAdmin(getCurrentUserId());
+        }
+
+        private boolean isUuid(String value) {
+                return value != null && UUID_PATTERN.matcher(value).matches();
+        }
+
+        // ------------------------------------------------------------------
+        // Envelope helpers
+        // ------------------------------------------------------------------
 
         private Map<String, Object> createResponse(String status, String message, Object body, String url) {
                 Map<String, Object> response = new LinkedHashMap<>();
                 response.put("header", Map.of(
-                                "id", java.util.UUID.randomUUID().toString(),
+                                "id", UUID.randomUUID().toString(),
                                 "status", status,
                                 "servertime", System.currentTimeMillis() / 1000,
                                 "code", "success".equals(status) ? 200 : 400,
                                 "message", message,
                                 "url", url));
                 response.put("body", body != null ? body : new LinkedHashMap<>());
+                return response;
+        }
+
+        /**
+         * nullBody envelope: body must be JSON null (OpenAPI
+         * responses/nullBody, used by DELETE and dry-run success) — local
+         * deviation from createResponse's empty {} fallback, do not
+         * generalize.
+         */
+        private Map<String, Object> createNullBodyResponse(String status, String message, String url) {
+                Map<String, Object> response = new LinkedHashMap<>();
+                response.put("header", Map.of(
+                                "id", UUID.randomUUID().toString(),
+                                "status", status,
+                                "servertime", System.currentTimeMillis() / 1000,
+                                "code", "success".equals(status) ? 200 : 400,
+                                "message", message,
+                                "url", url));
+                response.put("body", null);
                 return response;
         }
 }
