@@ -136,8 +136,9 @@ public interface PermissionRepository extends JpaRepository<Permission, String> 
         /**
          * Resource ids where the user is the sole OWNER of a SHARED resource
          * (exactly one OWNER permission, more than one permission in total) —
-         * PHP findSharedAcosByAroIsSoleOwner, simplified to the User ARO only.
-         * TODO(groups-crud): add the group dimension once Groups land.
+         * PHP findSharedAcosByAroIsSoleOwner, User ARO only. The group
+         * dimension is composed in UserDeleteService from the ARO-set
+         * variants below (PHP checkGroupsUsers branch).
          */
         @Query("SELECT p.acoForeignKey FROM Permission p WHERE p.aco = 'Resource' AND p.aro = 'User' AND p.aroForeignKey = :userId AND p.type = 15 " +
                         "AND (SELECT COUNT(p2) FROM Permission p2 WHERE p2.acoForeignKey = p.acoForeignKey AND p2.type = 15) = 1 " +
@@ -151,6 +152,52 @@ public interface PermissionRepository extends JpaRepository<Permission, String> 
         @Query("SELECT p.acoForeignKey FROM Permission p WHERE p.aco = 'Resource' AND p.aro = 'User' AND p.aroForeignKey = :userId " +
                         "AND (SELECT COUNT(p2) FROM Permission p2 WHERE p2.acoForeignKey = p.acoForeignKey) = 1")
         List<String> findResourceIdsOnlyAccessibleByUser(@Param("userId") String userId);
+
+        /**
+         * Resource ids whose every OWNER permission belongs to one of the
+         * given AROs (user + groups) — PHP findAcosByArosAreSoleOwner.
+         */
+        @Query("SELECT DISTINCT p.acoForeignKey FROM Permission p WHERE p.aco = 'Resource' AND p.type = 15 " +
+                        "AND p.aroForeignKey IN :aros " +
+                        "AND p.acoForeignKey NOT IN (SELECT p2.acoForeignKey FROM Permission p2 " +
+                        "WHERE p2.aco = 'Resource' AND p2.type = 15 AND p2.aroForeignKey NOT IN :aros)")
+        List<String> findResourceIdsWhereArosAreSoleOwner(
+                        @Param("aros") java.util.Collection<String> aros);
+
+        /**
+         * Resource ids on which at least one of the given AROs holds an OWNER
+         * permission (used to subtract the resources owned by non-empty
+         * sole-manager groups, PHP checkGroupsUsers branch).
+         */
+        @Query("SELECT DISTINCT p.acoForeignKey FROM Permission p WHERE p.aco = 'Resource' AND p.type = 15 " +
+                        "AND p.aroForeignKey IN :aros")
+        List<String> findResourceIdsOwnedByAros(@Param("aros") java.util.Collection<String> aros);
+
+        /**
+         * Resource ids only the given AROs (user + only-member groups) can
+         * access — PHP findAcosOnlyAroCanAccess(checkGroupsUsers=true).
+         */
+        @Query("SELECT DISTINCT p.acoForeignKey FROM Permission p WHERE p.aco = 'Resource' " +
+                        "AND p.aroForeignKey IN :aros " +
+                        "AND p.acoForeignKey NOT IN (SELECT p2.acoForeignKey FROM Permission p2 " +
+                        "WHERE p2.aco = 'Resource' AND p2.aroForeignKey NOT IN :aros)")
+        List<String> findResourceIdsOnlyAccessibleByAros(
+                        @Param("aros") java.util.Collection<String> aros);
+
+        /**
+         * Group-inclusive accessible ACO ids for any ACO kind (Folder or
+         * Resource) — used by the folders index so group-shared folders are
+         * listed (PHP findAllByAro checkGroupsUsers=true).
+         */
+        @Query("SELECT DISTINCT p.acoForeignKey FROM Permission p " +
+                        "WHERE p.aco = :aco AND p.type >= :minType " +
+                        "AND ((p.aro = 'User' AND p.aroForeignKey = :userId) " +
+                        "OR (p.aro = 'Group' AND p.aroForeignKey IN " +
+                        "(SELECT gu.groupId FROM GroupUser gu WHERE gu.userId = :userId)))")
+        List<String> findAccessibleAcoIdsIncludingGroups(
+                        @Param("aco") String aco,
+                        @Param("userId") String userId,
+                        @Param("minType") int minType);
 
         /**
          * Hard-delete every permission row of an ARO (user deletion cascade).

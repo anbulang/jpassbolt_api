@@ -97,14 +97,17 @@ public class FoldersRelationsMoveService {
         if (isPersonal(originalFolderParentId)) {
             return;
         }
-        boolean canMoveOut = permissionRepository.hasAccess(
-                FolderService.FOLDER_ACO, originalFolderParentId, Permission.USER_ARO, userId, Permission.UPDATE);
+        // Group-inclusive checks (PHP PermissionsTable::hasAccess walks
+        // groups_users) — direct User rows alone would void group-inherited
+        // folder permissions.
+        boolean canMoveOut = permissionRepository.hasAccessIncludingGroups(
+                FolderService.FOLDER_ACO, originalFolderParentId, userId, Permission.UPDATE);
         if (!canMoveOut) {
             throw new PassboltApiException(HttpStatus.BAD_REQUEST,
                     "You are not allowed to move this item out of its parent folder.");
         }
-        boolean canMoveItem = permissionRepository.hasAccess(
-                foreignModel, foreignId, Permission.USER_ARO, userId, Permission.UPDATE);
+        boolean canMoveItem = permissionRepository.hasAccessIncludingGroups(
+                foreignModel, foreignId, userId, Permission.UPDATE);
         if (!canMoveItem) {
             throw new PassboltApiException(HttpStatus.BAD_REQUEST,
                     "You are not allowed to move this item.");
@@ -125,14 +128,14 @@ public class FoldersRelationsMoveService {
         if (isPersonal(folderParentId)) {
             return;
         }
-        boolean canMoveIn = permissionRepository.hasAccess(
-                FolderService.FOLDER_ACO, folderParentId, Permission.USER_ARO, userId, Permission.UPDATE);
+        boolean canMoveIn = permissionRepository.hasAccessIncludingGroups(
+                FolderService.FOLDER_ACO, folderParentId, userId, Permission.UPDATE);
         if (!canMoveIn) {
             throw new PassboltApiException(HttpStatus.BAD_REQUEST,
                     "You are not allowed to create content into the parent folder.");
         }
-        boolean canMoveItem = permissionRepository.hasAccess(
-                foreignModel, foreignId, Permission.USER_ARO, userId, Permission.UPDATE);
+        boolean canMoveItem = permissionRepository.hasAccessIncludingGroups(
+                foreignModel, foreignId, userId, Permission.UPDATE);
         if (!canMoveItem) {
             throw new PassboltApiException(HttpStatus.BAD_REQUEST,
                     "You are not allowed to move an item in read only into the parent folder.");

@@ -2,6 +2,8 @@ package com.jpassbolt.api.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jpassbolt.api.model.GpgKey;
+import com.jpassbolt.api.model.Group;
+import com.jpassbolt.api.model.GroupUser;
 import com.jpassbolt.api.model.Permission;
 import com.jpassbolt.api.model.Profile;
 import com.jpassbolt.api.model.Resource;
@@ -10,6 +12,8 @@ import com.jpassbolt.api.model.Secret;
 import com.jpassbolt.api.model.User;
 import com.jpassbolt.api.repository.AuthenticationTokenRepository;
 import com.jpassbolt.api.repository.GpgKeyRepository;
+import com.jpassbolt.api.repository.GroupRepository;
+import com.jpassbolt.api.repository.GroupUserRepository;
 import com.jpassbolt.api.repository.PermissionRepository;
 import com.jpassbolt.api.repository.ProfileRepository;
 import com.jpassbolt.api.repository.ResourceRepository;
@@ -73,6 +77,12 @@ class UsersDeleteControllerTest {
     @Autowired
     private RoleRepository roleRepository;
 
+    @Autowired
+    private GroupRepository groupRepository;
+
+    @Autowired
+    private GroupUserRepository groupUserRepository;
+
     private Role adminRole;
     private Role userRole;
     private User adminUser;
@@ -82,6 +92,8 @@ class UsersDeleteControllerTest {
     @BeforeEach
     void setUp() {
         authenticationTokenRepository.deleteAll();
+        groupUserRepository.deleteAll();
+        groupRepository.deleteAll();
         permissionRepository.deleteAll();
         secretRepository.deleteAll();
         profileRepository.deleteAll();
@@ -306,6 +318,118 @@ class UsersDeleteControllerTest {
         assertThat(userRepository.findById(victim.getId()).orElseThrow().getDeleted()).isFalse();
         assertThat(permissionRepository.findById(plainPermA.getId()).orElseThrow().getType())
                 .isEqualTo(Permission.READ);
+    }
+
+    // ------------------------------------------------------------------
+    // Groups dimension (PHP UsersTable::softDelete +
+    // UsersDeleteController::_transferGroupsManagers)
+    // ------------------------------------------------------------------
+
+    private Group createGroup(String name) {
+        Group group = new Group();
+        group.setName(name);
+        group.setDeleted(false);
+        group.setCreatedBy(adminUser.getId());
+        group.setModifiedBy(adminUser.getId());
+        return groupRepository.save(group);
+    }
+
+    private GroupUser addMember(Group group, User user, boolean isAdmin) {
+        GroupUser gu = new GroupUser();
+        gu.setGroupId(group.getId());
+        gu.setUserId(user.getId());
+        gu.setIsAdmin(isAdmin);
+        return groupUserRepository.save(gu);
+    }
+
+    @Test
+    void testDeleteUser_CleansGroupMembershipsAndSoftDeletesOnlyMemberGroup() throws Exception {
+        // victim is the only member of soloGroup, and a plain member of
+        // sharedGroup (which keeps another manager).
+        Group soloGroup = createGroup("victim-solo");
+        addMember(soloGroup, victim, true);
+        Group sharedGroup = createGroup("shared-group");
+        addMember(sharedGroup, victim, false);
+        addMember(sharedGroup, plainUser, true);
+
+        mockMvc.perform(delete("/users/" + victim.getId() + ".json"))
+                .andExpect(status().isOk());
+
+        // Every membership of the victim is hard-deleted.
+        assertThat(groupUserRepository.findByUserId(victim.getId())).isEmpty();
+        // The only-member group is soft-deleted, the shared group survives.
+        assertThat(groupRepository.findById(soloGroup.getId()).orElseThrow().getDeleted()).isTrue();
+        assertThat(groupRepository.findById(sharedGroup.getId()).orElseThrow().getDeleted()).isFalse();
+        assertThat(groupUserRepository.findByGroupId(sharedGroup.getId())).hasSize(1);
+        assertThat(userRepository.findById(victim.getId()).orElseThrow().getDeleted()).isTrue();
+    }
+
+    @Test
+    void testDeleteSoleManagerOfNonEmptyGroup_Conflict() throws Exception {
+        Group group = createGroup("needs-manager");
+        addMember(group, victim, true);
+        addMember(group, plainUser, false);
+
+        mockMvc.perform(delete("/users/" + victim.getId() + ".json"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.header.message").value(
+                        "The user cannot be deleted. The user should not be sole group manager of "
+                                + "group(s), transfer the management to other users."))
+                .andExpect(jsonPath("$.body.errors.groups.sole_manager[0].id").value(group.getId()));
+
+        assertThat(userRepository.findById(victim.getId()).orElseThrow().getDeleted()).isFalse();
+    }
+
+    @Test
+    void testDeleteWithManagerTransfer_Success() throws Exception {
+        Group group = createGroup("needs-manager");
+        addMember(group, victim, true);
+        GroupUser plainMembership = addMember(group, plainUser, false);
+
+        String body = objectMapper.writeValueAsString(Map.of(
+                "transfer", Map.of("managers", List.of(Map.of(
+                        "id", plainMembership.getId(),
+                        "group_id", group.getId())))));
+
+        mockMvc.perform(delete("/users/" + victim.getId() + ".json")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body))
+                .andExpect(status().isOk());
+
+        // The designated membership was promoted to manager.
+        assertThat(groupUserRepository.findById(plainMembership.getId()).orElseThrow().getIsAdmin())
+                .isTrue();
+        assertThat(groupUserRepository.findByUserId(victim.getId())).isEmpty();
+        assertThat(userRepository.findById(victim.getId()).orElseThrow().getDeleted()).isTrue();
+        assertThat(groupRepository.findById(group.getId()).orElseThrow().getDeleted()).isFalse();
+    }
+
+    @Test
+    void testGroupSoleOwnerOfSharedResource_BlocksWithoutGroupTransfer() throws Exception {
+        // A group whose sole manager is the victim is the only OWNER of a
+        // shared resource: deletion is blocked by the sole_manager conflict
+        // (the resource itself is fixed by transferring the group manager,
+        // not by a resource transfer — PHP checkGroupsUsers semantics).
+        Group group = createGroup("owner-group");
+        addMember(group, victim, true);
+        addMember(group, plainUser, false);
+
+        Resource shared = createResource("group-owned", victim.getId());
+        Permission groupOwner = new Permission();
+        groupOwner.setAco(Permission.RESOURCE_ACO);
+        groupOwner.setAcoForeignKey(shared.getId());
+        groupOwner.setAro(Permission.GROUP_ARO);
+        groupOwner.setAroForeignKey(group.getId());
+        groupOwner.setType(Permission.OWNER);
+        permissionRepository.save(groupOwner);
+        createPermission(shared.getId(), plainUser.getId(), Permission.READ);
+
+        mockMvc.perform(delete("/users/" + victim.getId() + ".json"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.body.errors.groups.sole_manager[0].id").value(group.getId()))
+                // No resource conflict: the group keeps owning it once a new
+                // manager is appointed.
+                .andExpect(jsonPath("$.body.errors.resources").doesNotExist());
     }
 
     @Test

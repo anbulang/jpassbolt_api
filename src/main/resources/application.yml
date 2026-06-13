@@ -7,9 +7,13 @@ spring:
   application:
     name: jpassbolt_api
   datasource:
-    url: jdbc:mysql://REDACTED-DB-HOST:3307/jpassbolt?useSSL=false&serverTimezone=UTC&characterEncoding=UTF-8&allowPublicKeyRetrieval=true
-    username: root
-    password: REDACTED-ROTATED-DB-PW
+    # Secrets are NEVER committed: inject the connection through environment
+    # variables (or an external secret store). The committed defaults are
+    # non-functional placeholders — the previously committed remote MySQL
+    # credentials must be considered leaked and rotated.
+    url: ${JPASSBOLT_DB_URL:jdbc:mysql://localhost:3306/jpassbolt?useSSL=false&serverTimezone=UTC&characterEncoding=UTF-8&allowPublicKeyRetrieval=true}
+    username: ${JPASSBOLT_DB_USERNAME:jpassbolt}
+    password: ${JPASSBOLT_DB_PASSWORD:}
     driver-class-name: com.mysql.cj.jdbc.Driver
   jpa:
     hibernate:
@@ -29,20 +33,27 @@ jpassbolt:
     register-token-expiry-days: 10   # 对照 PHP PASSBOLT_AUTH_REGISTER_TOKEN_EXPIRY 默认 '10 days'
   jwt:
     # Legacy HS256 secret — no longer used for signing (RS256 key pair below);
-    # still read by HealthcheckService (core.salt). Remove together with that check.
-    secret: REDACTED-LEGACY-HMAC
+    # still read by HealthcheckService (core.salt). Inject via env, never commit.
+    secret: ${JPASSBOLT_LEGACY_HMAC_SECRET:}
     expiration: 3600000 # 1 hour
-    # RS256 key pair. The committed dev keys (like gpg/server_private.asc) are for
-    # dev/test only — production MUST override with a deployment-specific pair.
-    private-key-location: classpath:jwt/jwt.key
-    public-key-location: classpath:jwt/jwt.pem
+    # RS256 key pair. NO key pair is bundled with the repository anymore (the
+    # previously committed jwt.key/jwt.pem must be considered leaked and were
+    # removed/rotated). Deployments MUST inject a deployment-specific pair via
+    # these locations (file: or classpath:); startup fails fast otherwise.
+    # Only the local/test profiles may opt into an ephemeral in-memory dev key
+    # (allow-ephemeral-dev-key: true).
+    private-key-location: ${JPASSBOLT_JWT_PRIVATE_KEY_LOCATION:}
+    public-key-location: ${JPASSBOLT_JWT_PUBLIC_KEY_LOCATION:}
+    allow-ephemeral-dev-key: false
     refresh-token-expiry-days: 30   # PHP RefreshTokenAbstractService default
     verify-token-expiry-hours: 1    # PHP VerifyTokenCreateService default
   gpg:
     server-key:
-      private-location: classpath:gpg/server_private.asc
-      public-location: classpath:gpg/server_public.asc
-      passphrase: password
+      private-location: ${JPASSBOLT_GPG_PRIVATE_KEY_LOCATION:classpath:gpg/server_private.asc}
+      public-location: ${JPASSBOLT_GPG_PUBLIC_KEY_LOCATION:classpath:gpg/server_public.asc}
+      # Inject via env; the committed dev key's passphrase only lives in the
+      # local/test profiles.
+      passphrase: ${JPASSBOLT_GPG_PASSPHRASE:}
   version: 4.9.0
   healthcheck:
     index-endpoint-enabled: true

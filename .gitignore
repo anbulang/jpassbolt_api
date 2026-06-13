@@ -38,3 +38,7 @@ build/
 
 passbolt_api_ref/
 startup.log
+
+### Secrets — never commit key material ###
+src/main/resources/jwt/
+*.key

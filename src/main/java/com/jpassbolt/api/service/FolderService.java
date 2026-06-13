@@ -18,7 +18,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.stream.Collectors;
 
 /**
  * Service for managing folders (PHP plugin Passbolt/Folders, v4 behaviour).
@@ -46,7 +45,9 @@ public class FolderService {
     private final ResourceService resourceService;
 
     /**
-     * Get all folders the user has at least READ access to (aco = "Folder").
+     * Get all folders the user has at least READ access to (aco = "Folder"),
+     * directly or through one of their groups (PHP findAllByAro with
+     * checkGroupsUsers=true).
      *
      * @param userId the requesting user's ID
      * @return list of accessible folders
@@ -54,11 +55,7 @@ public class FolderService {
     @Transactional(readOnly = true)
     public List<Folder> getAccessibleFolders(String userId) {
         List<String> folderIds = permissionRepository
-                .findByAroAndAroForeignKey(Permission.USER_ARO, userId).stream()
-                .filter(p -> FOLDER_ACO.equals(p.getAco()) && p.getType() >= Permission.READ)
-                .map(Permission::getAcoForeignKey)
-                .distinct()
-                .collect(Collectors.toList());
+                .findAccessibleAcoIdsIncludingGroups(FOLDER_ACO, userId, Permission.READ);
         if (folderIds.isEmpty()) {
             return List.of();
         }
@@ -77,7 +74,9 @@ public class FolderService {
     }
 
     /**
-     * Check if a user has at least the given permission level on a folder.
+     * Check if a user has at least the given permission level on a folder,
+     * directly or through one of their groups (PHP PermissionsTable::hasAccess
+     * → findHighestByAcoAndAro with checkGroupsUsers=true).
      *
      * @param folderId the folder ID
      * @param userId   the user ID
@@ -86,7 +85,7 @@ public class FolderService {
      */
     @Transactional(readOnly = true)
     public boolean userHasFolderAccess(String folderId, String userId, int minType) {
-        return permissionRepository.hasAccess(FOLDER_ACO, folderId, Permission.USER_ARO, userId, minType);
+        return permissionRepository.hasAccessIncludingGroups(FOLDER_ACO, folderId, userId, minType);
     }
 
     /**
@@ -232,8 +231,8 @@ public class FolderService {
         for (Map.Entry<String, String> child : children.entrySet()) {
             String childId = child.getKey();
             String childModel = child.getValue();
-            boolean canDelete = permissionRepository.hasAccess(
-                    childModel, childId, Permission.USER_ARO, userId, Permission.UPDATE);
+            boolean canDelete = permissionRepository.hasAccessIncludingGroups(
+                    childModel, childId, userId, Permission.UPDATE);
             if (!canDelete) {
                 // Not writable: move the child back to the root instead.
                 foldersRelationRepository.moveItemFromParent(childId, folder.getId(), null);

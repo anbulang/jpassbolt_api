@@ -42,4 +42,10 @@ public interface FavoriteRepository extends JpaRepository<Favorite, String> {
      * Must be invoked within an active transaction (caller is @Transactional).
      */
     void deleteByForeignKey(String foreignKey);
+
+    /**
+     * Physically delete all favorites of a user (user deletion cascade, PHP
+     * UsersTable::softDelete L507-509). Caller must be @Transactional.
+     */
+    void deleteByUserId(String userId);
 }

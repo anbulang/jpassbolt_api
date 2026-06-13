@@ -4,10 +4,12 @@ import com.jpassbolt.api.config.SettingsProperties;
 import com.jpassbolt.api.dto.UserDto;
 import com.jpassbolt.api.exception.PassboltApiException;
 import com.jpassbolt.api.model.GpgKey;
+import com.jpassbolt.api.model.GroupUser;
 import com.jpassbolt.api.model.Profile;
 import com.jpassbolt.api.model.Role;
 import com.jpassbolt.api.model.User;
 import com.jpassbolt.api.repository.GpgKeyRepository;
+import com.jpassbolt.api.repository.GroupUserRepository;
 import com.jpassbolt.api.repository.ProfileRepository;
 import com.jpassbolt.api.repository.RoleRepository;
 import com.jpassbolt.api.repository.UserRepository;
@@ -52,6 +54,7 @@ public class UsersController {
         private final RoleRepository roleRepository;
         private final ProfileRepository profileRepository;
         private final GpgKeyRepository gpgKeyRepository;
+        private final GroupUserRepository groupUserRepository;
         private final SettingsProperties settingsProperties;
         private final UserService userService;
         private final UserDeleteService userDeleteService;
@@ -297,9 +300,11 @@ public class UsersController {
         // ------------------------------------------------------------------
 
         /**
-         * userIndexAndView shape: base user fields + groups_users (empty
-         * until groups-crud lands) + profile (with mandatory avatar default
-         * URLs) + role + gpgkey + last_logged_in (not tracked yet).
+         * userIndexAndView shape: base user fields + groups_users (real
+         * memberships — the plugin's share dialog, group member views and the
+         * pre-delete sole-manager hints all rely on them) + profile (with
+         * mandatory avatar default URLs) + role + gpgkey + last_logged_in
+         * (not tracked yet).
          */
         private Map<String, Object> toUserDetailMap(User user) {
                 Map<String, Object> map = new LinkedHashMap<>();
@@ -312,8 +317,9 @@ public class UsersController {
                 map.put("created", user.getCreated());
                 map.put("modified", user.getModified());
                 map.put("last_logged_in", null);
-                // TODO(groups-crud): render real groups_users memberships.
-                map.put("groups_users", List.of());
+                map.put("groups_users", groupUserRepository.findByUserId(user.getId()).stream()
+                                .map(this::toGroupUserMap)
+                                .collect(Collectors.toList()));
                 map.put("profile", profileRepository.findByUserId(user.getId())
                                 .map(this::toProfileMap).orElse(null));
                 map.put("role", roleRepository.findById(user.getRoleId())
@@ -355,6 +361,17 @@ public class UsersController {
                 map.put("description", role.getDescription());
                 map.put("created", role.getCreated());
                 map.put("modified", role.getModified());
+                return map;
+        }
+
+        /** groupsUsersIndexAndView shape (PHP contain groups_users). */
+        private Map<String, Object> toGroupUserMap(GroupUser groupUser) {
+                Map<String, Object> map = new LinkedHashMap<>();
+                map.put("id", groupUser.getId());
+                map.put("group_id", groupUser.getGroupId());
+                map.put("user_id", groupUser.getUserId());
+                map.put("is_admin", groupUser.getIsAdmin());
+                map.put("created", groupUser.getCreated());
                 return map;
         }
 

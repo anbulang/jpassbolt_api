@@ -124,8 +124,11 @@ public class MfaController {
             return guard;
         }
 
+        // Brute-force protection: 429 while locked out, count every failure.
+        mfaService.assertMfaAttemptAllowed(userId);
         Map<String, String> errors = mfaService.validateTotpCode(userId,
                 request != null ? request.getTotp() : null);
+        mfaService.recordMfaAttempt(userId, errors.isEmpty());
         if (!errors.isEmpty()) {
             Map<String, Object> body = new LinkedHashMap<>();
             body.put("totp", errors);
@@ -270,8 +273,12 @@ public class MfaController {
                     "Something went wrong when validating the one-time password.", body, url));
         }
 
+        // Brute-force protection: the setup endpoint also validates a 6-digit
+        // code and must not be usable as an oracle.
+        mfaService.assertMfaAttemptAllowed(userId);
         Map<String, String> errors = mfaService.validateTotpCodeAgainstUri(provisioningUri,
                 request.getTotp());
+        mfaService.recordMfaAttempt(userId, errors.isEmpty());
         if (!errors.isEmpty()) {
             Map<String, Object> body = new LinkedHashMap<>();
             body.put("totp", errors);

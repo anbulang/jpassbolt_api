@@ -43,8 +43,8 @@ import java.util.stream.Collectors;
  * <ul>
  * <li>GET /share/search-aros.json — search users/groups to share with</li>
  * <li>PUT /share/{foreignModel}/{foreignId}.json — apply permission and
- * secret changes (foreignModel: "resource"; "folder" pending the folders
- * cluster)</li>
+ * secret changes (foreignModel: "resource" or "folder"; folders carry no
+ * secrets)</li>
  * <li>POST /share/simulate/{foreignModel}/{foreignId}.json — dry run, returns
  * the users who would gain/lose access</li>
  * </ul>
@@ -129,9 +129,9 @@ public class ShareController {
 
         /**
          * PUT /share/{foreignModel}/{foreignId}.json
-         * Share a resource: apply permission changes and provide encrypted
-         * secrets for the users who gain access. Success body is JSON null
-         * (OpenAPI responses/nullBody).
+         * Share a resource or a folder: apply permission changes (and, for
+         * resources, the encrypted secrets of the users who gain access).
+         * Success body is JSON null (OpenAPI responses/nullBody).
          */
         @PutMapping({ "/{foreignModel}/{foreignId}", "/{foreignModel}/{foreignId}.json" })
         public ResponseEntity<Map<String, Object>> share(
@@ -141,6 +141,9 @@ public class ShareController {
                 String url = "/share/" + foreignModel + "/" + foreignId + ".json";
                 String userId = getCurrentUserId();
 
+                if ("folder".equals(foreignModel)) {
+                        return shareFolder(foreignId, userId, request, url);
+                }
                 ResponseEntity<Map<String, Object>> guard = validateForeignParameters(foreignModel, foreignId, url);
                 if (guard != null) {
                         return guard;
@@ -226,6 +229,38 @@ public class ShareController {
                 }
         }
 
+        /**
+         * Folder share branch of PUT /share/folder/{id}.json (PHP
+         * FoldersShareController): permission changes on the Folder ACO, no
+         * secrets, per-user tree maintenance — all in PermissionService.
+         */
+        private ResponseEntity<Map<String, Object>> shareFolder(
+                        String foreignId, String userId, ShareDto.ShareRequest request, String url) {
+                if (!isUuid(foreignId)) {
+                        return ResponseEntity.status(400)
+                                        .body(createResponse("error",
+                                                        "The folder identifier should be a valid UUID.", null, url));
+                }
+                try {
+                        List<ShareDto.PermissionChange> permissions = request != null
+                                        && request.getPermissions() != null
+                                                        ? request.getPermissions()
+                                                        : List.of();
+                        permissionService.shareFolder(foreignId, userId, permissions);
+                        return ResponseEntity.ok(createNullBodyResponse("success",
+                                        "The operation was successful.", url));
+                } catch (ShareValidationException e) {
+                        return ResponseEntity.status(400)
+                                        .body(createResponse("error", e.getMessage(), e.getErrors(), url));
+                } catch (SecurityException e) {
+                        return ResponseEntity.status(403)
+                                        .body(createResponse("error", e.getMessage(), null, url));
+                } catch (PassboltApiException e) {
+                        return ResponseEntity.status(e.getStatus())
+                                        .body(createResponse("error", e.getMessage(), null, url));
+                }
+        }
+
         // ------------------------------------------------------------------
         // Guards
         // ------------------------------------------------------------------
@@ -238,8 +273,8 @@ public class ShareController {
         private ResponseEntity<Map<String, Object>> validateForeignParameters(
                         String foreignModel, String foreignId, String url) {
                 if ("folder".equals(foreignModel)) {
-                        // TODO(folders): implement folder sharing when the folders
-                        // cluster lands; until then a folder share target is a 404.
+                        // Simulate is only defined for resources (PHP has no folder
+                        // share dry-run route) — a folder simulate target stays 404.
                         return ResponseEntity.status(404)
                                         .body(createResponse("error", "The folder does not exist.", null, url));
                 }

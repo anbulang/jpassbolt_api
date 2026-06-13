@@ -3,10 +3,12 @@ package com.jpassbolt.api.service;
 import com.jpassbolt.api.dto.ShareDto;
 import com.jpassbolt.api.exception.PassboltApiException;
 import com.jpassbolt.api.exception.ShareValidationException;
-import com.jpassbolt.api.model.GroupUser;
+import com.jpassbolt.api.model.FoldersRelation;
 import com.jpassbolt.api.model.Permission;
 import com.jpassbolt.api.model.Secret;
 import com.jpassbolt.api.repository.FavoriteRepository;
+import com.jpassbolt.api.repository.FolderRepository;
+import com.jpassbolt.api.repository.FoldersRelationRepository;
 import com.jpassbolt.api.repository.GroupRepository;
 import com.jpassbolt.api.repository.GroupUserRepository;
 import com.jpassbolt.api.repository.PermissionRepository;
@@ -59,6 +61,8 @@ public class PermissionService {
     private final GroupUserRepository groupUserRepository;
     private final GroupRepository groupRepository;
     private final UserRepository userRepository;
+    private final FolderRepository folderRepository;
+    private final FoldersRelationRepository foldersRelationRepository;
 
     /**
      * Get all permissions for a resource.
@@ -294,6 +298,98 @@ public class PermissionService {
             favoriteRepository.findByUserIdAndForeignKey(lostUserId, resourceId)
                     .ifPresent(favoriteRepository::delete);
             log.info("Revoked access cleanup for user {} on resource {}", lostUserId, resourceId);
+        }
+
+        // Folder-tree maintenance (PHP Folders plugin ResourcesEventListener
+        // afterAccessGranted/afterAccessRevoked): users gaining access get
+        // the resource at the root of their tree, users losing access get it
+        // removed from theirs.
+        for (String addedUserId : added) {
+            if (foldersRelationRepository.findByUserIdAndForeignId(addedUserId, resourceId).isEmpty()) {
+                FoldersRelation relation = new FoldersRelation();
+                relation.setForeignModel(FoldersRelation.FOREIGN_MODEL_RESOURCE);
+                relation.setForeignId(resourceId);
+                relation.setUserId(addedUserId);
+                relation.setFolderParentId(null);
+                foldersRelationRepository.save(relation);
+            }
+        }
+        for (String lostUserId : removed) {
+            foldersRelationRepository.deleteByUserIdAndForeignId(lostUserId, resourceId);
+        }
+    }
+
+    /**
+     * Share a folder (PUT /share/folder/{id}.json, PHP FoldersShareController
+     * + FoldersShareService): same permission change-set semantics as
+     * {@link #share} but with the Folder ACO and no secrets (folders carry no
+     * ciphertext). Tree maintenance: users gaining access get the folder at
+     * the root of their tree; users losing access get it removed and its
+     * children moved to their root.
+     *
+     * @param folderId the folder ID
+     * @param userId   the requesting user's ID (must be OWNER of the folder,
+     *                 directly or through a group)
+     * @param changes  permission change requests
+     */
+    @Transactional
+    public void shareFolder(String folderId, String userId, List<ShareDto.PermissionChange> changes) {
+        if (folderRepository.findById(folderId).isEmpty()) {
+            throw new PassboltApiException(HttpStatus.NOT_FOUND, "The folder does not exist.");
+        }
+        if (!permissionRepository.hasAccessIncludingGroups(
+                FolderService.FOLDER_ACO, folderId, userId, Permission.OWNER)) {
+            throw new SecurityException("You are not authorized to share this folder.");
+        }
+
+        List<Permission> current = permissionRepository
+                .findByAcoAndAcoForeignKey(FolderService.FOLDER_ACO, folderId);
+        ChangeSet changeSet = computeChanges(current, changes);
+
+        Set<String> before = usersIdsHavingAccess(toSimPerms(current));
+        Set<String> after = usersIdsHavingAccess(changeSet.result());
+        Set<String> added = difference(after, before);
+        Set<String> removed = difference(before, after);
+
+        // Persist the validated change set (Folder ACO).
+        for (String permissionId : changeSet.deletedIds()) {
+            permissionRepository.deleteById(permissionId);
+            log.info("Removed permission {} on folder {}", permissionId, folderId);
+        }
+        for (Map.Entry<String, Integer> update : changeSet.updatedTypes().entrySet()) {
+            permissionRepository.findById(update.getKey()).ifPresent(perm -> {
+                perm.setType(update.getValue());
+                permissionRepository.save(perm);
+                log.info("Updated permission {} on folder {} to type {}",
+                        perm.getId(), folderId, update.getValue());
+            });
+        }
+        for (SimPerm create : changeSet.created()) {
+            Permission perm = new Permission();
+            perm.setAco(FolderService.FOLDER_ACO);
+            perm.setAcoForeignKey(folderId);
+            perm.setAro(create.aro);
+            perm.setAroForeignKey(create.aroForeignKey);
+            perm.setType(create.type);
+            permissionRepository.save(perm);
+            log.info("Created permission for {} {} on folder {} with type {}",
+                    create.aro, create.aroForeignKey, folderId, create.type);
+        }
+
+        // Tree maintenance.
+        for (String addedUserId : added) {
+            if (foldersRelationRepository.findByUserIdAndForeignId(addedUserId, folderId).isEmpty()) {
+                FoldersRelation relation = new FoldersRelation();
+                relation.setForeignModel(FoldersRelation.FOREIGN_MODEL_FOLDER);
+                relation.setForeignId(folderId);
+                relation.setUserId(addedUserId);
+                relation.setFolderParentId(null);
+                foldersRelationRepository.save(relation);
+            }
+        }
+        for (String lostUserId : removed) {
+            foldersRelationRepository.moveUserChildrenToRoot(lostUserId, folderId);
+            foldersRelationRepository.deleteByUserIdAndForeignId(lostUserId, folderId);
         }
     }
 
@@ -537,7 +633,11 @@ public class PermissionService {
 
     /**
      * User ids having access through the given (real or simulated) permission
-     * rows: direct User rows ∪ Group rows fanned out via groups_users.
+     * rows: direct User rows ∪ Group rows fanned out via groups_users. The
+     * fan-out filters soft-deleted users defensively — a deleted user left in
+     * a group (legacy data) must never be required to receive a Secret, or
+     * group shares would dead-lock (its gpg key is soft-deleted, clients
+     * cannot encrypt for it).
      */
     private Set<String> usersIdsHavingAccess(List<SimPerm> permissions) {
         Set<String> userIds = new LinkedHashSet<>();
@@ -545,11 +645,7 @@ public class PermissionService {
             if (Permission.USER_ARO.equals(perm.aro)) {
                 userIds.add(perm.aroForeignKey);
             } else if (Permission.GROUP_ARO.equals(perm.aro)) {
-                for (GroupUser membership : groupUserRepository.findByGroupId(perm.aroForeignKey)) {
-                    if (membership.getUserId() != null) {
-                        userIds.add(membership.getUserId());
-                    }
-                }
+                userIds.addAll(groupUserRepository.findActiveMemberUserIds(perm.aroForeignKey));
             }
         }
         return userIds;

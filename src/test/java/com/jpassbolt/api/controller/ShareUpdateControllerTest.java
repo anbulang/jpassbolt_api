@@ -2,11 +2,15 @@ package com.jpassbolt.api.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jpassbolt.api.model.Favorite;
+import com.jpassbolt.api.model.Folder;
+import com.jpassbolt.api.model.FoldersRelation;
 import com.jpassbolt.api.model.Permission;
 import com.jpassbolt.api.model.Resource;
 import com.jpassbolt.api.model.Secret;
 import com.jpassbolt.api.model.User;
 import com.jpassbolt.api.repository.FavoriteRepository;
+import com.jpassbolt.api.repository.FolderRepository;
+import com.jpassbolt.api.repository.FoldersRelationRepository;
 import com.jpassbolt.api.repository.PermissionRepository;
 import com.jpassbolt.api.repository.ResourceRepository;
 import com.jpassbolt.api.repository.SecretRepository;
@@ -64,6 +68,12 @@ class ShareUpdateControllerTest {
     private UserRepository userRepository;
 
     @Autowired
+    private FolderRepository folderRepository;
+
+    @Autowired
+    private FoldersRelationRepository foldersRelationRepository;
+
+    @Autowired
     private ObjectMapper objectMapper;
 
     private User ownerUser;
@@ -78,6 +88,8 @@ class ShareUpdateControllerTest {
         permissionRepository.deleteAll();
         secretRepository.deleteAll();
         favoriteRepository.deleteAll();
+        foldersRelationRepository.deleteAll();
+        folderRepository.deleteAll();
         resourceRepository.deleteAll();
         userRepository.deleteAll();
 
@@ -343,6 +355,91 @@ class ShareUpdateControllerTest {
                 .content(objectMapper.writeValueAsString(Map.of("permissions", List.of()))))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.header.message").value("The folder does not exist."));
+    }
+
+    @Test
+    void testShareFolderGrantAndRevoke() throws Exception {
+        // Owner's folder: Folder ACO permission + tree row.
+        Folder folder = new Folder();
+        folder.setName("Shared Folder");
+        folder.setCreatedBy(ownerUser.getId());
+        folder.setModifiedBy(ownerUser.getId());
+        folderRepository.save(folder);
+
+        Permission folderOwner = new Permission();
+        folderOwner.setAco("Folder");
+        folderOwner.setAcoForeignKey(folder.getId());
+        folderOwner.setAro(Permission.USER_ARO);
+        folderOwner.setAroForeignKey(ownerUser.getId());
+        folderOwner.setType(Permission.OWNER);
+        permissionRepository.save(folderOwner);
+
+        FoldersRelation ownerRel = new FoldersRelation();
+        ownerRel.setForeignModel(FoldersRelation.FOREIGN_MODEL_FOLDER);
+        ownerRel.setForeignId(folder.getId());
+        ownerRel.setUserId(ownerUser.getId());
+        foldersRelationRepository.save(ownerRel);
+
+        // Grant READ to targetUser (no secrets — folders carry none).
+        Map<String, Object> grant = Map.of(
+                "permissions", List.of(Map.of(
+                        "aro", "User",
+                        "aro_foreign_key", targetUser.getId(),
+                        "type", Permission.READ,
+                        "is_new", true)));
+        mockMvc.perform(put("/share/folder/" + folder.getId() + ".json")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(grant)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.header.status").value("success"))
+                .andExpect(jsonPath("$.body").value(nullValue()));
+
+        Permission granted = permissionRepository
+                .findByAcoForeignKeyAndAroForeignKey(folder.getId(), targetUser.getId())
+                .orElseThrow();
+        assertThat(granted.getAco()).isEqualTo("Folder");
+        // The folder enters the grantee's tree at the root.
+        assertThat(foldersRelationRepository
+                .findByUserIdAndForeignId(targetUser.getId(), folder.getId())).isPresent();
+
+        // Revoke targetUser's access again.
+        Map<String, Object> revoke = Map.of(
+                "permissions", List.of(Map.of(
+                        "id", granted.getId(),
+                        "delete", true)));
+        mockMvc.perform(put("/share/folder/" + folder.getId() + ".json")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(revoke)))
+                .andExpect(status().isOk());
+
+        assertThat(permissionRepository
+                .findByAcoForeignKeyAndAroForeignKey(folder.getId(), targetUser.getId())).isEmpty();
+        assertThat(foldersRelationRepository
+                .findByUserIdAndForeignId(targetUser.getId(), folder.getId())).isEmpty();
+    }
+
+    @Test
+    void testShareFolderAsNonOwnerForbidden() throws Exception {
+        // readerUser owns nothing on this folder; ownerUser (the caller) has
+        // only READ → 403.
+        Folder folder = new Folder();
+        folder.setName("Not Mine");
+        folder.setCreatedBy(readerUser.getId());
+        folder.setModifiedBy(readerUser.getId());
+        folderRepository.save(folder);
+
+        Permission readOnly = new Permission();
+        readOnly.setAco("Folder");
+        readOnly.setAcoForeignKey(folder.getId());
+        readOnly.setAro(Permission.USER_ARO);
+        readOnly.setAroForeignKey(ownerUser.getId());
+        readOnly.setType(Permission.READ);
+        permissionRepository.save(readOnly);
+
+        mockMvc.perform(put("/share/folder/" + folder.getId() + ".json")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(Map.of("permissions", List.of()))))
+                .andExpect(status().isForbidden());
     }
 
     @Test

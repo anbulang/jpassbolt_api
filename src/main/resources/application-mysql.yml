@@ -1,8 +1,9 @@
 spring:
   datasource:
-    url: jdbc:mysql://REDACTED-DB-HOST:3307/jpassbolt
-    username: root
-    password: REDACTED-ROTATED-DB-PW
+    # Secrets are injected through environment variables — never committed.
+    url: ${JPASSBOLT_DB_URL:jdbc:mysql://localhost:3306/jpassbolt}
+    username: ${JPASSBOLT_DB_USERNAME:jpassbolt}
+    password: ${JPASSBOLT_DB_PASSWORD:}
     driver-class-name: com.mysql.cj.jdbc.Driver
   jpa:
     hibernate:

@@ -51,6 +51,25 @@ public interface FoldersRelationRepository extends JpaRepository<FoldersRelation
      */
     void deleteByForeignId(String foreignId);
 
+    /**
+     * Remove an item from one user's tree (access revocation cascade, PHP
+     * FoldersRelationsRemoveItemFromUserTreeService). Caller must be
+     * @Transactional.
+     */
+    void deleteByUserIdAndForeignId(String userId, String foreignId);
+
+    /**
+     * Move every direct child of a folder to the root in ONE user's tree
+     * (used when the folder disappears from that user's tree after a share
+     * revocation).
+     */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("UPDATE FoldersRelation fr SET fr.folderParentId = NULL " +
+            "WHERE fr.userId = :userId AND fr.folderParentId = :folderParentId")
+    int moveUserChildrenToRoot(
+            @Param("userId") String userId,
+            @Param("folderParentId") String folderParentId);
+
     /** Users seeing the given item (one tree row each). */
     @Query("SELECT fr.userId FROM FoldersRelation fr WHERE fr.foreignId = :foreignId")
     List<String> findUserIdsByForeignId(@Param("foreignId") String foreignId);

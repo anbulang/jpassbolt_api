@@ -104,6 +104,45 @@ public class GroupDto {
     }
 
     /**
+     * Optional body of DELETE /groups/{id}.json
+     * (PHP GroupsDeleteController transfer support).
+     */
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class DeleteRequest {
+        private Transfer transfer;
+    }
+
+    /**
+     * Ownership transfer instructions for group deletion.
+     */
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class Transfer {
+        private List<TransferOwner> owners;
+    }
+
+    /**
+     * A permission to promote to OWNER(15) as part of a deletion transfer.
+     */
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class TransferOwner {
+        /** Permission id to promote to OWNER(15). */
+        private String id;
+
+        /** Resource id the permission applies to. */
+        @JsonProperty("aco_foreign_key")
+        private String acoForeignKey;
+    }
+
+    /**
      * Group response body (OpenAPI groupIndexAndView).
      */
     @Data

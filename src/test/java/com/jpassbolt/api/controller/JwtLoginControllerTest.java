@@ -210,6 +210,24 @@ class JwtLoginControllerTest {
     }
 
     @Test
+    void testLoginWithUnsignedChallenge_Returns400() throws Exception {
+        // Encrypted but NOT signed with the user key: the server must reject
+        // it (PHP InvalidUserSignatureException → 400).
+        String json = challengeJson("1.0.0", fullBaseUrl,
+                UUID.randomUUID().toString(), Instant.now().getEpochSecond() + 60);
+        PGPPublicKey serverKey = GpgTestHelper.loadPublicKey(gpgService.getServerPublicKey());
+        String unsignedChallenge = GpgTestHelper.encrypt(json, serverKey);
+
+        mockMvc.perform(post("/auth/jwt/login.json")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(loginBody(testUser.getId(), unsignedChallenge))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.header.status").value("error"))
+                .andExpect(jsonPath("$.header.message")
+                        .value("The user signature could not be verified."));
+    }
+
+    @Test
     void testLoginWithWrongDomain_Returns400() throws Exception {
         String challenge = buildChallenge("1.0.0", "https://evil.example.com",
                 UUID.randomUUID().toString(), Instant.now().getEpochSecond() + 60);
@@ -268,19 +286,31 @@ class JwtLoginControllerTest {
 
     /**
      * Build the armored client challenge: clear-text JSON encrypted with the
-     * server public key (the official client also signs it with the user
-     * key — signature verification is a known deviation, see JwtAuthService).
+     * server public key AND signed with the "user" private key (which is the
+     * server key in this test setup) — the server verifies the user
+     * signature like PHP gpg->decrypt(verify: true).
      */
     private String buildChallenge(String version, String domain, String verifyToken, long expiry) throws Exception {
+        String json = challengeJson(version, domain, verifyToken, expiry);
+        PGPPublicKey serverKey = GpgTestHelper.loadPublicKey(gpgService.getServerPublicKey());
+        var signerRing = GpgTestHelper.loadSecretKeyRing(loadServerPrivateKeyArmored());
+        return GpgTestHelper.encryptAndSign(json, serverKey,
+                GpgTestHelper.getSigningSecretKey(signerRing), "password");
+    }
+
+    private String challengeJson(String version, String domain, String verifyToken, long expiry) throws Exception {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("version", version);
         payload.put("domain", domain);
         payload.put("verify_token", verifyToken);
         payload.put("verify_token_expiry", expiry);
-        String json = objectMapper.writeValueAsString(payload);
+        return objectMapper.writeValueAsString(payload);
+    }
 
-        PGPPublicKey serverKey = GpgTestHelper.loadPublicKey(gpgService.getServerPublicKey());
-        return GpgTestHelper.encrypt(json, serverKey);
+    private String loadServerPrivateKeyArmored() throws Exception {
+        try (var in = getClass().getResourceAsStream("/gpg/server_private.asc")) {
+            return new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+        }
     }
 
     private JwtAuthDto.LoginRequest loginBody(String userId, String challenge) {

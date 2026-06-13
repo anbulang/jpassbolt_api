@@ -7733,25 +7733,24 @@ components:
                 required:
                   - Secret
                 properties:
+                  # PHP GroupsUpdateController::_formatDryRunResult emits
+                  # ['Secret' => [$secret]] — an ARRAY wrapping one
+                  # {resource_id, data} secret (select(['resource_id','data'])).
+                  # The spec originally declared an object here, contradicting
+                  # the reference implementation; the PHP output wins.
                   Secret:
-                    type: object
-                    required:
-                      - id
-                      - resource_id
-                      - user_id
-                      - data
-                    properties:
-                      id:
-                        type: string
-                        format: uuid
-                      resource_id:
-                        type: string
-                        format: uuid
-                      user_id:
-                        type: string
-                        format: uuid
-                      data:
-                        type: string
+                    type: array
+                    items:
+                      type: object
+                      required:
+                        - resource_id
+                        - data
+                      properties:
+                        resource_id:
+                          type: string
+                          format: uuid
+                        data:
+                          type: string
     groupDeleteDryRunError:
       type: object
       properties:

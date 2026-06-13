@@ -122,10 +122,28 @@ public class UserDto {
         private List<TransferOwner> owners;
 
         /**
-         * Group manager transfers — Groups are not implemented yet, the key
-         * is accepted and ignored. TODO(groups-crud): support managers.
+         * Group manager transfers: groups_users rows to promote to manager
+         * (PHP UsersDeleteController::_transferGroupsManagers).
          */
-        private List<Object> managers;
+        private List<TransferManager> managers;
+    }
+
+    /**
+     * A groups_users membership to promote to manager (is_admin=true) as part
+     * of a deletion transfer.
+     */
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class TransferManager {
+
+        /** groups_users id to promote to manager. */
+        private String id;
+
+        /** Group the membership belongs to. */
+        @JsonProperty("group_id")
+        private String groupId;
     }
 
     /**

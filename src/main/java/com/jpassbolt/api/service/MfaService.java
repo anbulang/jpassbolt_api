@@ -52,10 +52,17 @@ import java.util.UUID;
  * </p>
  *
  * <p>
- * TODO (security debt, also flagged in the blueprint): PHP throttles failed
- * MFA attempts via {@code MfaRateLimiterService} backed by the
- * {@code action_logs} table, which this project does not have. Until a rate
- * limiter is added, 6-digit codes are brute-forceable in theory.
+ * Brute-force protection: PHP throttles failed MFA attempts via
+ * {@code MfaRateLimiterService} backed by the {@code action_logs} table,
+ * which this project does not have. Instead, an in-memory per-user failure
+ * counter with exponential backoff is enforced here (see
+ * {@link #assertMfaAttemptAllowed(String)} /
+ * {@link #recordMfaAttempt(String, boolean)}): after
+ * {@value #MFA_MAX_FAILED_ATTEMPTS} consecutive failures the user is
+ * temporarily locked out (429), the lockout doubling with every further
+ * failure. State is per-node and resets on restart — acceptable for the
+ * online brute-force threat model (10^6 TOTP combinations cannot be swept
+ * within lockout windows).
  * </p>
  */
 @Slf4j
@@ -69,6 +76,13 @@ public class MfaService {
     /** PHP MfaVerifiedToken::MAX_DURATION ("30 days"). */
     public static final int MFA_TOKEN_MAX_DURATION_DAYS = 30;
 
+    /** Consecutive failures tolerated before the lockout kicks in. */
+    public static final int MFA_MAX_FAILED_ATTEMPTS = 4;
+    /** First lockout duration; doubles with every further failure. */
+    public static final long MFA_LOCKOUT_BASE_SECONDS = 30;
+    /** Upper bound of the exponential backoff. */
+    public static final long MFA_LOCKOUT_MAX_SECONDS = 3600;
+
     private static final String ACCOUNT_PROPERTY_ID_SEED = "account.setting.mfa";
     private static final String ORGANIZATION_PROPERTY_ID_SEED = "organization.setting.mfa";
 
@@ -78,6 +92,54 @@ public class MfaService {
     private final TotpService totpService;
     private final ObjectMapper objectMapper;
     private final SettingsProperties settingsProperties;
+
+    /** Per-user consecutive MFA failure state (in-memory, per node). */
+    private final java.util.concurrent.ConcurrentHashMap<String, FailureState> mfaFailures = new java.util.concurrent.ConcurrentHashMap<>();
+
+    // ------------------------------------------------------------------
+    // Brute-force protection (replaces PHP MfaRateLimiterService)
+    // ------------------------------------------------------------------
+
+    /**
+     * Reject the attempt with 429 while the user is locked out following too
+     * many consecutive MFA failures. Call BEFORE validating a code.
+     */
+    public void assertMfaAttemptAllowed(String userId) {
+        FailureState state = mfaFailures.get(userId);
+        if (state != null && state.lockedUntilEpochMs > System.currentTimeMillis()) {
+            throw new com.jpassbolt.api.exception.PassboltApiException(
+                    org.springframework.http.HttpStatus.TOO_MANY_REQUESTS,
+                    "Too many failed attempts. Please try again later.");
+        }
+    }
+
+    /**
+     * Record the outcome of an MFA code validation. A success clears the
+     * counter; from {@value #MFA_MAX_FAILED_ATTEMPTS} consecutive failures on,
+     * a temporary lockout is armed, doubling with every further failure
+     * (capped at {@value #MFA_LOCKOUT_MAX_SECONDS}s).
+     */
+    public void recordMfaAttempt(String userId, boolean success) {
+        if (success) {
+            mfaFailures.remove(userId);
+            return;
+        }
+        mfaFailures.compute(userId, (key, state) -> {
+            int failures = (state == null ? 0 : state.failures) + 1;
+            long lockedUntil = 0;
+            if (failures >= MFA_MAX_FAILED_ATTEMPTS) {
+                long lockSeconds = Math.min(MFA_LOCKOUT_MAX_SECONDS,
+                        MFA_LOCKOUT_BASE_SECONDS * (1L << Math.min(20, failures - MFA_MAX_FAILED_ATTEMPTS)));
+                lockedUntil = System.currentTimeMillis() + lockSeconds * 1000L;
+                log.warn("MFA lockout armed for user {} ({} consecutive failures, {}s)",
+                        userId, failures, lockSeconds);
+            }
+            return new FailureState(failures, lockedUntil);
+        });
+    }
+
+    private record FailureState(int failures, long lockedUntilEpochMs) {
+    }
 
     // ------------------------------------------------------------------
     // Settings resolution (PHP MfaSettings / MfaOrgSettings)

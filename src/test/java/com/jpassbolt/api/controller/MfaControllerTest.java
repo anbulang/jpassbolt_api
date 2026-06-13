@@ -19,6 +19,7 @@ import com.jpassbolt.api.repository.ResourceRepository;
 import com.jpassbolt.api.repository.RoleRepository;
 import com.jpassbolt.api.repository.SecretRepository;
 import com.jpassbolt.api.repository.UserRepository;
+import com.jpassbolt.api.service.MfaService;
 import com.jpassbolt.api.service.TotpService;
 import jakarta.servlet.http.Cookie;
 import org.junit.jupiter.api.BeforeEach;
@@ -332,6 +333,33 @@ class MfaControllerTest {
                 .andExpect(jsonPath("$.header.message")
                         .value("Something went wrong when validating the one-time password."))
                 .andExpect(jsonPath("$.body.totp.isValidOtp").value("This OTP is not valid."));
+    }
+
+    @Test
+    void testVerifyPost_TooManyFailures_LockedOut429() throws Exception {
+        seedOrgMfa("totp");
+        String uri = seedUserTotp(testUser);
+        String code = totpService.generateCurrentCode(uri);
+        String wrong = code.equals("111111") ? "222222" : "111111";
+
+        // Burn through the tolerated consecutive failures.
+        for (int i = 0; i < MfaService.MFA_MAX_FAILED_ATTEMPTS; i++) {
+            mockMvc.perform(post("/mfa/verify/totp.json")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"totp\":\"" + wrong + "\"}"))
+                    .andExpect(status().isBadRequest());
+        }
+
+        // Locked out now — even a VALID code is rejected with 429.
+        mockMvc.perform(post("/mfa/verify/totp.json")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"totp\":\"" + code + "\"}"))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(jsonPath("$.header.message")
+                        .value("Too many failed attempts. Please try again later."));
+
+        // No mfa verified token must have been issued.
+        assertThat(mfaTokensOf(testUser)).isEmpty();
     }
 
     @Test

@@ -19,6 +19,9 @@ jpassbolt:
   jwt:
     secret: REDACTED-LEGACY-HMAC
     expiration: 3600000
+    # Tests run with an ephemeral in-memory RS256 pair (no key pair is
+    # committed to the repository anymore).
+    allow-ephemeral-dev-key: true
   gpg:
     server-key:
       private-location: classpath:gpg/server_private.asc

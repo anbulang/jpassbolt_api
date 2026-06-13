@@ -38,13 +38,12 @@ import java.util.regex.Pattern;
  * </p>
  *
  * <p>
- * Known deviation from PHP: the official backend uses
- * {@code gpg->decrypt(..., verify: true)} (the client challenge must be
- * SIGNED with the user key) and {@code gpg->encryptSign(...)} (the response
- * is signed with the server key). The current {@link GpgService} interface
- * only exposes plain {@code encrypt}/{@code decrypt}; signature
- * production/verification is therefore skipped for now — see the
- * integration request to extend GpgService.
+ * Signature handling matches PHP: the client challenge MUST be signed with
+ * the user key ({@code gpg->decrypt(..., verify: true)} — an unsigned or
+ * badly signed challenge is rejected with "The user signature could not be
+ * verified."), and the response challenge is encrypted with the user key AND
+ * signed with the server key ({@code gpg->encryptSign(...)}), restoring the
+ * mutual authentication guarantee of the GpgJwtAuthenticator.
  * </p>
  */
 @Slf4j
@@ -128,11 +127,16 @@ public class JwtAuthService {
                     "The user challenge is missing or invalid.");
         }
 
-        // Decrypt with the server private key (PHP also verifies the user
-        // signature here — see the class-level deviation note)
+        // Decrypt with the server private key AND verify the user signature
+        // (PHP GpgJwtAuthenticator::verifyChallenge — decrypt(verify: true)).
         String clearTextChallenge;
         try {
-            clearTextChallenge = gpgService.decrypt(armoredChallenge);
+            clearTextChallenge = gpgService.decryptVerify(armoredChallenge, gpgKey.getArmoredKey());
+        } catch (GpgService.InvalidSignatureException e) {
+            // PHP InvalidUserSignatureException (400)
+            log.warn("JWT login: invalid challenge signature for user {}: {}", userId, e.getMessage());
+            throw new PassboltApiException(HttpStatus.BAD_REQUEST,
+                    "The user signature could not be verified.");
         } catch (Exception e) {
             log.warn("JWT login: challenge decryption failed for user {}: {}", userId, e.getMessage());
             throw new PassboltApiException(HttpStatus.BAD_REQUEST,
@@ -191,7 +195,9 @@ public class JwtAuthService {
 
         try {
             String json = objectMapper.writeValueAsString(response);
-            String armored = gpgService.encrypt(json, gpgKey.getArmoredKey());
+            // Encrypt with the user key and SIGN with the server key (PHP
+            // makeArmoredChallenge → gpg->encryptSign).
+            String armored = gpgService.encryptSign(json, gpgKey.getArmoredKey());
             log.info("JWT login successful for user {}", user.getUsername());
             return armored;
         } catch (PassboltApiException e) {

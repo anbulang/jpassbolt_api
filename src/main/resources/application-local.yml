@@ -12,3 +12,13 @@ spring:
     properties:
       hibernate:
         format_sql: true
+
+jpassbolt:
+  jwt:
+    # Local development only: generate an ephemeral in-memory RS256 pair at
+    # startup instead of requiring an externally injected key pair.
+    allow-ephemeral-dev-key: true
+  gpg:
+    server-key:
+      # Passphrase of the committed DEV-ONLY server key (gpg/server_private.asc).
+      passphrase: password

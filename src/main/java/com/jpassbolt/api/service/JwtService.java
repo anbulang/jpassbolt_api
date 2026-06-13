@@ -13,6 +13,8 @@ import org.springframework.stereotype.Service;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyFactory;
+import java.security.KeyPair;
+import java.security.KeyPairGenerator;
 import java.security.interfaces.RSAPrivateKey;
 import java.security.interfaces.RSAPublicKey;
 import java.security.spec.PKCS8EncodedKeySpec;
@@ -48,13 +50,25 @@ public class JwtService {
     @Value("${jpassbolt.jwt.expiration}")
     private long jwtExpiration;
 
-    /** PKCS#8 PEM private key, defaults to the bundled dev key (override in production). */
-    @Value("${jpassbolt.jwt.private-key-location:classpath:jwt/jwt.key}")
+    /**
+     * PKCS#8 PEM private key location. No key is bundled with the repository:
+     * production MUST inject a deployment-specific pair (fail-fast below).
+     */
+    @Value("${jpassbolt.jwt.private-key-location:}")
     private String privateKeyLocation;
 
     /** X.509/SPKI PEM public key matching the private key. */
-    @Value("${jpassbolt.jwt.public-key-location:classpath:jwt/jwt.pem}")
+    @Value("${jpassbolt.jwt.public-key-location:}")
     private String publicKeyLocation;
+
+    /**
+     * Dev/test escape hatch (local profile + tests only): when no external
+     * key pair is configured, generate an ephemeral in-memory RS256 pair
+     * instead of refusing to start. NEVER enable in production — tokens do
+     * not survive a restart and the key is never persisted.
+     */
+    @Value("${jpassbolt.jwt.allow-ephemeral-dev-key:false}")
+    private boolean allowEphemeralDevKey;
 
     /** iss claim — PHP Router::url('/', true). Reuses the settings cluster's full-base-url. */
     @Value("${jpassbolt.settings.full-base-url:http://localhost:8080}")
@@ -66,6 +80,26 @@ public class JwtService {
 
     @PostConstruct
     public void loadKeys() {
+        boolean externalPairConfigured = privateKeyLocation != null && !privateKeyLocation.isBlank()
+                && publicKeyLocation != null && !publicKeyLocation.isBlank();
+
+        if (!externalPairConfigured) {
+            if (!allowEphemeralDevKey) {
+                // Fail-fast: never fall back to a bundled/predictable key.
+                // Anyone holding a known private key could forge an access
+                // token for ANY user (sub = user UUID), i.e. full account
+                // takeover — refusing to start is the only safe behaviour.
+                throw new IllegalStateException(
+                        "No JWT RS256 key pair configured. Set jpassbolt.jwt.private-key-location and "
+                                + "jpassbolt.jwt.public-key-location (e.g. via JPASSBOLT_JWT_PRIVATE_KEY_LOCATION / "
+                                + "JPASSBOLT_JWT_PUBLIC_KEY_LOCATION) to a deployment-specific key pair. "
+                                + "Bundled development keys are no longer shipped; ephemeral dev keys are only "
+                                + "allowed with jpassbolt.jwt.allow-ephemeral-dev-key=true (local/test profiles).");
+            }
+            generateEphemeralDevKeyPair();
+            return;
+        }
+
         try {
             KeyFactory keyFactory = KeyFactory.getInstance("RSA");
 
@@ -82,6 +116,28 @@ public class JwtService {
             // Mirrors the PHP InvalidJwtKeyPairException + Log::alert path
             log.error("Failed to load the JWT RSA key pair", e);
             throw new IllegalStateException("Failed to load the JWT RSA key pair", e);
+        }
+    }
+
+    /**
+     * Dev/test only: in-memory RS256 pair, never persisted. The PEM form of
+     * the public key is still derived so the JWKS/rsa endpoints keep working.
+     */
+    private void generateEphemeralDevKeyPair() {
+        try {
+            KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
+            generator.initialize(2048);
+            KeyPair pair = generator.generateKeyPair();
+            privateKey = (RSAPrivateKey) pair.getPrivate();
+            publicKey = (RSAPublicKey) pair.getPublic();
+            publicKeyPem = "-----BEGIN PUBLIC KEY-----\n"
+                    + Base64.getMimeEncoder(64, "\n".getBytes(StandardCharsets.UTF_8))
+                            .encodeToString(publicKey.getEncoded())
+                    + "\n-----END PUBLIC KEY-----\n";
+            log.warn("JWT RS256: using an EPHEMERAL in-memory dev key pair "
+                    + "(allow-ephemeral-dev-key=true). Do NOT use in production.");
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to generate the ephemeral JWT RSA key pair", e);
         }
     }
 
@@ -154,6 +210,10 @@ public class JwtService {
         return Jwts
                 .parserBuilder()
                 .setSigningKey(publicKey)
+                // iss must match this deployment (defence in depth: a token
+                // signed for another instance/domain is rejected even if the
+                // key pair were ever shared between deployments).
+                .requireIssuer(fullBaseUrl)
                 .build()
                 .parseClaimsJws(token)
                 .getBody();

@@ -1,10 +1,12 @@
 package com.jpassbolt.api.service;
 
 import com.jpassbolt.api.dto.ResourceDto;
+import com.jpassbolt.api.model.FoldersRelation;
 import com.jpassbolt.api.model.Permission;
 import com.jpassbolt.api.model.Resource;
 import com.jpassbolt.api.model.Secret;
 import com.jpassbolt.api.repository.FavoriteRepository;
+import com.jpassbolt.api.repository.FoldersRelationRepository;
 import com.jpassbolt.api.repository.PermissionRepository;
 import com.jpassbolt.api.repository.ResourceRepository;
 import com.jpassbolt.api.repository.SecretRepository;
@@ -29,6 +31,7 @@ public class ResourceService {
     private final SecretRepository secretRepository;
     private final PermissionRepository permissionRepository;
     private final FavoriteRepository favoriteRepository;
+    private final FoldersRelationRepository foldersRelationRepository;
 
     /**
      * Get all non-deleted resources that the user has at least READ access to.
@@ -112,6 +115,17 @@ public class ResourceService {
             }
         }
 
+        // Folder-tree integration (PHP Folders plugin ResourcesEventListener
+        // afterResourceAdded): the resource enters the creator's tree, under
+        // the requested folder_parent_id or at the root. Without this row the
+        // move endpoint would 404 on freshly created resources.
+        FoldersRelation relation = new FoldersRelation();
+        relation.setForeignModel(FoldersRelation.FOREIGN_MODEL_RESOURCE);
+        relation.setForeignId(savedResource.getId());
+        relation.setUserId(userId);
+        relation.setFolderParentId(request.getFolderParentId());
+        foldersRelationRepository.save(relation);
+
         return savedResource;
     }
 
@@ -187,6 +201,9 @@ public class ResourceService {
                     // Cascade: hard-delete favorites of a soft-deleted resource
                     // (PHP ResourcesTable::softDelete), same transaction.
                     favoriteRepository.deleteByForeignKey(id);
+                    // Drop the resource from every user's folder tree (PHP
+                    // ResourcesEventListener afterResourceSoftDeleted).
+                    foldersRelationRepository.deleteByForeignId(id);
                     return true;
                 })
                 .orElse(false);

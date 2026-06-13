@@ -163,10 +163,15 @@ public class GroupController {
         /**
          * DELETE /groups/{groupId}.json
          * Deletes a group. Requires the group manager role or the admin role.
-         * Blocked (400) while the group is the sole owner of a shared resource.
+         * Supports the optional {transfer: {owners: [{id, aco_foreign_key}]}}
+         * body (PHP _transferContentOwners) used by the official frontend to
+         * hand over sole-owner permissions; blocked (400) while the group
+         * remains the sole owner of a shared resource after the transfer.
          */
         @DeleteMapping("/groups/{id}.json")
-        public ResponseEntity<Map<String, Object>> deleteGroup(@PathVariable String id) {
+        public ResponseEntity<Map<String, Object>> deleteGroup(
+                        @PathVariable String id,
+                        @RequestBody(required = false) GroupDto.DeleteRequest request) {
                 String userId = getCurrentUserId();
                 String url = "/groups/" + id + ".json";
 
@@ -181,14 +186,13 @@ public class GroupController {
                                         .body(createResponse("error", FORBIDDEN_MESSAGE, null, url));
                 }
 
-                List<Resource> blocking = groupService.findSoleOwnerBlockingResources(id);
-                if (!blocking.isEmpty()) {
+                try {
+                        groupService.deleteGroup(id, userId, request);
+                } catch (GroupService.GroupSoleOwnerConflictException e) {
                         return ResponseEntity.status(400)
                                         .body(createResponse("error", SOLE_OWNER_MESSAGE,
-                                                        soleOwnerErrorBody(blocking), url));
+                                                        soleOwnerErrorBody(e.getBlockingResources()), url));
                 }
-
-                groupService.deleteGroup(id, userId);
                 return ResponseEntity.ok(createResponse("success", "The group was deleted successfully.",
                                 null, url));
         }
@@ -315,8 +319,13 @@ public class GroupController {
 
         /**
          * Format the dry-run service result into the legacy V1 body shape
-         * required by the official plugin (OpenAPI groupUpdateDryRun):
-         * {"dry-run": {"SecretsNeeded": [{"Secret": {...}}], "Secrets": [{"Secret": {...}}]}}
+         * required by the official plugin (PHP _formatDryRunResult):
+         * {"dry-run": {"SecretsNeeded": [{"Secret": {resource_id, user_id}}],
+         * "Secrets": [{"Secret": [{resource_id, data}]}]}} — note the
+         * asymmetry: each SecretsNeeded entry wraps an OBJECT, each Secrets
+         * entry wraps an ARRAY containing one {resource_id, data} secret
+         * (PHP `['Secret' => [$secret]]` with select(['resource_id','data'])).
+         * The plugin parses Secrets as Secret[0].data.
          */
         @SuppressWarnings("unchecked")
         private Map<String, Object> toDryRunBody(Map<String, Object> result) {
@@ -330,11 +339,9 @@ public class GroupController {
                 List<Map<String, Object>> secretsBody = operatorSecrets.stream()
                                 .map(secret -> {
                                         Map<String, Object> secretMap = new LinkedHashMap<>();
-                                        secretMap.put("id", secret.getId());
                                         secretMap.put("resource_id", secret.getResourceId());
-                                        secretMap.put("user_id", secret.getUserId());
                                         secretMap.put("data", secret.getData());
-                                        return Map.<String, Object>of("Secret", secretMap);
+                                        return Map.<String, Object>of("Secret", List.of(secretMap));
                                 })
                                 .collect(Collectors.toList());
 

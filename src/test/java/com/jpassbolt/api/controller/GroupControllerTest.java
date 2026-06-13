@@ -588,9 +588,12 @@ class GroupControllerTest {
                                 .andExpect(jsonPath("$.body['dry-run'].SecretsNeeded[0].Secret.user_id")
                                                 .value(bob.getId()))
                                 .andExpect(jsonPath("$.body['dry-run'].Secrets.length()").value(1))
-                                .andExpect(jsonPath("$.body['dry-run'].Secrets[0].Secret.resource_id")
+                                // PHP legacy V1 shape: Secrets entries wrap an ARRAY —
+                                // {"Secret": [{resource_id, data}]} (the plugin reads
+                                // Secret[0].data).
+                                .andExpect(jsonPath("$.body['dry-run'].Secrets[0].Secret[0].resource_id")
                                                 .value(resource.getId()))
-                                .andExpect(jsonPath("$.body['dry-run'].Secrets[0].Secret.data").value(PGP_DATA));
+                                .andExpect(jsonPath("$.body['dry-run'].Secrets[0].Secret[0].data").value(PGP_DATA));
 
                 // Dry run must not change anything.
                 assertThat(groupUserRepository.findByGroupIdAndUserId(group.getId(), bob.getId()))

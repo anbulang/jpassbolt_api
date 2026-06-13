@@ -24,6 +24,10 @@ public class ResourceDto {
         @JsonProperty("resource_type_id")
         private String resourceTypeId;
 
+        /** Destination folder in the creator's tree (Folders plugin, v4). */
+        @JsonProperty("folder_parent_id")
+        private String folderParentId;
+
         // The encrypted secret data (PGP armored)
         private List<SecretData> secrets;
 

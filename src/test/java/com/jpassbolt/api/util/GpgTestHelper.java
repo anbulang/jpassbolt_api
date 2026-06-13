@@ -163,6 +163,83 @@ public class GpgTestHelper {
     }
 
     /**
+     * Encrypt data for a public key AND sign it with the given secret key
+     * (one-pass signature) — mirrors the official client which always signs
+     * the JWT login challenge with the user private key.
+     */
+    public static String encryptAndSign(String data, PGPPublicKey encryptionKey,
+            PGPSecretKey signingKey, String passphrase) throws Exception {
+        PGPPrivateKey signingPrivateKey = signingKey.extractPrivateKey(
+                new JcePBESecretKeyDecryptorBuilder()
+                        .setProvider(BouncyCastleProvider.PROVIDER_NAME)
+                        .build(passphrase.toCharArray()));
+
+        PGPSignatureGenerator signatureGenerator = new PGPSignatureGenerator(
+                new JcaPGPContentSignerBuilder(
+                        signingKey.getPublicKey().getAlgorithm(),
+                        org.bouncycastle.bcpg.HashAlgorithmTags.SHA256)
+                        .setProvider(BouncyCastleProvider.PROVIDER_NAME));
+        signatureGenerator.init(PGPSignature.BINARY_DOCUMENT, signingPrivateKey);
+
+        ByteArrayOutputStream encryptedOut = new ByteArrayOutputStream();
+        ArmoredOutputStream armoredOut = new ArmoredOutputStream(encryptedOut);
+
+        PGPEncryptedDataGenerator encryptedDataGenerator = new PGPEncryptedDataGenerator(
+                new JcePGPDataEncryptorBuilder(PGPEncryptedData.AES_256)
+                        .setWithIntegrityPacket(true)
+                        .setSecureRandom(new SecureRandom())
+                        .setProvider(BouncyCastleProvider.PROVIDER_NAME));
+        encryptedDataGenerator.addMethod(
+                new JcePublicKeyKeyEncryptionMethodGenerator(encryptionKey)
+                        .setProvider(BouncyCastleProvider.PROVIDER_NAME));
+
+        byte[] dataBytes = data.getBytes(StandardCharsets.UTF_8);
+
+        try (OutputStream encryptedStream = encryptedDataGenerator.open(armoredOut, new byte[4096])) {
+            signatureGenerator.generateOnePassVersion(false).encode(encryptedStream);
+            PGPLiteralDataGenerator literalDataGenerator = new PGPLiteralDataGenerator();
+            try (OutputStream literalOut = literalDataGenerator.open(
+                    encryptedStream,
+                    PGPLiteralData.UTF8,
+                    PGPLiteralData.CONSOLE,
+                    dataBytes.length,
+                    new Date())) {
+                literalOut.write(dataBytes);
+                signatureGenerator.update(dataBytes);
+            }
+            signatureGenerator.generate().encode(encryptedStream);
+        }
+
+        armoredOut.close();
+        return encryptedOut.toString(StandardCharsets.UTF_8);
+    }
+
+    /**
+     * Load the first secret key ring from an armored private key block.
+     */
+    public static PGPSecretKeyRing loadSecretKeyRing(String armoredPrivateKey) throws Exception {
+        InputStream keyStream = new ByteArrayInputStream(armoredPrivateKey.getBytes(StandardCharsets.UTF_8));
+        PGPSecretKeyRingCollection keyRings = new PGPSecretKeyRingCollection(
+                PGPUtil.getDecoderStream(keyStream),
+                new JcaKeyFingerprintCalculator());
+        return keyRings.iterator().next();
+    }
+
+    /**
+     * The signing-capable secret key of a ring (master key).
+     */
+    public static PGPSecretKey getSigningSecretKey(PGPSecretKeyRing ring) {
+        Iterator<PGPSecretKey> keys = ring.getSecretKeys();
+        while (keys.hasNext()) {
+            PGPSecretKey key = keys.next();
+            if (key.isSigningKey()) {
+                return key;
+            }
+        }
+        throw new RuntimeException("No signing key found");
+    }
+
+    /**
      * Decrypt data using a private key.
      */
     public static String decrypt(String encryptedData, PGPPrivateKey privateKey) throws Exception {
@@ -193,6 +270,12 @@ public class GpgTestHelper {
         if (decryptedObject instanceof PGPCompressedData) {
             PGPCompressedData compressedData = (PGPCompressedData) decryptedObject;
             decryptedFactory = new JcaPGPObjectFactory(compressedData.getDataStream());
+            decryptedObject = decryptedFactory.nextObject();
+        }
+
+        // Skip a one-pass signature header (signed payloads, e.g. the JWT
+        // login response which the server now encryptSign's).
+        if (decryptedObject instanceof PGPOnePassSignatureList) {
             decryptedObject = decryptedFactory.nextObject();
         }
 

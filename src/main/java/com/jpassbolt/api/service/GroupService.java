@@ -8,6 +8,7 @@ import com.jpassbolt.api.model.Permission;
 import com.jpassbolt.api.model.Resource;
 import com.jpassbolt.api.model.Role;
 import com.jpassbolt.api.model.Secret;
+import com.jpassbolt.api.repository.FavoriteRepository;
 import com.jpassbolt.api.repository.GroupRepository;
 import com.jpassbolt.api.repository.GroupUserRepository;
 import com.jpassbolt.api.repository.PermissionRepository;
@@ -39,10 +40,13 @@ import java.util.stream.Collectors;
  *
  * <ul>
  * <li>Only administrators can create groups (enforced by the controller).</li>
- * <li>Only group managers can add/remove members; additions/removals
- * requested by a non-manager operator are silently ignored (PHP
- * behavior). Both managers and admins can change the is_admin flag,
- * admins can rename the group.</li>
+ * <li>Only group managers can ADD members; additions requested by a
+ * non-manager operator are silently ignored (PHP GroupsUpdateService
+ * '@note requested additions will be ignored' + addGroupsUsers
+ * isUacManager gate). Removals and is_admin changes carry NO manager
+ * gate in PHP (updateGroupsUsers / deleteGroupsUsers) — the controller
+ * only requires manager-or-admin, so an organization admin can remove
+ * members. Admins can rename the group.</li>
  * <li>Adding a member requires the client to provide the member's encrypted
  * secrets for every resource the group has access to and the member
  * cannot access otherwise; the dry-run endpoint reports this list
@@ -63,6 +67,7 @@ public class GroupService {
     private final PermissionRepository permissionRepository;
     private final SecretRepository secretRepository;
     private final ResourceRepository resourceRepository;
+    private final FavoriteRepository favoriteRepository;
 
     // ------------------------------------------------------------------
     // Read operations
@@ -261,10 +266,9 @@ public class GroupService {
                 gu.setIsAdmin(Boolean.TRUE.equals(change.getIsAdmin()));
                 toAdd.add(gu);
             } else if (Boolean.TRUE.equals(change.getDelete())) {
-                // Removal: managers only, silently ignored otherwise.
-                if (!operatorIsManager) {
-                    continue;
-                }
+                // Removal: NO manager gate (PHP deleteGroupsUsers has none —
+                // the controller already requires manager-or-admin, so an
+                // organization admin may remove members too).
                 toDelete.add(existing);
             } else if (change.getIsAdmin() != null
                     && !change.getIsAdmin().equals(existing.getIsAdmin())) {
@@ -308,14 +312,17 @@ public class GroupService {
             secretRepository.save(secret);
         }
 
-        // Clean up the secrets of the removed members for the resources they
-        // could only access through this group.
+        // Clean up the secrets AND favorites of the removed members for the
+        // resources they could only access through this group (PHP
+        // GroupsUsersDeleteService deletes both in the same transaction).
         List<String> groupResourceIds = getGroupResourceIds(groupId);
         for (GroupUser removed : toDelete) {
             for (String resourceId : groupResourceIds) {
                 if (!userHasAccessElsewhere(resourceId, removed.getUserId(), groupId)) {
                     secretRepository.findByResourceIdAndUserId(resourceId, removed.getUserId())
                             .ifPresent(secretRepository::delete);
+                    favoriteRepository.findByUserIdAndForeignKey(removed.getUserId(), resourceId)
+                            .ifPresent(favoriteRepository::delete);
                 }
             }
         }
@@ -432,6 +439,67 @@ public class GroupService {
                 .filter(Optional::isPresent)
                 .map(Optional::get)
                 .collect(Collectors.toList());
+    }
+
+    /**
+     * Delete a group with an optional ownership transfer, everything in ONE
+     * transaction (PHP GroupsDeleteController::delete: _transferContentOwners
+     * → _validateDelete → softDelete). Throws
+     * {@link GroupSoleOwnerConflictException} (→ 400) when the group remains
+     * the sole owner of shared content after the transfer.
+     */
+    @Transactional
+    public void deleteGroup(String groupId, String operatorId, GroupDto.DeleteRequest request) {
+        getGroupOrFail(groupId);
+
+        if (request != null && request.getTransfer() != null
+                && request.getTransfer().getOwners() != null
+                && !request.getTransfer().getOwners().isEmpty()) {
+            transferContentOwners(groupId, request.getTransfer().getOwners());
+        }
+
+        List<Resource> blocking = findSoleOwnerBlockingResources(groupId);
+        if (!blocking.isEmpty()) {
+            throw new GroupSoleOwnerConflictException(blocking);
+        }
+
+        deleteGroup(groupId, operatorId);
+    }
+
+    /**
+     * PHP GroupsDeleteController::_transferContentOwners: the transferred
+     * resource set must exactly equal the blocking set (sorted comparison);
+     * each referenced permission — scoped to the blocking resources — is then
+     * promoted to OWNER(15).
+     */
+    private void transferContentOwners(String groupId, List<GroupDto.TransferOwner> owners) {
+        for (GroupDto.TransferOwner owner : owners) {
+            if (owner.getId() == null || !isUuid(owner.getId())) {
+                throw new PassboltApiException(HttpStatus.BAD_REQUEST,
+                        "The permissions identifiers must be valid UUID.");
+            }
+        }
+        Set<String> blocking = findSoleOwnerBlockingResources(groupId).stream()
+                .map(Resource::getId)
+                .collect(Collectors.toCollection(java.util.TreeSet::new));
+        Set<String> transferred = owners.stream()
+                .map(GroupDto.TransferOwner::getAcoForeignKey)
+                .filter(java.util.Objects::nonNull)
+                .collect(Collectors.toCollection(java.util.TreeSet::new));
+        if (!blocking.equals(transferred)) {
+            throw new PassboltApiException(HttpStatus.BAD_REQUEST, "The transfer is not authorized");
+        }
+        for (GroupDto.TransferOwner owner : owners) {
+            Permission permission = permissionRepository.findById(owner.getId())
+                    .filter(p -> p.getAcoForeignKey().equals(owner.getAcoForeignKey())
+                            && blocking.contains(p.getAcoForeignKey())
+                            && !(Permission.GROUP_ARO.equals(p.getAro())
+                                    && groupId.equals(p.getAroForeignKey())))
+                    .orElseThrow(() -> new PassboltApiException(HttpStatus.BAD_REQUEST,
+                            "The transfer is not authorized"));
+            permission.setType(Permission.OWNER);
+            permissionRepository.save(permission);
+        }
     }
 
     /**
@@ -614,5 +682,38 @@ public class GroupService {
                 .map(String::trim)
                 .filter(s -> !s.isEmpty())
                 .collect(Collectors.toCollection(LinkedHashSet::new));
+    }
+
+    private boolean isUuid(String value) {
+        if (value == null) {
+            return false;
+        }
+        try {
+            java.util.UUID.fromString(value);
+            return true;
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
+    }
+
+    /**
+     * Raised when the group is (still) sole owner of shared content. Carries
+     * the blocking resources so the controller can build the 400
+     * errors.resources.sole_owner body (rendered fields are simple columns,
+     * safe to touch after rollback).
+     */
+    public static class GroupSoleOwnerConflictException extends RuntimeException {
+
+        private final transient List<Resource> blockingResources;
+
+        public GroupSoleOwnerConflictException(List<Resource> blockingResources) {
+            super("The group cannot be deleted. The group should not be sole owner of shared content, "
+                    + "transfer the ownership to other users.");
+            this.blockingResources = blockingResources;
+        }
+
+        public List<Resource> getBlockingResources() {
+            return blockingResources;
+        }
     }
 }
