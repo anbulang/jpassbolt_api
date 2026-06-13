@@ -96,9 +96,9 @@ public class MetadataSettingsController {
         String url = "/metadata/keys/settings.json";
         String userId = getCurrentUserId();
 
-        if (!userService.isAdmin(userId)) {
-            return ResponseEntity.status(403).body(ApiResponse.withCode("error",
-                    "Access restricted to administrators.", null, 403, url));
+        ResponseEntity<Map<String, Object>> adminGuard = requireAdmin(url);
+        if (adminGuard != null) {
+            return adminGuard;
         }
 
         MetadataSettingsDto.KeysSettings settings =
@@ -136,9 +136,9 @@ public class MetadataSettingsController {
         String url = "/metadata/types/settings.json";
         String userId = getCurrentUserId();
 
-        if (!userService.isAdmin(userId)) {
-            return ResponseEntity.status(403).body(ApiResponse.withCode("error",
-                    "Access restricted to administrators.", null, 403, url));
+        ResponseEntity<Map<String, Object>> adminGuard = requireAdmin(url);
+        if (adminGuard != null) {
+            return adminGuard;
         }
 
         MetadataSettingsDto.TypesSettings settings =
@@ -150,6 +150,28 @@ public class MetadataSettingsController {
     // ---------------------------------------------------------------------
     // security helper (same pattern as CommentController / UsersController)
     // ---------------------------------------------------------------------
+
+    /**
+     * Admin gate (PHP {@code accessRestrictedToAdministrators}). Returns a 403
+     * response entity when the current user is not an admin, otherwise null.
+     *
+     * <p>
+     * The body is an EMPTY STRING (not {@code null}) so the envelope matches the
+     * spec's {@code accessRestrictedToAdministrators} response, whose
+     * {@code body} is {@code type: string} (example {@code body: ''}). Passing
+     * {@code null} would let {@link ApiResponse} fall back to an empty object
+     * {@code {}}, which violates that {@code type: string}. This mirrors
+     * {@code MetadataKeyController.requireAdmin} for cross-controller
+     * consistency among the admin-gated v5 endpoints.
+     * </p>
+     */
+    private ResponseEntity<Map<String, Object>> requireAdmin(String url) {
+        if (!userService.isAdmin(getCurrentUserId())) {
+            return ResponseEntity.status(403).body(ApiResponse.withCode("error",
+                    "Access restricted to administrators.", "", 403, url));
+        }
+        return null;
+    }
 
     private String getCurrentUserId() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();

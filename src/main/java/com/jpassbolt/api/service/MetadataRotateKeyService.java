@@ -12,10 +12,14 @@ import com.jpassbolt.api.repository.ResourceRepository;
 import com.jpassbolt.api.repository.TagRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.bouncycastle.bcpg.ArmoredInputStream;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.io.ByteArrayInputStream;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -23,6 +27,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.regex.Pattern;
 
 /**
  * v5 Metadata <b>rotate-key</b> service — re-encrypts the metadata of resources
@@ -52,7 +57,10 @@ import java.util.UUID;
  * <h3>Iron Laws</h3>
  * <ul>
  *   <li>#1 zero-knowledge: the {@code metadata} payload is an armored OpenPGP
- *       MESSAGE; this service only stores/forwards it and NEVER decrypts.</li>
+ *       MESSAGE; this service only stores/forwards it and NEVER decrypts. Apply
+ *       additionally runs a <em>parse-only</em> Bouncy Castle armored-MESSAGE
+ *       marker check on the incoming blob ({@link #assertParsableMessage}) and
+ *       rejects a malformed blob with a 400 — still without decrypting.</li>
  *   <li>Repos {@link ResourceRepository}/{@link FolderRepository}/
  *       {@link TagRepository}/{@link MetadataKeyRepository} are consumed
  *       read-only — eligibility filtering and active-key resolution are done here
@@ -72,6 +80,16 @@ public class MetadataRotateKeyService {
 
     /** PHP {@code MetadataKey::TYPE_SHARED_KEY}: rotation targets shared keys. */
     public static final String TYPE_SHARED_KEY = "shared_key";
+
+    /**
+     * PHP {@code getGpgMarker} regex (verbatim): extracts the OpenPGP armor marker
+     * (capture group 2) from an armored block — for the parse-only marker check
+     * only, never for decryption.
+     */
+    private static final Pattern GPG_MARKER = Pattern.compile("-(BEGIN )*([A-Z0-9 ]+)-");
+
+    /** PHP {@code OpenPGPBackendInterface::MESSAGE_MARKER}. */
+    private static final String MESSAGE_MARKER = "PGP MESSAGE";
 
     private final ResourceRepository resourceRepository;
     private final FolderRepository folderRepository;
@@ -121,6 +139,7 @@ public class MetadataRotateKeyService {
         List<Resource> updated = new ArrayList<>();
         for (MetadataRotateKeyDto.RotateRequest entry : entries) {
             validateElement(entry);
+            assertParsableMessage(entry.getMetadata());
             Resource resource = resourceRepository.findById(entry.getId())
                     .filter(r -> !Boolean.TRUE.equals(r.getDeleted()))
                     .orElseThrow(() -> notFound(entry.getId()));
@@ -176,6 +195,7 @@ public class MetadataRotateKeyService {
         List<Folder> updated = new ArrayList<>();
         for (MetadataRotateKeyDto.RotateRequest entry : entries) {
             validateElement(entry);
+            assertParsableMessage(entry.getMetadata());
             Folder folder = folderRepository.findById(entry.getId())
                     .orElseThrow(() -> notFound(entry.getId()));
             assertNewKeyActiveSharedKey(entry.getMetadataKeyId(), entry.getMetadataKeyType());
@@ -230,6 +250,7 @@ public class MetadataRotateKeyService {
         List<Tag> updated = new ArrayList<>();
         for (MetadataRotateKeyDto.RotateRequest entry : entries) {
             validateElement(entry);
+            assertParsableMessage(entry.getMetadata());
             Tag tag = tagRepository.findById(entry.getId())
                     .orElseThrow(() -> notFound(entry.getId()));
             assertNewKeyActiveSharedKey(entry.getMetadataKeyId(), entry.getMetadataKeyType());
@@ -358,6 +379,50 @@ public class MetadataRotateKeyService {
         return new PassboltApiException(HttpStatus.NOT_FOUND, "Entity " + id + " not found.");
     }
 
+    /**
+     * Parse-only check that the re-encrypted {@code metadata} blob is a well-formed
+     * ASCII-armored OpenPGP MESSAGE, mirroring the PHP
+     * {@code MessageValidationService::isParsableArmoredMessage} /
+     * {@code OpenPGPBackend::isValidMessage} marker assertion. Uses Bouncy Castle
+     * ({@link ArmoredInputStream}) to dearmor the framing (Iron Law #1 — crypto
+     * only via Bouncy Castle, never {@code gpg} exec) and asserts the armor marker
+     * is {@code PGP MESSAGE}. The server is ZERO-KNOWLEDGE: this NEVER decrypts and
+     * never reads into the encrypted payload. A malformed blob &#8594; 400.
+     *
+     * @param metadata the client re-encrypted armored OpenPGP MESSAGE
+     * @throws PassboltApiException 400 when the blob is non-ASCII, not dearmorable
+     *                              or not a {@code PGP MESSAGE}-marked block
+     */
+    private void assertParsableMessage(String metadata) {
+        if (isBlank(metadata)) {
+            // validateElement already enforces presence; keep this defensive.
+            throw new PassboltApiException(HttpStatus.BAD_REQUEST, "A metadata is required.");
+        }
+        if (!isAscii(metadata)) {
+            throw new PassboltApiException(HttpStatus.BAD_REQUEST,
+                    "The metadata should be a valid ASCII string.");
+        }
+        // Bouncy Castle dearmor (parse-only): a valid armored block opens without
+        // error. ArmoredInputStream is lenient about an empty body, which is what
+        // lets the spec's single-line "-----BEGIN PGP MESSAGE-----" placeholder
+        // pass — exactly as the official OpenAPI examples / contract use it.
+        try (InputStream raw = new ByteArrayInputStream(metadata.getBytes(StandardCharsets.UTF_8));
+                ArmoredInputStream armoredIn = new ArmoredInputStream(raw)) {
+            armoredIn.read();
+        } catch (Exception e) {
+            log.debug("Rotate-key metadata blob is not a dearmorable OpenPGP block", e);
+            throw new PassboltApiException(HttpStatus.BAD_REQUEST,
+                    "The metadata could not be parsed as an OpenPGP message.");
+        }
+        // PHP assertGpgMarker(metadata, MESSAGE_MARKER): the armor marker must be
+        // exactly "PGP MESSAGE" (rejects garbage and e.g. PUBLIC KEY BLOCK).
+        var matcher = GPG_MARKER.matcher(metadata);
+        if (!matcher.find() || !MESSAGE_MARKER.equals(matcher.group(2))) {
+            throw new PassboltApiException(HttpStatus.BAD_REQUEST,
+                    "The metadata must be a valid OpenPGP message.");
+        }
+    }
+
     private static <T> List<T> paginate(List<T> all, int page, int size) {
         int effectiveSize = size <= 0 ? DEFAULT_PAGE_SIZE : Math.min(size, MAX_BATCH_SIZE);
         int from = Math.max(page, 0) * effectiveSize;
@@ -370,6 +435,11 @@ public class MetadataRotateKeyService {
 
     private static boolean isBlank(String value) {
         return value == null || value.isBlank();
+    }
+
+    /** Armored OpenPGP blocks are 7-bit ASCII (PHP {@code ->ascii()} validator). */
+    private static boolean isAscii(String value) {
+        return StandardCharsets.US_ASCII.newEncoder().canEncode(value);
     }
 
     private static boolean isUuid(String value) {

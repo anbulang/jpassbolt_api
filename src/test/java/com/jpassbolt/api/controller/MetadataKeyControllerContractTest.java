@@ -276,10 +276,12 @@ class MetadataKeyControllerContractTest extends OpenApiComplianceTest {
     void testExpireKeyContract() throws Exception {
         MetadataKey key = seedActiveKey();
 
+        // The expired date must be strictly in the PAST (PHP
+        // IsDateInPastValidationRule) — use a clearly-past timestamp.
         MetadataKeyDto.ExpireRequest request = MetadataKeyDto.ExpireRequest.builder()
                 .fingerprint(fingerprint)
                 .armoredKey(armoredPublicKey)
-                .expired(java.time.LocalDateTime.now())
+                .expired(java.time.LocalDateTime.now().minusMinutes(1))
                 .build();
 
         mockMvc.perform(put("/metadata/keys/" + key.getId() + ".json")
@@ -288,6 +290,27 @@ class MetadataKeyControllerContractTest extends OpenApiComplianceTest {
                 .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.header.status").value("success"))
+                .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
+    }
+
+    @Test
+    void testExpireKeyFutureDateBadRequest() throws Exception {
+        MetadataKey key = seedActiveKey();
+
+        // A future expired date is rejected (PHP IsDateInPastValidationRule:
+        // "The date should not be set in the future.") → 400.
+        MetadataKeyDto.ExpireRequest request = MetadataKeyDto.ExpireRequest.builder()
+                .fingerprint(fingerprint)
+                .armoredKey(armoredPublicKey)
+                .expired(java.time.LocalDateTime.now().plusDays(1))
+                .build();
+
+        mockMvc.perform(put("/metadata/keys/" + key.getId() + ".json")
+                .contentType(MediaType.APPLICATION_JSON)
+                .accept(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.header.status").value("error"))
                 .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
     }
 

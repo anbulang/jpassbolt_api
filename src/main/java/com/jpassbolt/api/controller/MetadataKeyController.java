@@ -5,7 +5,6 @@ import com.jpassbolt.api.exception.PassboltApiException;
 import com.jpassbolt.api.model.MetadataKey;
 import com.jpassbolt.api.model.MetadataPrivateKey;
 import com.jpassbolt.api.model.User;
-import com.jpassbolt.api.repository.MetadataPrivateKeyRepository;
 import com.jpassbolt.api.repository.UserRepository;
 import com.jpassbolt.api.service.MetadataKeyService;
 import com.jpassbolt.api.service.UserService;
@@ -78,7 +77,6 @@ public class MetadataKeyController {
             "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$");
 
     private final MetadataKeyService metadataKeyService;
-    private final MetadataPrivateKeyRepository metadataPrivateKeyRepository;
     private final UserService userService;
     private final UserRepository userRepository;
 
@@ -145,14 +143,14 @@ public class MetadataKeyController {
             return adminGuard;
         }
 
-        MetadataKey key = metadataKeyService.createKey(request, userId);
+        MetadataKeyService.CreateResult result = metadataKeyService.createKey(request, userId);
 
-        // Echo back the freshly persisted private-key copies (PHP returns the
-        // created key with its metadata_private_keys eagerly loaded).
-        List<MetadataPrivateKey> allCopies = metadataPrivateKeyRepository
-                .findByMetadataKeyId(key.getId());
-
-        MetadataKeyDto.Response body = toResponse(key, allCopies);
+        // Echo back ONLY the private-key copies persisted by THIS create (PHP
+        // MetadataKeyCreateService returns the saved entity graph with its
+        // associated metadata_private_keys — NOT an indiscriminate re-query of
+        // every copy of the key, which for an already-shared key would leak
+        // unrelated users' encrypted blobs into the create response).
+        MetadataKeyDto.Response body = toResponse(result.key(), result.privateKeys());
         return ResponseEntity.ok(ApiResponse.success("The operation was successful.", List.of(body), url));
     }
 
@@ -182,6 +180,7 @@ public class MetadataKeyController {
 
         metadataKeyService.markExpired(metadataKeyId,
                 request != null ? request.getFingerprint() : null,
+                request != null ? request.getArmoredKey() : null,
                 request != null ? request.getExpired() : null,
                 userId);
 

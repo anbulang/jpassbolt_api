@@ -131,17 +131,37 @@ public class MetadataKeyService {
     // ------------------------------------------------------------------
 
     /**
+     * Result of {@link #createKey}: the persisted metadata key together with
+     * the per-user private-key copies that were saved AS PART OF THIS CREATE.
+     *
+     * <p>
+     * Mirrors the PHP {@code MetadataKeyCreateService}, which returns the saved
+     * entity graph ({@code $metadataKey} with its associated
+     * {@code metadata_private_keys}). The controller renders exactly these
+     * just-saved copies; it does NOT re-query every private-key copy of the key
+     * from the database (which would, for an already-shared key, leak unrelated
+     * users' blobs into the create response).
+     * </p>
+     *
+     * @param key         the persisted metadata key
+     * @param privateKeys the private-key copies persisted by this create
+     */
+    public record CreateResult(MetadataKey key, List<MetadataPrivateKey> privateKeys) {
+    }
+
+    /**
      * Create a metadata key together with its per-user encrypted private-key
      * copies (PHP {@code MetadataKeyCreateService::create}).
      *
      * @param request the create request (fingerprint, armored public key, and
      *                at least one metadata_private_key)
      * @param userId  the acting admin's id (stored as created_by/modified_by)
-     * @return the persisted metadata key with its private keys
+     * @return the persisted metadata key with the private keys saved by this
+     *         create (PHP returns the saved entity + its associated privates)
      * @throws PassboltApiException 400 on any validation failure
      */
     @Transactional
-    public MetadataKey createKey(MetadataKeyDto.CreateRequest request, String userId) {
+    public CreateResult createKey(MetadataKeyDto.CreateRequest request, String userId) {
         if (request == null) {
             throw badRequest("The metadata key data is required.");
         }
@@ -222,7 +242,7 @@ public class MetadataKeyService {
 
         log.info("Metadata key {} created by user {} with {} private key(s)",
                 saved.getId(), userId, savedPrivates.size());
-        return saved;
+        return new CreateResult(saved, savedPrivates);
     }
 
     // ------------------------------------------------------------------
@@ -233,18 +253,39 @@ public class MetadataKeyService {
      * Mark a metadata key as expired (PHP {@code MetadataKeyUpdateService}).
      * This is the only function of the PUT endpoint.
      *
+     * <p>
+     * Mirrors the PHP {@code MetadataKeysTable::validationUpdate} +
+     * {@code MetadataKeyUpdateForm} validation set applied by the
+     * {@code 'validate' => 'update'} save option:
+     * <ul>
+     *   <li>the {@code armored_key} must be a parsable, NON-revoked OpenPGP
+     *       public key (parse-only — {@code IsParsableArmoredKeyValidationRule} +
+     *       {@code IsPublicKeyRevokedRule}); zero-knowledge, never decrypted;</li>
+     *   <li>the supplied {@code fingerprint} must match the {@code armored_key}
+     *       ({@code IsMatchingKeyFingerprintValidationRule});</li>
+     *   <li>the {@code expired} date must be strictly in the PAST — a future
+     *       (or present) date is rejected ({@code IsDateInPastValidationRule},
+     *       message "The date should not be set in the future.").</li>
+     * </ul>
+     * All of the above are validation failures mapped to 400.
+     * </p>
+     *
      * @param metadataKeyId the key id (must be a valid UUID)
-     * @param fingerprint   the fingerprint sent by the client; must match the
-     *                      stored key's fingerprint
-     * @param expired       the expiry timestamp to set (must be present)
+     * @param fingerprint   the fingerprint sent by the client; must match both
+     *                      the stored key's fingerprint and the armored key
+     * @param armoredKey    the armored OpenPGP public key (parse-only validated)
+     * @param expired       the expiry timestamp to set (required, must be in the
+     *                      past)
      * @param userId        the acting admin's id (stored as modified_by)
      * @return the updated key
      * @throws PassboltApiException 400 invalid UUID / already expired / missing
-     *         expiry, 404 not found / fingerprint mismatch / already deleted
+     *         or future expiry / unparsable or revoked key / fingerprint not
+     *         matching the armored key, 404 not found / fingerprint mismatch /
+     *         already deleted
      */
     @Transactional
     public MetadataKey markExpired(String metadataKeyId, String fingerprint,
-            LocalDateTime expired, String userId) {
+            String armoredKey, LocalDateTime expired, String userId) {
         if (!isUuid(metadataKeyId)) {
             throw badRequest("The metadata key ID should be a valid UUID.");
         }
@@ -261,8 +302,34 @@ public class MetadataKeyService {
         if (key.getExpired() != null) {
             throw badRequest("The metadata key is already marked as expired.");
         }
+
+        // validationUpdate: the armored key must be a parsable, non-revoked
+        // OpenPGP public key (parse-only — zero-knowledge, never decrypted).
+        if (armoredKey == null || armoredKey.isBlank()) {
+            throw badRequest("An armored key is required.");
+        }
+        if (!validationService.isParsablePublicKey(armoredKey)) {
+            throw badRequest("The armored key should be a valid OpenPGP public key.");
+        }
+        // validationUpdate: the supplied fingerprint must match the armored key
+        // (IsMatchingKeyFingerprintValidationRule).
+        String parsedFingerprint;
+        try {
+            parsedFingerprint = validationService.extractFingerprint(armoredKey);
+        } catch (IllegalArgumentException e) {
+            throw badRequest("The armored key could not be parsed.");
+        }
+        if (!parsedFingerprint.equalsIgnoreCase(fingerprint)) {
+            throw badRequest("The fingerprint does not match the armored key.");
+        }
+
+        // validationUpdate: a expired date is required and must be in the past
+        // (IsDateInPastValidationRule — a future/present date is rejected).
         if (expired == null) {
             throw badRequest("A expired date is required.");
+        }
+        if (!expired.isBefore(LocalDateTime.now())) {
+            throw badRequest("The date should not be set in the future.");
         }
 
         key.setExpired(expired);

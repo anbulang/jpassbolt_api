@@ -21,7 +21,14 @@ import java.time.LocalDateTime;
 @Table(name = "resources")
 public class Resource extends BaseEntity {
 
-    @Column(name = "name", nullable = false, length = 255)
+    /**
+     * Resource name. NULLABLE per the official v5 migration
+     * {@code V4100AlterNameToNullableOnResources} (resources.name DEFAULT NULL):
+     * the v5 upgrade moves the plaintext name into the encrypted metadata blob
+     * and NULLs this column. v4 create/update still requires it (enforced at the
+     * service/contract layer), so existing v4 rows/tests are unaffected.
+     */
+    @Column(name = "name", length = 255)
     private String name;
 
     @Column(name = "username", length = 255)

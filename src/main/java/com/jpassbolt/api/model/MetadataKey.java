@@ -27,7 +27,9 @@ import java.time.LocalDateTime;
  * ddl-auto=validate on MySQL — see migration
  * {@code V4100CreateMetadataKeys}):
  * <ul>
- *   <li>{@code fingerprint} varchar(51) NOT NULL UNIQUE</li>
+ *   <li>{@code fingerprint} varchar(51) NOT NULL (NOT unique — the official
+ *       migration declares no unique index on it, only created_by/modified_by
+ *       plain indexes)</li>
  *   <li>{@code armored_key} TEXT NOT NULL</li>
  *   <li>{@code expired} datetime NULL — non-null marks the key as expired (no
  *       longer usable for new encryption); NULL = active</li>
@@ -44,8 +46,15 @@ import java.time.LocalDateTime;
 @Table(name = "metadata_keys")
 public class MetadataKey extends BaseEntity {
 
-    /** OpenPGP key fingerprint (40 hex chars; column sized 51 per official schema). */
-    @Column(name = "fingerprint", nullable = false, length = 51, unique = true)
+    /**
+     * OpenPGP key fingerprint (40 hex chars; column sized 51 per official
+     * schema). NOT unique: the official migration {@code V4100CreateMetadataKeys}
+     * declares only plain {@code created_by}/{@code modified_by} indexes and NO
+     * unique index on {@code fingerprint} (uniqueness is enforced by application
+     * rules, not the schema). Mapping it as unique here would diverge from the
+     * official DDL that ddl-auto=validate must match.
+     */
+    @Column(name = "fingerprint", nullable = false, length = 51)
     private String fingerprint;
 
     /** Armored OpenPGP public key block (stored verbatim, never parsed for crypto). */
