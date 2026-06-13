@@ -269,6 +269,9 @@ jpassbolt:
 ### 8.3 API 合规
 - **OpenAPI 规范**: `docs/ref_files/plugin-redoc-0.yaml` 是 API 端点和 DTO 的权威来源
 - 使用 Atlassian Swagger Request Validator 进行合规校验
+- **状态：已启用（此前为"事实未生效"）**。`OpenApiComplianceTest` 基类装载 spec 副本（`src/test/resources/plugin-redoc-0.yaml`）构建 `CONTRACT_VALIDATOR`；各端点组均有对应 `*ContractTest`（共 21 个，覆盖 auth/jwt-auth、resource、secret、share-extras、group-share、folder、move、users、users-crud、group、gpgkey、comment、favorite、avatar、role、resource-type、settings、healthcheck、setup、mfa），关键端点挂 `openApi().isValid(CONTRACT_VALIDATOR)` 对响应做真实契约校验
+- **生效前提**：响应信封补齐 spec 要求的 `action`（url 派生稳定 UUID）等 7 个 header required 字段（`util/ApiResponse`），并全局统一 RFC3339 日期（`config/JacksonConfig`，覆盖 42 处 `format: date-time`）
+- **覆盖范围与例外**：多数端点的 `isValid` 已启用并通过；仍有少量**有记录地**禁用的断言（保留注释说明原因），原因均为 spec 侧结构差异而非 envelope 缺陷：① strict JSON header 校验偏差（Resource/Secret/Move 等）；② v4/v5 e2ee `metadata`/`metadata_key_id` body 形状（`e2eeMetadataBased`，当前为 v3 兼容实现，Folder/Move/GroupShare/ShareExtras）；③ spec 自身定义限制（Users index 响应、Secret 无 PUT、Setup/ResourceType 个别 index）
 
 ---
 
