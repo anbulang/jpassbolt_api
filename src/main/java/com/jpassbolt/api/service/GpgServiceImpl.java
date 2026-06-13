@@ -140,7 +140,7 @@ public class GpgServiceImpl implements GpgService {
         try {
             return doDecrypt(encryptedData, null);
         } catch (Exception e) {
-            log.error("Failed to decrypt data", e);
+            log.error("Failed to decrypt data (no signature verification)", e);
             throw new RuntimeException("Decryption failed", e);
         }
     }
@@ -207,7 +207,7 @@ public class GpgServiceImpl implements GpgService {
         } catch (InvalidSignatureException e) {
             throw e;
         } catch (Exception e) {
-            log.error("Failed to decrypt data", e);
+            log.error("Failed to decrypt and verify data", e);
             throw new RuntimeException("Decryption failed", e);
         }
     }

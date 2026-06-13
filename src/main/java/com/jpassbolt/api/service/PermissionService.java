@@ -197,16 +197,20 @@ public class PermissionService {
 
         validateSecretsCoverage(added, after, secrets);
 
-        // --- Persist the validated change set ---
+        // --- Persist the validated change set (per-row detail at DEBUG; one
+        // aggregate INFO line is emitted at the end so a group share of N
+        // members does not flood the log). ---
+        int secretsCreated = 0;
+        int secretsUpdated = 0;
         for (String permissionId : changeSet.deletedIds()) {
             permissionRepository.deleteById(permissionId);
-            log.info("Removed permission {} on resource {}", permissionId, resourceId);
+            log.debug("Removed permission {} on resource {}", permissionId, resourceId);
         }
         for (Map.Entry<String, Integer> update : changeSet.updatedTypes().entrySet()) {
             permissionRepository.findById(update.getKey()).ifPresent(perm -> {
                 perm.setType(update.getValue());
                 permissionRepository.save(perm);
-                log.info("Updated permission {} on resource {} to type {}",
+                log.debug("Updated permission {} on resource {} to type {}",
                         perm.getId(), resourceId, update.getValue());
             });
         }
@@ -218,7 +222,7 @@ public class PermissionService {
             perm.setAroForeignKey(create.aroForeignKey);
             perm.setType(create.type);
             permissionRepository.save(perm);
-            log.info("Created permission for {} {} on resource {} with type {}",
+            log.debug("Created permission for {} {} on resource {} with type {}",
                     create.aro, create.aroForeignKey, resourceId, create.type);
         }
 
@@ -249,7 +253,8 @@ public class PermissionService {
                 if (existing != null) {
                     existing.setData(secretAdd.getData());
                     secretRepository.save(existing);
-                    log.info("Updated secret for user {} on resource {}",
+                    secretsUpdated++;
+                    log.debug("Updated secret for user {} on resource {}",
                             secretAdd.getUserId(), resourceId);
                 } else {
                     Secret secret = new Secret();
@@ -261,7 +266,8 @@ public class PermissionService {
                     // one payload (last write wins as an update, not a second
                     // insert).
                     existingByUserId.put(secretAdd.getUserId(), secret);
-                    log.info("Created secret for user {} on resource {}",
+                    secretsCreated++;
+                    log.debug("Created secret for user {} on resource {}",
                             secretAdd.getUserId(), resourceId);
                 }
             }
@@ -275,11 +281,13 @@ public class PermissionService {
         // deleted. "after" may be empty (e.g. the sole OWNER is a zero-member
         // group) — an empty NOT IN is illegal SQL, hence the dedicated
         // full-delete branch. ---
+        int secretsDeleted = 0;
         if (after.isEmpty()) {
             List<Secret> lostSecrets = secretRepository.findByResourceId(resourceId);
             if (!lostSecrets.isEmpty()) {
                 secretRepository.deleteAll(lostSecrets);
-                log.info("Deleted all {} secrets of resource {} (no user has access anymore)",
+                secretsDeleted = lostSecrets.size();
+                log.debug("Deleted all {} secrets of resource {} (no user has access anymore)",
                         lostSecrets.size(), resourceId);
             }
         } else {
@@ -287,18 +295,28 @@ public class PermissionService {
                     .findByResourceIdAndUserIdNotIn(resourceId, after);
             if (!lostSecrets.isEmpty()) {
                 secretRepository.deleteAll(lostSecrets);
-                log.info("Deleted {} lost-access secrets on resource {}",
+                secretsDeleted = lostSecrets.size();
+                log.debug("Deleted {} lost-access secrets on resource {}",
                         lostSecrets.size(), resourceId);
             }
         }
 
         // Favorites of the users who lost access (PHP
-        // ResourcesTable::deleteLostAccessFavorites).
+        // ResourcesTable::deleteLostAccessFavorites). Only logs when a
+        // favorite was actually removed (no noise for users who had none).
         for (String lostUserId : removed) {
             favoriteRepository.findByUserIdAndForeignKey(lostUserId, resourceId)
-                    .ifPresent(favoriteRepository::delete);
-            log.info("Revoked access cleanup for user {} on resource {}", lostUserId, resourceId);
+                    .ifPresent(favorite -> {
+                        favoriteRepository.delete(favorite);
+                        log.debug("Removed favorite of user {} on resource {}", lostUserId, resourceId);
+                    });
         }
+
+        log.info("Shared resource {}: +{} -{} perms (~{} updated), +{} -{} secrets ({} updated), "
+                + "+{} -{} users",
+                resourceId, changeSet.created().size(), changeSet.deletedIds().size(),
+                changeSet.updatedTypes().size(), secretsCreated, secretsDeleted, secretsUpdated,
+                added.size(), removed.size());
 
         // Folder-tree maintenance (PHP Folders plugin ResourcesEventListener
         // afterAccessGranted/afterAccessRevoked): users gaining access get
@@ -351,16 +369,17 @@ public class PermissionService {
         Set<String> added = difference(after, before);
         Set<String> removed = difference(before, after);
 
-        // Persist the validated change set (Folder ACO).
+        // Persist the validated change set (Folder ACO). Per-row detail at
+        // DEBUG; a single aggregate INFO line is emitted at the end.
         for (String permissionId : changeSet.deletedIds()) {
             permissionRepository.deleteById(permissionId);
-            log.info("Removed permission {} on folder {}", permissionId, folderId);
+            log.debug("Removed permission {} on folder {}", permissionId, folderId);
         }
         for (Map.Entry<String, Integer> update : changeSet.updatedTypes().entrySet()) {
             permissionRepository.findById(update.getKey()).ifPresent(perm -> {
                 perm.setType(update.getValue());
                 permissionRepository.save(perm);
-                log.info("Updated permission {} on folder {} to type {}",
+                log.debug("Updated permission {} on folder {} to type {}",
                         perm.getId(), folderId, update.getValue());
             });
         }
@@ -372,9 +391,12 @@ public class PermissionService {
             perm.setAroForeignKey(create.aroForeignKey);
             perm.setType(create.type);
             permissionRepository.save(perm);
-            log.info("Created permission for {} {} on folder {} with type {}",
+            log.debug("Created permission for {} {} on folder {} with type {}",
                     create.aro, create.aroForeignKey, folderId, create.type);
         }
+        log.info("Shared folder {}: +{} -{} perms (~{} updated), +{} -{} users",
+                folderId, changeSet.created().size(), changeSet.deletedIds().size(),
+                changeSet.updatedTypes().size(), added.size(), removed.size());
 
         // Tree maintenance.
         for (String addedUserId : added) {
@@ -641,11 +663,21 @@ public class PermissionService {
      */
     private Set<String> usersIdsHavingAccess(List<SimPerm> permissions) {
         Set<String> userIds = new LinkedHashSet<>();
+        Set<String> groupIds = new LinkedHashSet<>();
         for (SimPerm perm : permissions) {
             if (Permission.USER_ARO.equals(perm.aro)) {
                 userIds.add(perm.aroForeignKey);
             } else if (Permission.GROUP_ARO.equals(perm.aro)) {
-                userIds.addAll(groupUserRepository.findActiveMemberUserIds(perm.aroForeignKey));
+                groupIds.add(perm.aroForeignKey);
+            }
+        }
+        // Fan out every group in a single query instead of one per group
+        // (the former per-group loop produced 2*G round-trips across the
+        // before/after diff of share/dry-run). Behaviour is unchanged: the
+        // result is still the union of direct users and active group members.
+        if (!groupIds.isEmpty()) {
+            for (Object[] row : groupUserRepository.findActiveMemberUserIdsByGroupIdIn(groupIds)) {
+                userIds.add((String) row[1]);
             }
         }
         return userIds;

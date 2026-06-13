@@ -6,6 +6,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -76,4 +77,15 @@ public interface GroupUserRepository extends JpaRepository<GroupUser, String> {
     @Query("SELECT gu.userId FROM GroupUser gu, User u " +
             "WHERE gu.groupId = :groupId AND u.id = gu.userId AND u.deleted = false")
     List<String> findActiveMemberUserIds(@Param("groupId") String groupId);
+
+    /**
+     * Batch variant of {@link #findActiveMemberUserIds(String)}: active
+     * (non-soft-deleted) member user ids of every given group, paired with
+     * their group id so the caller can fan out per group in a single query
+     * (avoids the 2*G round-trips of a per-group loop in share/dry-run). Each
+     * row is [groupId, userId].
+     */
+    @Query("SELECT gu.groupId, gu.userId FROM GroupUser gu, User u " +
+            "WHERE gu.groupId IN :groupIds AND u.id = gu.userId AND u.deleted = false")
+    List<Object[]> findActiveMemberUserIdsByGroupIdIn(@Param("groupIds") Collection<String> groupIds);
 }

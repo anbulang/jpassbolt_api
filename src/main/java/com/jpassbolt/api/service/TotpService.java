@@ -169,7 +169,11 @@ public class TotpService {
                     | ((hash[offset + 1] & 0xff) << 16)
                     | ((hash[offset + 2] & 0xff) << 8)
                     | (hash[offset + 3] & 0xff);
-            int otp = binary % (int) Math.pow(10, digits);
+            // Use a long modulus: (int) Math.pow(10, digits) overflows for
+            // digits > 9, yielding a wrong (or negative) modulus. The 31-bit
+            // truncated binary always fits a long, so the result is exact for
+            // any sane digit count (RFC 4226 uses 6-8).
+            long otp = binary % (long) Math.pow(10, digits);
             return String.format("%0" + digits + "d", otp);
         } catch (GeneralSecurityException e) {
             throw new IllegalStateException("Unable to compute the HOTP value.", e);

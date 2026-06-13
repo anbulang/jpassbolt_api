@@ -42,10 +42,15 @@ import java.util.UUID;
  * <p>
  * Deliberate deviation from PHP (documented in the porting blueprint): PHP
  * binds the MFA verified token to a hashed session id (and the JWT access
- * token in JWT mode, see {@code hashAndSetSessionId}). Java simplifies this
- * to "active + created within 30 days" with no session binding — slightly
- * weaker (a stolen cookie stays usable across sessions for up to 30 days).
- * TODO: bind to the refresh-token session once the auth-extras cluster lands.
+ * token in JWT mode, see {@code hashAndSetSessionId}). Java keeps the simpler
+ * "active + created within 30 days" model with no session binding — slightly
+ * weaker (a stolen {@code passbolt_mfa} cookie stays usable across sessions
+ * for up to 30 days). This is an accepted, intentional simplification (the
+ * online brute-force threat is covered by the lockout below; cookie theft is
+ * out of the modelled threat surface), NOT a pending task — binding the token
+ * to a refresh-token/session id would require storing that id on the mfa
+ * {@code authentication_tokens} row and threading it through every MFA check,
+ * and is deferred until there is a concrete requirement for it.
  * The MFA verified state lives ONLY in the {@code passbolt_mfa} cookie +
  * {@code authentication_tokens} rows, never as a JWT claim (same as the
  * official implementation). {@link #getEnabledProviders(String)} is the

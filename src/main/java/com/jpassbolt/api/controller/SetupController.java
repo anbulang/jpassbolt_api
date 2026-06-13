@@ -42,8 +42,10 @@ import java.util.UUID;
  * PHP registers complete under PUT|POST (routes.php L334) — mirrored with
  * {@code @RequestMapping(method = {PUT, POST})}. The legacy alias
  * /users/validateAccount/{userId} (pre-v3 plugins) is deliberately NOT
- * registered: it would collide with the /users/{id} path variable. TODO:
- * revisit if old-plugin compatibility is ever needed.
+ * registered: it would collide with UsersController's /users/{id} path
+ * variable. NOTE: this is a closed decision, not a pending task — the
+ * supported v3/v4 plugins use /setup/complete, so the legacy alias is out of
+ * scope. Revisit only if pre-v3 plugin compatibility ever becomes a goal.
  * </p>
  */
 @Slf4j

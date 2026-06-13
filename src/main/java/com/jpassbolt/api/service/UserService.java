@@ -214,33 +214,40 @@ public class UserService {
                 return created;
             });
             Map<String, Object> profileErrors = new LinkedHashMap<>();
+            // Reuse the same validateName rules as createUser so both paths
+            // emit consistent error keys: _empty for blank, maxLength for
+            // > 255 chars (previously updateUser collapsed both into _empty).
             if (request.getProfile().getFirstName() != null) {
                 if (isValidName(request.getProfile().getFirstName())) {
                     profile.setFirstName(request.getProfile().getFirstName().trim());
                 } else {
-                    profileErrors.put("first_name", Map.of("_empty", "A first name is required."));
+                    validateName(request.getProfile().getFirstName(), "first_name", "first name",
+                            profileErrors);
                 }
             }
             if (request.getProfile().getLastName() != null) {
                 if (isValidName(request.getProfile().getLastName())) {
                     profile.setLastName(request.getProfile().getLastName().trim());
                 } else {
-                    profileErrors.put("last_name", Map.of("_empty", "A last name is required."));
+                    validateName(request.getProfile().getLastName(), "last_name", "last name",
+                            profileErrors);
                 }
             }
-            // Guard against a brand-new profile row missing NOT NULL columns.
-            if (profile.getFirstName() == null) {
+            // Guard against a brand-new profile row missing NOT NULL columns
+            // (no value provided and none already stored).
+            if (profile.getFirstName() == null && !profileErrors.containsKey("first_name")) {
                 profileErrors.put("first_name", Map.of("_empty", "A first name is required."));
             }
-            if (profile.getLastName() == null) {
+            if (profile.getLastName() == null && !profileErrors.containsKey("last_name")) {
                 profileErrors.put("last_name", Map.of("_empty", "A last name is required."));
             }
             if (!profileErrors.isEmpty()) {
                 errors.put("profile", profileErrors);
             }
-            // TODO(avatars): profile.avatar key is accepted but its content
-            // is ignored — real upload handling belongs to the avatars
-            // cluster.
+            // NOTE: profile.avatar is accepted but intentionally ignored on
+            // this JSON patch path — avatar file upload/storage is handled by
+            // AvatarController (multipart), not here. Closed boundary, not a
+            // pending task.
         }
 
         if (!errors.isEmpty()) {

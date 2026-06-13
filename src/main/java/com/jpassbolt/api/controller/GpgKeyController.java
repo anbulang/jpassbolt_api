@@ -65,10 +65,14 @@ public class GpgKeyController {
      *   modified STRICTLY greater than this instant are returned.
      * - filter[is-deleted]: boolean (0/1/true/false); defaults to false.
      *
-     * Note: the PHP whitelist also supports filter[has-users] (array of user
-     * uuids) and the legacy top-level "modified_after" alias, but neither is
-     * defined in the OpenAPI spec nor used by the plugin keyring sync.
-     * TODO: implement filter[has-users] if a future cluster needs it.
+     * NOTE (deliberately not implemented): the PHP whitelist also supports
+     * filter[has-users] (array of user uuids) and the legacy top-level
+     * "modified_after" alias. Neither is defined in the OpenAPI spec nor used
+     * by the official plugin's keyring sync (the plugin pulls the full
+     * directory, optionally with filter[modified-after]), so this is a known,
+     * intentional gap rather than a pending task. Add filter[has-users] (plus
+     * a findByDeletedAndUserIdIn query and the ref's negative-case test) only
+     * if a future cluster actually requires it.
      */
     @GetMapping(value = { "/gpgkeys", "/gpgkeys.json" })
     @SuppressWarnings("unchecked")

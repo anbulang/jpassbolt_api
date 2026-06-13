@@ -93,5 +93,38 @@ public class CommentDto {
         private LocalDateTime created;
         private LocalDateTime modified;
         private LocalDateTime disabled;
+
+        // Embedded profile (first/last name + avatar) so the plugin shows the
+        // comment author's display name instead of degrading to their email.
+        // Omitted when not loaded; when present it must carry the full
+        // userIndexAndView.profile shape (incl. avatar.url) to stay contract
+        // valid.
+        @JsonInclude(JsonInclude.Include.NON_NULL)
+        private ProfileResponse profile;
+    }
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class ProfileResponse {
+        private String id;
+
+        @JsonProperty("user_id")
+        private String userId;
+
+        @JsonProperty("first_name")
+        private String firstName;
+
+        @JsonProperty("last_name")
+        private String lastName;
+
+        private LocalDateTime created;
+        private LocalDateTime modified;
+
+        // avatar is a REQUIRED child of profile in the OpenAPI spec; the
+        // default placeholder URLs are always emitted (real avatar storage is
+        // owned by the avatars cluster).
+        private Object avatar;
     }
 }

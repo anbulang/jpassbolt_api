@@ -1,11 +1,14 @@
 package com.jpassbolt.api.controller;
 
+import com.jpassbolt.api.config.SettingsProperties;
 import com.jpassbolt.api.dto.CommentDto;
 import com.jpassbolt.api.exception.PassboltApiException;
 import com.jpassbolt.api.model.Comment;
 import com.jpassbolt.api.model.Permission;
+import com.jpassbolt.api.model.Profile;
 import com.jpassbolt.api.model.User;
 import com.jpassbolt.api.repository.PermissionRepository;
+import com.jpassbolt.api.repository.ProfileRepository;
 import com.jpassbolt.api.repository.UserRepository;
 import com.jpassbolt.api.service.CommentService;
 import com.jpassbolt.api.service.ResourceService;
@@ -53,7 +56,9 @@ public class CommentController {
         private final CommentService commentService;
         private final ResourceService resourceService;
         private final UserRepository userRepository;
+        private final ProfileRepository profileRepository;
         private final PermissionRepository permissionRepository;
+        private final SettingsProperties settingsProperties;
 
         /**
          * GET /comments/resource/{resourceId}.json
@@ -122,7 +127,7 @@ public class CommentController {
 
                 Comment comment = commentService.addComment(resourceId, request, userId);
                 return ResponseEntity.ok(createResponse("success", "The comment was successfully added.",
-                                toResponseDto(comment, null, null), url));
+                                toResponseDto(comment), url));
         }
 
         /**
@@ -143,7 +148,7 @@ public class CommentController {
 
                 Comment comment = commentService.updateComment(commentId, request.getContent(), userId);
                 return ResponseEntity.ok(createResponse("success", "The comment was successfully updated.",
-                                toResponseDto(comment, null, null), url));
+                                toResponseDto(comment), url));
         }
 
         /**
@@ -174,26 +179,29 @@ public class CommentController {
         private List<CommentDto.Response> buildThreadedResponses(List<Comment> comments,
                         boolean withCreator, boolean withModifier) {
                 Map<String, User> userMap = loadUsers(comments, withCreator, withModifier);
+                Map<String, Profile> profileMap = loadProfiles(userMap.keySet());
                 Map<String, List<Comment>> byParent = comments.stream()
                                 .filter(c -> c.getParentId() != null)
                                 .collect(Collectors.groupingBy(Comment::getParentId));
 
                 return comments.stream()
                                 .filter(c -> c.getParentId() == null)
-                                .map(c -> toThreadedResponseDto(c, byParent, userMap, withCreator, withModifier))
+                                .map(c -> toThreadedResponseDto(c, byParent, userMap, profileMap, withCreator,
+                                                withModifier))
                                 .collect(Collectors.toList());
         }
 
         private CommentDto.Response toThreadedResponseDto(Comment comment,
                         Map<String, List<Comment>> byParent, Map<String, User> userMap,
-                        boolean withCreator, boolean withModifier) {
+                        Map<String, Profile> profileMap, boolean withCreator, boolean withModifier) {
                 CommentDto.Response response = toResponseDto(comment,
                                 withCreator ? userMap.get(comment.getCreatedBy()) : null,
-                                withModifier ? userMap.get(comment.getModifiedBy()) : null);
+                                withModifier ? userMap.get(comment.getModifiedBy()) : null,
+                                profileMap);
                 List<Comment> replies = byParent.getOrDefault(comment.getId(), List.of());
                 response.setChildren(replies.stream()
-                                .map(reply -> toThreadedResponseDto(reply, byParent, userMap, withCreator,
-                                                withModifier))
+                                .map(reply -> toThreadedResponseDto(reply, byParent, userMap, profileMap,
+                                                withCreator, withModifier))
                                 .collect(Collectors.toList()));
                 return response;
         }
@@ -222,7 +230,21 @@ public class CommentController {
                                 .collect(Collectors.toMap(User::getId, Function.identity()));
         }
 
-        private CommentDto.Response toResponseDto(Comment comment, User creator, User modifier) {
+        /**
+         * Bulk-load the profiles of the referenced users (one query) so the
+         * embedded creator/modifier carries a display name + avatar instead of
+         * degrading to the bare username/email.
+         */
+        private Map<String, Profile> loadProfiles(Set<String> userIds) {
+                if (userIds.isEmpty()) {
+                        return Map.of();
+                }
+                return profileRepository.findByUserIdIn(userIds).stream()
+                                .collect(Collectors.toMap(Profile::getUserId, Function.identity()));
+        }
+
+        private CommentDto.Response toResponseDto(Comment comment, User creator, User modifier,
+                        Map<String, Profile> profileMap) {
                 return CommentDto.Response.builder()
                                 .id(comment.getId())
                                 .parentId(comment.getParentId())
@@ -234,12 +256,18 @@ public class CommentController {
                                 .createdBy(comment.getCreatedBy())
                                 .modifiedBy(comment.getModifiedBy())
                                 .userId(comment.getUserId())
-                                .creator(creator != null ? toUserResponseDto(creator) : null)
-                                .modifier(modifier != null ? toUserResponseDto(modifier) : null)
+                                .creator(creator != null ? toUserResponseDto(creator, profileMap) : null)
+                                .modifier(modifier != null ? toUserResponseDto(modifier, profileMap) : null)
                                 .build();
         }
 
-        private CommentDto.UserResponse toUserResponseDto(User user) {
+        /** Single-comment response (add/update): no embedded creator/modifier. */
+        private CommentDto.Response toResponseDto(Comment comment) {
+                return toResponseDto(comment, null, null, Map.of());
+        }
+
+        private CommentDto.UserResponse toUserResponseDto(User user, Map<String, Profile> profileMap) {
+                Profile profile = profileMap.get(user.getId());
                 return CommentDto.UserResponse.builder()
                                 .id(user.getId())
                                 .roleId(user.getRoleId())
@@ -249,6 +277,30 @@ public class CommentController {
                                 .created(user.getCreated())
                                 .modified(user.getModified())
                                 .disabled(user.getDisabled())
+                                .profile(profile != null ? toProfileResponse(profile) : null)
+                                .build();
+        }
+
+        /**
+         * profile.avatar is a REQUIRED child of profile in the OpenAPI spec:
+         * always emit the default placeholder URLs (real avatar storage belongs
+         * to the avatars cluster), matching UsersController.toProfileMap.
+         */
+        private CommentDto.ProfileResponse toProfileResponse(Profile profile) {
+                String base = settingsProperties.getFullBaseUrl();
+                Map<String, Object> url = new LinkedHashMap<>();
+                url.put("medium", base + "/img/avatar/user_medium.png");
+                url.put("small", base + "/img/avatar/user.png");
+                Map<String, Object> avatar = new LinkedHashMap<>();
+                avatar.put("url", url);
+                return CommentDto.ProfileResponse.builder()
+                                .id(profile.getId())
+                                .userId(profile.getUserId())
+                                .firstName(profile.getFirstName())
+                                .lastName(profile.getLastName())
+                                .created(profile.getCreated())
+                                .modified(profile.getModified())
+                                .avatar(avatar)
                                 .build();
         }
 

@@ -198,7 +198,10 @@ public class JwtAuthService {
             // Encrypt with the user key and SIGN with the server key (PHP
             // makeArmoredChallenge → gpg->encryptSign).
             String armored = gpgService.encryptSign(json, gpgKey.getArmoredKey());
-            log.info("JWT login successful for user {}", user.getUsername());
+            // Log the UUID, never user.getUsername() (a Passbolt username is
+            // the user's email — PII), consistent with the failure branches
+            // above which already identify the user by userId.
+            log.info("JWT login successful for user {}", userId);
             return armored;
         } catch (PassboltApiException e) {
             throw e;

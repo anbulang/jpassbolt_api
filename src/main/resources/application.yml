@@ -54,12 +54,20 @@ jpassbolt:
       # Inject via env; the committed dev key's passphrase only lives in the
       # local/test profiles.
       passphrase: ${JPASSBOLT_GPG_PASSPHRASE:}
+  # Backend API / server version, surfaced by HealthcheckService
+  # (info.currentVersion / remoteVersion). Distinct on purpose from
+  # settings.version-number below, which is the bundled web-extension
+  # (webapp) version — same split as official Passbolt, where the server and
+  # the browser extension version independently.
   version: 4.9.0
   healthcheck:
     index-endpoint-enabled: true
   settings:
     full-base-url: http://localhost:8080
     edition: ce
+    # Web-extension (webapp) version reported by GET /settings.json — the
+    # version the plugin checks for its own UI/compatibility. Intentionally
+    # different from jpassbolt.version above (the backend/server version).
     version-number: "5.7.2"
     version-name: "Gnossienne No. 1"
     privacy-policy-url: ""

@@ -18,6 +18,7 @@ import com.jpassbolt.api.service.UserService;
 import com.jpassbolt.api.util.ApiResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -62,14 +63,40 @@ public class UsersController {
 
         /**
          * GET /users.json
-         * Returns all active, non-deleted users in userIndexAndView shape
-         * (the official plugin needs profile/role/gpgkey on the index).
+         * Returns non-deleted users in userIndexAndView shape (the official
+         * plugin needs profile/role/gpgkey on the index).
+         *
+         * <p>
+         * Whitelist (PHP UsersIndexController): filter[search] is a
+         * case-insensitive match across username + profile first/last name
+         * (the plugin's share dialog leans on it the most) pushed down to the
+         * repository; filter[is-active] is admin-only — a non-admin caller is
+         * always pinned to active users, an admin with no filter sees both
+         * active and inactive. Results are ordered by username asc (PHP
+         * default order Users.username), so the listing no longer relies on
+         * JPA's unspecified findAll order. The has-groups / has-access /
+         * is-admin / contain controls of the PHP whitelist are intentionally
+         * NOT implemented yet (the plugin does not require them here).
+         * </p>
          */
         @GetMapping({ "/users", "/users.json" })
-        public ResponseEntity<Map<String, Object>> getAllUsers() {
-                List<User> users = userRepository.findAll().stream()
-                                .filter(u -> Boolean.TRUE.equals(u.getActive()) && !Boolean.TRUE.equals(u.getDeleted()))
-                                .collect(Collectors.toList());
+        public ResponseEntity<Map<String, Object>> getAllUsers(
+                        @RequestParam(name = "filter[search]", required = false) String search,
+                        @RequestParam(name = "filter[is-active]", required = false) String isActive) {
+                boolean actorIsAdmin = isCurrentUserAdmin();
+
+                // is-active is admin-only; everyone else is pinned to active.
+                Boolean activeFilter = Boolean.TRUE;
+                if (actorIsAdmin) {
+                        activeFilter = parseIsActiveFilter(isActive); // null => both
+                }
+
+                String term = (search == null || search.isBlank())
+                                ? null
+                                : "%" + search.trim().toLowerCase() + "%";
+
+                List<User> users = userRepository.findIndex(term, activeFilter,
+                                Sort.by(Sort.Direction.ASC, "username"));
 
                 List<Map<String, Object>> userList = users.stream()
                                 .map(this::toUserDetailMap)
@@ -77,6 +104,30 @@ public class UsersController {
 
                 return ResponseEntity.ok(createResponse("success", "The operation was successful.",
                                 userList, "/users.json"));
+        }
+
+        /**
+         * Parse admin-only filter[is-active] (PHP QueryStringComponent
+         * normalizeBoolean: 0/1/true/false). A missing value means "no
+         * filter" (both active and inactive), an explicit value narrows to
+         * that state.
+         */
+        private Boolean parseIsActiveFilter(String value) {
+                if (value == null || value.isBlank()) {
+                        return null;
+                }
+                switch (value.toLowerCase()) {
+                        case "0":
+                        case "false":
+                                return Boolean.FALSE;
+                        case "1":
+                        case "true":
+                                return Boolean.TRUE;
+                        default:
+                                throw new PassboltApiException(HttpStatus.BAD_REQUEST,
+                                                "Invalid filter. \"" + value
+                                                                + "\" is not a valid value for filter is-active.");
+                }
         }
 
         /**

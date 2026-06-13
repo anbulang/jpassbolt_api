@@ -55,9 +55,12 @@ public class UserDto {
         private String lastName;
 
         /**
-         * Accepted but ignored — real avatar upload/storage belongs to the
-         * avatars cluster (PHP also treats an avatar object without file as
-         * a delete/no-op). TODO(avatars): wire file handling.
+         * Accepted but ignored on the user edit path — real avatar
+         * upload/storage is owned by AvatarController (multipart upload),
+         * NOT by this JSON profile patch (PHP likewise treats an avatar
+         * object without file as a delete/no-op here). NOTE: intentional
+         * boundary, not a pending task — avatar file handling lives in the
+         * avatars cluster.
          */
         private Object avatar;
     }
