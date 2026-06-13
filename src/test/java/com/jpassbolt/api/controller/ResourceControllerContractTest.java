@@ -17,7 +17,7 @@ import org.springframework.security.test.context.support.WithMockUser;
 
 import java.util.List;
 
-// import static com.atlassian.oai.validator.mockmvc.OpenApiValidationMatchers.openApi;
+import static com.atlassian.oai.validator.mockmvc.OpenApiValidationMatchers.openApi;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
@@ -26,14 +26,17 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * (/resources.json and /resources/{resourceId}.json) covering
  * GET (index), GET (view), POST, PUT and DELETE.
  *
- * NOTE: the openApi().isValid(CONTRACT_VALIDATOR) assertions are present but
- * commented out, in line with the existing envelope-returning contract tests
- * (AuthControllerContractTest, CommentControllerContractTest): the Atlassian
- * Swagger Request Validator's strict JSON header validation currently rejects
- * our shared {header, body} response envelope. The endpoints themselves ARE
- * defined in the spec (/resources.json, /resources/{resourceId}.json), so the
- * disable reason is the envelope/validator quirk, not a missing v4 endpoint.
- * Re-enable once the envelope validation issue is resolved project-wide.
+ * NOTE: the shared {header, body} envelope is now spec-valid project-wide
+ * (ApiResponse emits all required header fields incl. action; JacksonConfig
+ * serialises LocalDateTime as RFC3339 with offset), so the old "strict JSON
+ * header validation" reason no longer applies. DELETE is therefore ENABLED.
+ * The index/view/add/update assertions stay disabled for VERIFIED schema
+ * reasons (per-test comments): the v4 resource schemas require encrypted-
+ * metadata fields (metadata / metadata_key_id / metadata_key_type) and
+ * folder_parent_id / personal, and forbid our flat v3 fields as
+ * additionalProperties — we deliberately align with v3/PHP, not the精简 v4
+ * spec. resources_index additionally requires the headerWithPagination
+ * "pagination" object the controller does not emit.
  */
 @WithMockUser(username = "test@example.com", roles = { "USER" })
 class ResourceControllerContractTest extends OpenApiComplianceTest {
@@ -102,7 +105,17 @@ class ResourceControllerContractTest extends OpenApiComplianceTest {
                                 .andExpect(status().isOk())
                                 .andExpect(jsonPath("$.header.status").value("success"))
                                 .andExpect(jsonPath("$.body").isArray());
-                // Disabled due to strict JSON header validation of the response envelope:
+                // Disabled (verified) — TWO body/header-schema mismatches, NOT an
+                // envelope issue:
+                // 1) validation.response.body.schema.required on /header — the spec's
+                // resources_index response uses the headerWithPagination schema, which
+                // REQUIRES a "pagination" object; ResourceController emits the plain
+                // header without pagination;
+                // 2) validation.response.body.schema.required/anyOf on /body[*] — the
+                // spec's resource item requires the v4 encrypted-metadata fields
+                // (metadata / metadata_key_id / metadata_key_type) and personal /
+                // folder_parent_id, which the v3 ResourceDto we align with PHP does not
+                // emit. body-schema-strict; recorded in assertions_left_disabled.
                 // .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
         }
 
@@ -122,7 +135,15 @@ class ResourceControllerContractTest extends OpenApiComplianceTest {
                                 .andExpect(status().isOk())
                                 .andExpect(jsonPath("$.header.status").value("success"))
                                 .andExpect(jsonPath("$.body.name").value("My Password"));
-                // Disabled due to strict JSON header validation of the response envelope:
+                // Disabled (verified) — body-schema-strict, NOT an envelope issue:
+                // validation.response.body.schema.additionalProperties + .required on
+                // /body. The spec's resource view schema (v4) forbids our flat fields
+                // (created/modified/created_by/modified_by/...) as additionalProperties
+                // AND requires the v4 encrypted-metadata fields (metadata /
+                // metadata_key_id / metadata_key_type) plus folder_parent_id / personal.
+                // We deliberately emit the v3/PHP-aligned ResourceDto shape, so the body
+                // legitimately diverges from the精简 v4 schema. Recorded in
+                // assertions_left_disabled.
                 // .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
         }
 
@@ -146,7 +167,14 @@ class ResourceControllerContractTest extends OpenApiComplianceTest {
                                 .andExpect(status().isCreated())
                                 .andExpect(jsonPath("$.header.status").value("success"))
                                 .andExpect(jsonPath("$.body.name").value("New Password"));
-                // Disabled due to strict JSON header validation of the response envelope:
+                // Disabled (verified) — request-v4-metadata, NOT an envelope issue:
+                // validation.request.body.schema.required/additionalProperties. The
+                // spec's resourceAdd request body is e2eeMetadataBased and REQUIRES the
+                // v4 encrypted-metadata fields (metadata / metadata_key_id /
+                // metadata_key_type), rejecting our v3 {name, username, uri,
+                // description, secrets} body. The v4 encrypted-metadata path is not
+                // implemented here yet, so the request payload cannot satisfy the v4
+                // schema. Recorded in assertions_left_disabled.
                 // .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
         }
 
@@ -165,7 +193,13 @@ class ResourceControllerContractTest extends OpenApiComplianceTest {
                                 .andExpect(status().isOk())
                                 .andExpect(jsonPath("$.header.status").value("success"))
                                 .andExpect(jsonPath("$.body.name").value("Updated Name"));
-                // Disabled due to strict JSON header validation of the response envelope:
+                // Disabled (verified) — request-v4-metadata + body-schema-strict, NOT
+                // an envelope issue: the spec's resourceUpdate request body is
+                // e2eeMetadataBased (requires metadata / metadata_key_id /
+                // metadata_key_type), rejecting our v3 {name, ...} body, and the
+                // response body schema (v4) forbids our flat fields and requires
+                // folder_parent_id / personal. We follow v3/PHP. Recorded in
+                // assertions_left_disabled.
                 // .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
         }
 
@@ -176,8 +210,12 @@ class ResourceControllerContractTest extends OpenApiComplianceTest {
                 mockMvc.perform(delete("/resources/" + resource.getId() + ".json")
                                 .accept(MediaType.APPLICATION_JSON))
                                 .andExpect(status().isOk())
-                                .andExpect(jsonPath("$.header.status").value("success"));
-                // Disabled due to strict JSON header validation of the response envelope:
-                // .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
+                                .andExpect(jsonPath("$.header.status").value("success"))
+                                // Enabled (verified): DELETE returns the spec-mandated
+                                // nullBody (soft delete, body is JSON null) and the header
+                                // now carries all required fields incl. action, so the
+                                // response is spec-valid. The earlier "strict JSON header
+                                // validation" reason was outdated.
+                                .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
         }
 }

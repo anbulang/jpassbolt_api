@@ -85,15 +85,17 @@ public class ResourceTypeControllerContractTest extends OpenApiComplianceTest {
                 .andExpect(jsonPath("$.body").isArray())
                 .andExpect(jsonPath("$.body.length()").value(4))
                 .andExpect(jsonPath("$.body[0].definition").isMap());
-        // openApi().isValid(CONTRACT_VALIDATOR) DISABLED for this single index
-        // assertion: the spec's resourceTypeIndex schema marks `default`
-        // (boolean) as REQUIRED, but `default` is a v5/metadata-plugin concept
-        // (the organization's default resource type) that the Passbolt CE v4
+        // Disabled (verified) — body-schema-strict, NOT an envelope issue:
+        // validation.response.body.schema.required on /body[*] ("missing required
+        // properties (['default'])"). The spec's resourceTypeIndex schema marks
+        // `default` (boolean) as REQUIRED, but `default` is a v5/metadata-plugin
+        // concept (the organization's default resource type) that the Passbolt CE v4
         // ResourceTypes finder/entity does not emit — confirmed against
         // passbolt_api_ref (no `default` virtual field). Emitting a fabricated
         // `default` would diverge from the reference implementation, so the
         // assertion is intentionally disabled rather than the response altered.
         // The view assertion (plain resourceType schema, no `default`) stays on.
+        // .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
     }
 
     @Test

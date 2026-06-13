@@ -40,11 +40,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * </p>
  *
  * <p>
- * Only POST /users.json and PUT /users/{id}.json keep openApi().isValid
- * disabled: the spec declares users_add / users_update response bodies as an
- * ARRAY of userIndexAndView, while the official examples and the PHP
- * implementation return a single object (we follow PHP). This is a genuine
- * spec body-type mismatch, recorded in assertions_left_disabled.
+ * All four assertions (POST / PUT / DELETE / dry-run) are now ENABLED and pass
+ * (verified). The single-object users_add / users_update body we return
+ * (aligned with PHP/the official example) is accepted by the validator built
+ * with withResolveCombinators(true), so the previously-claimed "ARRAY body
+ * mismatch" did not actually block validation.
  * </p>
  *
  * <p>
@@ -136,10 +136,14 @@ public class UsersCrudControllerContractTest extends OpenApiComplianceTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(body))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.body.username").value("new.user@example.com"));
-        // .andExpect(openApi().isValid(CONTRACT_VALIDATOR)); // Disabled: spec declares
-        // the users_add response body as an ARRAY of userIndexAndView, but the official
-        // examples and the PHP implementation return a single object (we follow PHP).
+                .andExpect(jsonPath("$.body.username").value("new.user@example.com"))
+                // Enabled (verified): POST /users.json passes contract validation.
+                // The single-object body we return (aligned with PHP/the official
+                // example) is accepted by the validator built with
+                // withResolveCombinators(true); the envelope is spec-valid. The
+                // earlier "spec declares an ARRAY body" reason did not actually block
+                // the assertion.
+                .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
     }
 
     @Test
@@ -151,10 +155,12 @@ public class UsersCrudControllerContractTest extends OpenApiComplianceTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(body))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.body.profile.first_name").value("Updated"));
-        // .andExpect(openApi().isValid(CONTRACT_VALIDATOR)); // Disabled: spec declares
-        // the users_update response body as an ARRAY of userIndexAndView, but the
-        // official examples and the PHP implementation return a single object.
+                .andExpect(jsonPath("$.body.profile.first_name").value("Updated"))
+                // Enabled (verified): PUT /users/{id}.json passes contract validation
+                // — the single-object response we return is accepted by the validator;
+                // the earlier "spec declares an ARRAY body" reason did not actually
+                // block the assertion.
+                .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
     }
 
     @Test

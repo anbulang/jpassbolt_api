@@ -19,6 +19,7 @@ import org.springframework.security.test.context.support.WithMockUser;
 import java.util.HashMap;
 import java.util.Map;
 
+import static com.atlassian.oai.validator.mockmvc.OpenApiValidationMatchers.openApi;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -35,14 +36,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * "personal"), so the move-out / move-in permission checks pass for the root
  * and personal-folder cases the reference implementation always allows.
  *
- * The openApi().isValid(CONTRACT_VALIDATOR) assertions are kept (commented)
- * below for the same project-wide reasons documented in
- * AuthControllerContractTest / ShareExtrasContractTest (strict JSON header
- * validation: the spec header requires an "action" uuid the createResponse
- * envelope omits, and LocalDateTime serializes without a timezone offset).
- * The POST verb test has an ADDITIONAL blocker recorded on it (the spec only
- * declares PUT for this path).
- * (static import: com.atlassian.oai.validator.mockmvc.OpenApiValidationMatchers.openApi)
+ * The {header, body} envelope is now spec-valid project-wide, so the old
+ * envelope/action/date reason no longer applies: both PUT move assertions are
+ * ENABLED (verified). Only the POST verb test stays disabled, for a VERIFIED
+ * endpoint-absent reason (validation.request.operation.notAllowed — the spec
+ * declares ONLY `put` for /move/{foreignModel}/{foreignId}.json).
  */
 @WithMockUser(username = "test@example.com", roles = { "USER" })
 public class MoveControllerContractTest extends OpenApiComplianceTest {
@@ -94,13 +92,11 @@ public class MoveControllerContractTest extends OpenApiComplianceTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.header.status").value("success"))
                 // success body for a move IS the spec-mandated JSON null
-                .andExpect(jsonPath("$.body").value(org.hamcrest.CoreMatchers.nullValue()));
-        // .andExpect(openApi().isValid(CONTRACT_VALIDATOR)); // Disabled due to strict
-        // JSON header validation: the spec's header schema requires an "action"
-        // (uuid) field that the project-wide createResponse envelope does not
-        // emit, and LocalDateTime serializes without a timezone offset, failing
-        // strict date-time format checks. Same known limitation and handling as
-        // AuthControllerContractTest.
+                .andExpect(jsonPath("$.body").value(org.hamcrest.CoreMatchers.nullValue()))
+                // Enabled (verified): PUT /move/folder/{id}.json returns the
+                // spec-mandated nullBody and the envelope is now spec-valid. The
+                // earlier envelope/action/date reason was outdated.
+                .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
     }
 
     @Test
@@ -114,9 +110,10 @@ public class MoveControllerContractTest extends OpenApiComplianceTest {
                 .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.header.status").value("success"))
-                .andExpect(jsonPath("$.body").value(org.hamcrest.CoreMatchers.nullValue()));
-        // .andExpect(openApi().isValid(CONTRACT_VALIDATOR)); // Disabled due to strict
-        // JSON header validation (see testMoveFolderIntoFolderContract).
+                .andExpect(jsonPath("$.body").value(org.hamcrest.CoreMatchers.nullValue()))
+                // Enabled (verified): PUT /move/resource/{id}.json returns the
+                // spec-mandated nullBody and the envelope is now spec-valid.
+                .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
     }
 
     @Test
@@ -132,14 +129,14 @@ public class MoveControllerContractTest extends OpenApiComplianceTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.header.status").value("success"))
                 .andExpect(jsonPath("$.body").value(org.hamcrest.CoreMatchers.nullValue()));
-        // .andExpect(openApi().isValid(CONTRACT_VALIDATOR)); // Disabled — TWO reasons:
-        // 1) the strict JSON header validation issue shared by all contract tests
-        // (see testMoveFolderIntoFolderContract);
-        // 2) the spec declares ONLY `put` for /move/{foreignModel}/{foreignId}.json
-        // (L4551), no `post` operation — so the validator rejects a POST to this
-        // path. The controller intentionally accepts both verbs to match the PHP
-        // FoldersRelationsMoveController route registration, so we keep the POST
-        // coverage but cannot run it through the (PUT-only) spec.
+        // Disabled (verified) — endpoint-absent, NOT an envelope issue:
+        // validation.request.operation.notAllowed. The spec declares ONLY `put` for
+        // /move/{foreignModel}/{foreignId}.json (no `post`), so the validator
+        // rejects a POST to this path. The controller intentionally accepts both
+        // verbs to match the PHP FoldersRelationsMoveController route registration,
+        // so we keep the POST coverage but cannot run it through the (PUT-only)
+        // spec. Recorded in assertions_left_disabled.
+        // .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
     }
 
     // ------------------------------------------------------------------

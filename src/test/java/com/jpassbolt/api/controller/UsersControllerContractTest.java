@@ -128,12 +128,15 @@ public class UsersControllerContractTest extends OpenApiComplianceTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.header.status").value("success"))
                 .andExpect(jsonPath("$.body").isArray());
-        // .andExpect(openApi().isValid(CONTRACT_VALIDATOR)); // Disabled: the
-        // users_index response uses the headerWithPagination schema, which REQUIRES a
-        // "pagination" object (count/page/limit). UsersController.getAllUsers() emits
-        // the plain header without pagination, so the validator rejects the header.
-        // (groups_index uses the plain header — which is why the Group index assertion
-        // passes — but users_index does not.) Recorded in assertions_left_disabled.
+        // Disabled (verified) — pagination-header, NOT an envelope issue:
+        // validation.response.body.schema.required on /header — the users_index
+        // response uses the headerWithPagination schema, which REQUIRES a
+        // "pagination" object (count/page/limit). UsersController.getAllUsers()
+        // emits the plain header without pagination, so the validator rejects the
+        // header. (groups_index uses the plain header — which is why the Group index
+        // assertion passes — but users_index does not.) Recorded in
+        // assertions_left_disabled.
+        // .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
     }
 
     @Test

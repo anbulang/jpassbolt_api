@@ -16,7 +16,7 @@ import org.springframework.security.test.context.support.WithMockUser;
 
 import java.util.Map;
 
-// import static com.atlassian.oai.validator.mockmvc.OpenApiValidationMatchers.openApi;
+import static com.atlassian.oai.validator.mockmvc.OpenApiValidationMatchers.openApi;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
@@ -24,18 +24,13 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * OpenAPI contract tests for the Secrets endpoint group
  * (/secrets/resource/{resourceId}.json).
  *
- * NOTE: the openApi().isValid(CONTRACT_VALIDATOR) assertions are present but
- * commented out, in line with the existing envelope-returning contract tests
- * (AuthControllerContractTest, CommentControllerContractTest): the Atlassian
- * Swagger Request Validator's strict JSON header validation currently rejects
- * our shared {header, body} response envelope. The GET operation IS defined in
- * the spec, so its disable reason is the envelope/validator quirk.
- *
- * The spec defines ONLY a GET for /secrets/resource/{resourceId}.json; there is
- * no PUT operation in the OpenAPI document for this path even though the
- * implementation exposes one. The PUT test below therefore exercises behavior
- * only and its contract assertion stays disabled for a different reason (the
- * v4 spec lacks the PUT operation) - recorded in assertions_left_disabled.
+ * NOTE: the shared {header, body} envelope is now spec-valid project-wide, so
+ * the GET assertion is ENABLED (verified). The spec defines ONLY a GET for
+ * /secrets/resource/{resourceId}.json; there is no PUT operation even though
+ * the implementation exposes one. The PUT test below therefore exercises
+ * behavior only and its contract assertion stays disabled for a VERIFIED
+ * endpoint-absent reason (validation.request.operation.notAllowed) — recorded
+ * in assertions_left_disabled.
  */
 @WithMockUser(username = "test@example.com", roles = { "USER" })
 class SecretControllerContractTest extends OpenApiComplianceTest {
@@ -102,9 +97,14 @@ class SecretControllerContractTest extends OpenApiComplianceTest {
                                 .andExpect(status().isOk())
                                 .andExpect(jsonPath("$.header.status").value("success"))
                                 .andExpect(jsonPath("$.body.resource_id").value(testResource.getId()))
-                                .andExpect(jsonPath("$.body.data").exists());
-                // Disabled due to strict JSON header validation of the response envelope:
-                // .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
+                                .andExpect(jsonPath("$.body.data").exists())
+                                // Enabled (verified): GET /secrets/resource/{id}.json IS
+                                // defined in the spec and the {header, body} envelope is
+                                // now spec-valid (header carries all required fields incl.
+                                // action; the secret body matches the secret schema). The
+                                // earlier "strict JSON header validation" reason was
+                                // outdated.
+                                .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
         }
 
         @Test
@@ -118,10 +118,12 @@ class SecretControllerContractTest extends OpenApiComplianceTest {
                                 .andExpect(status().isOk())
                                 .andExpect(jsonPath("$.header.status").value("success"))
                                 .andExpect(jsonPath("$.body.data").value(newData));
-                // Disabled: the OpenAPI spec defines no PUT operation for
-                // /secrets/resource/{resourceId}.json (only GET). The validator would
-                // report an unexpected/undefined operation, so this contract assertion
-                // cannot pass for a non-envelope reason. Behavior is still asserted above.
+                // Disabled (verified) — endpoint-absent, NOT an envelope issue:
+                // validation.request.operation.notAllowed. The OpenAPI spec declares
+                // ONLY a GET for /secrets/resource/{resourceId}.json; there is no PUT
+                // operation, so the validator rejects the verb. The implementation
+                // intentionally exposes PUT; behavior is asserted above. Recorded in
+                // assertions_left_disabled.
                 // .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
         }
 }

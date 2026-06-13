@@ -159,15 +159,17 @@ public class GroupShareControllerContractTest extends OpenApiComplianceTest {
                 .andExpect(jsonPath("$.body.changes.added[*].User.id",
                         containsInAnyOrder(memberA.getId(), memberB.getId())))
                 .andExpect(jsonPath("$.body.changes.removed").isEmpty());
-        // .andExpect(openApi().isValid(CONTRACT_VALIDATOR)); // Intentionally left
-        // DISABLED for a body-shape reason (NOT the envelope/date-time issue): the
-        // spec contradicts ITSELF for this endpoint — schema shareUpdateDryRun
-        // (L8677) requires top-level added/removed, while the official example
-        // (L11457) and the actual PHP output wrap them in "changes". The plugin
-        // consumes changes.added, so we follow PHP/the example — flattening the
-        // body just to satisfy the schema would break plugin compatibility. Same
-        // precedent as ShareExtrasContractTest.testShareSimulateContract.
-        // (static import: com.atlassian.oai.validator.mockmvc.OpenApiValidationMatchers.openApi)
+        // Disabled (verified) — body-shape-divergent, NOT an envelope/date issue:
+        // validation.response.body.schema.additionalProperties ("[changes] not
+        // allowed") + .required ("missing [added, removed]") on /body. The spec
+        // contradicts ITSELF for this endpoint — schema shareUpdateDryRun requires
+        // top-level added/removed, while the official example and the actual PHP
+        // output wrap them in "changes". The plugin consumes changes.added, so we
+        // follow PHP/the example; flattening the body to satisfy the schema would
+        // break plugin compatibility. Same precedent as
+        // ShareExtrasContractTest.testShareSimulateContract. Recorded in
+        // assertions_left_disabled.
+        // .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
     }
 
     // ------------------------------------------------------------------

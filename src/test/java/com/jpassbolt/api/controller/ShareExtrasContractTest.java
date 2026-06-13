@@ -164,15 +164,16 @@ public class ShareExtrasContractTest extends OpenApiComplianceTest {
                 .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.body.changes.removed[0].User.id").value(targetUser.getId()));
-        // .andExpect(openApi().isValid(CONTRACT_VALIDATOR)); // INTENTIONALLY left
-        // disabled — NOT an envelope/date reason. The spec contradicts ITSELF for
-        // this endpoint's body: schema shareUpdateDryRun (L8676) marks top-level
-        // added/removed as required, while the official example (L11446) and the
+        // Disabled (verified) — body-shape-divergent, NOT an envelope/date issue:
+        // validation.response.body.schema.additionalProperties ("[changes] not
+        // allowed") + .required ("missing [added, removed]") on /body. The spec
+        // contradicts ITSELF for this endpoint — schema shareUpdateDryRun marks
+        // top-level added/removed as required, while the official example and the
         // actual PHP output wrap them in "changes". The plugin consumes
-        // changes.added, so we follow PHP/the example — flattening the body just
-        // to satisfy the schema would break plugin compatibility. The validator
-        // enforces the schema, so this body legitimately fails contract
-        // validation; recorded in assertions_left_disabled.
+        // changes.added, so we follow PHP/the example; flattening the body to satisfy
+        // the schema would break plugin compatibility. Recorded in
+        // assertions_left_disabled.
+        // .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
     }
 
     @Test

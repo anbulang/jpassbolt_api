@@ -125,9 +125,12 @@ public class SetupControllerContractTest extends OpenApiComplianceTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.header.status").value("success"))
                 .andExpect(jsonPath("$.body.user.username").value("betty@example.com"));
-        // .andExpect(openApi().isValid(CONTRACT_VALIDATOR)); // Disabled: the spec
-        // defines no /setup/... path (these endpoints are outside the OpenAPI spec
-        // domain; behaviour follows the PHP SetupStartController).
+        // Disabled (verified) — endpoint-absent, NOT an envelope issue:
+        // validation.request.path.missing ("No API path found that matches
+        // '/setup/start/...'."). The spec defines no /setup/... path (these
+        // endpoints are outside the OpenAPI spec domain; behaviour follows the PHP
+        // SetupStartController). Recorded in assertions_left_disabled.
+        // .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
     }
 
     @Test
@@ -142,8 +145,11 @@ public class SetupControllerContractTest extends OpenApiComplianceTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.header.message").value("The setup was completed successfully."))
                 .andExpect(jsonPath("$.body").value(nullValue()));
-        // .andExpect(openApi().isValid(CONTRACT_VALIDATOR)); // Disabled: the spec
-        // defines no /setup/... path (these endpoints are outside the OpenAPI spec
-        // domain; behaviour follows the PHP SetupCompleteController).
+        // Disabled (verified) — endpoint-absent, NOT an envelope issue:
+        // validation.request.path.missing ("No API path found that matches
+        // '/setup/complete/...'."). The spec defines no /setup/... path (outside
+        // the OpenAPI spec domain; behaviour follows the PHP SetupCompleteController).
+        // Recorded in assertions_left_disabled.
+        // .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
     }
 }
