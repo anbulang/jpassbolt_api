@@ -566,6 +566,65 @@ CREATE TABLE `metadata_session_keys` (
 /*!40000 ALTER TABLE `metadata_session_keys` ENABLE KEYS */;
 
 --
+-- Table structure for table `tags` (Passbolt EE Tags — canonical EE schema,
+-- not present in the CE reference. v5.1 metadata/metadata_key_id/
+-- metadata_key_type are ADDITIVE NULLABLE; no `deleted` column — hard delete).
+--
+
+DROP TABLE IF EXISTS `tags`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `tags` (
+  `id` char(36) CHARACTER SET ascii COLLATE ascii_general_ci NOT NULL,
+  `slug` varchar(128) NOT NULL,
+  `is_shared` tinyint(1) NOT NULL DEFAULT 0,
+  `metadata` mediumtext DEFAULT NULL,
+  `metadata_key_id` char(36) CHARACTER SET ascii COLLATE ascii_general_ci DEFAULT NULL,
+  `metadata_key_type` varchar(100) DEFAULT NULL,
+  `created` datetime NOT NULL,
+  `modified` datetime NOT NULL,
+  PRIMARY KEY (`id`),
+  KEY `slug` (`slug`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `tags`
+--
+
+/*!40000 ALTER TABLE `tags` DISABLE KEYS */;
+/*!40000 ALTER TABLE `tags` ENABLE KEYS */;
+
+--
+-- Table structure for table `resources_tags` (Passbolt EE Tags join table.
+-- user_id NULL = shared-tag association; no FK constraints, indexes only).
+--
+
+DROP TABLE IF EXISTS `resources_tags`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `resources_tags` (
+  `id` char(36) CHARACTER SET ascii COLLATE ascii_general_ci NOT NULL,
+  `resource_id` char(36) CHARACTER SET ascii COLLATE ascii_general_ci NOT NULL,
+  `tag_id` char(36) CHARACTER SET ascii COLLATE ascii_general_ci NOT NULL,
+  `user_id` char(36) CHARACTER SET ascii COLLATE ascii_general_ci DEFAULT NULL,
+  `created` datetime NOT NULL,
+  `modified` datetime NOT NULL,
+  PRIMARY KEY (`id`),
+  KEY `resource_id` (`resource_id`),
+  KEY `tag_id` (`tag_id`),
+  KEY `user_id` (`user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `resources_tags`
+--
+
+/*!40000 ALTER TABLE `resources_tags` DISABLE KEYS */;
+/*!40000 ALTER TABLE `resources_tags` ENABLE KEYS */;
+
+--
 -- Table structure for table `organization_settings`
 --
 
@@ -763,7 +822,7 @@ CREATE TABLE `resource_types` (
 --
 
 /*!40000 ALTER TABLE `resource_types` DISABLE KEYS */;
-INSERT INTO `resource_types` VALUES ('05ba5c75-504d-5ad6-819a-83af68867d86','totp','Standalone TOTP','A resource with standalone TOTP fields.','{\"resource\":{\"type\":\"object\",\"required\":[\"name\"],\"properties\":{\"name\":{\"type\":\"string\",\"maxLength\":255},\"uri\":{\"anyOf\":[{\"type\":\"string\",\"maxLength\":1024},{\"type\":\"null\"}]}}},\"secret\":{\"type\":\"object\",\"required\":[\"totp\"],\"properties\":{\"totp\":{\"type\":\"object\",\"required\":[\"secret_key\",\"digits\",\"algorithm\"],\"properties\":{\"algorithm\":{\"type\":\"string\",\"minLength\":4,\"maxLength\":6},\"secret_key\":{\"type\":\"string\",\"maxLength\":1024},\"digits\":{\"type\":\"number\",\"minimum\":6,\"exclusiveMaximum\":9},\"period\":{\"type\":\"number\"}}}}}}',NULL,'2024-02-18 08:18:42','2024-02-18 08:18:42'),('669f8c64-242a-59fb-92fc-81f660975fd3','password-string','Simple password','The original passbolt resource type, where the secret is a non empty string.','{\"resource\":{\"type\":\"object\",\"required\":[\"name\"],\"properties\":{\"name\":{\"type\":\"string\",\"maxLength\":255},\"username\":{\"anyOf\":[{\"type\":\"string\",\"maxLength\":255},{\"type\":\"null\"}]},\"uri\":{\"anyOf\":[{\"type\":\"string\",\"maxLength\":1024},{\"type\":\"null\"}]},\"description\":{\"anyOf\":[{\"type\":\"string\",\"maxLength\":10000},{\"type\":\"null\"}]}}},\"secret\":{\"type\":\"string\",\"maxLength\":4096}}',NULL,'2024-02-18 08:18:41','2024-02-18 08:18:41'),('7438294d-f71c-5164-ba95-d9e60e295564','v5-default-with-totp','Default resource type with TOTP','The new default resource type with a TOTP introduced with v5.','[]',NULL,'2025-06-30 23:39:51','2025-06-30 23:39:51'),('761e5863-e17e-5ded-b3c2-76ffd5d0a2dc','v5-password-string','Simple Password (Deprecated)','The original passbolt resource type, kept for backward compatibility reasons.','[]',NULL,'2025-06-30 23:39:51','2025-06-30 23:39:51'),('8cca88d9-a3f6-56df-b860-3ef08de5c5c4','password-description-totp','Password, Description and TOTP','A resource with encrypted password, description and TOTP fields.','{\"resource\":{\"type\":\"object\",\"required\":[\"name\"],\"properties\":{\"name\":{\"type\":\"string\",\"maxLength\":255},\"username\":{\"anyOf\":[{\"type\":\"string\",\"maxLength\":255},{\"type\":\"null\"}]},\"uri\":{\"anyOf\":[{\"type\":\"string\",\"maxLength\":1024},{\"type\":\"null\"}]}}},\"secret\":{\"type\":\"object\",\"required\":[\"password\",\"totp\"],\"properties\":{\"password\":{\"type\":\"string\",\"maxLength\":4096},\"description\":{\"anyOf\":[{\"type\":\"string\",\"maxLength\":10000},{\"type\":\"null\"}]},\"totp\":{\"type\":\"object\",\"required\":[\"secret_key\",\"digits\",\"algorithm\"],\"properties\":{\"algorithm\":{\"type\":\"string\",\"minLength\":4,\"maxLength\":6},\"secret_key\":{\"type\":\"string\",\"maxLength\":1024},\"digits\":{\"type\":\"number\",\"minimum\":6,\"exclusiveMaximum\":9},\"period\":{\"type\":\"number\"}}}}}}',NULL,'2024-02-18 08:18:42','2024-02-18 08:18:42'),('a28a04cd-6f53-518a-967c-9963bf9cec51','password-and-description','Password with description','A resource with the password and the description encrypted.','{\"resource\":{\"type\":\"object\",\"required\":[\"name\"],\"properties\":{\"name\":{\"type\":\"string\",\"maxLength\":255},\"username\":{\"anyOf\":[{\"type\":\"string\",\"maxLength\":255},{\"type\":\"null\"}]},\"uri\":{\"anyOf\":[{\"type\":\"string\",\"maxLength\":1024},{\"type\":\"null\"}]}}},\"secret\":{\"type\":\"object\",\"required\":[\"password\"],\"properties\":{\"password\":{\"type\":\"string\",\"maxLength\":4096},\"description\":{\"anyOf\":[{\"type\":\"string\",\"maxLength\":10000},{\"type\":\"null\"}]}}}}',NULL,'2024-02-18 08:18:41','2024-02-18 08:18:41'),('bb2280b5-c4d9-569c-9337-62b307f1139c','v5-totp-standalone','Standalone TOTP','The new standalone TOTP resource type introduced with v5.','[]',NULL,'2025-06-30 23:39:51','2025-06-30 23:39:51'),('dd1f723d-0d1e-513f-8218-4055dc0530d0','v5-default','Default resource type','The new default resource type introduced with v5.','[]',NULL,'2025-06-30 23:39:51','2025-06-30 23:39:51');
+INSERT INTO `resource_types` VALUES ('05ba5c75-504d-5ad6-819a-83af68867d86','totp','Standalone TOTP','A resource with standalone TOTP fields.','{\"resource\":{\"type\":\"object\",\"required\":[\"name\"],\"properties\":{\"name\":{\"type\":\"string\",\"maxLength\":255},\"uri\":{\"anyOf\":[{\"type\":\"string\",\"maxLength\":1024},{\"type\":\"null\"}]}}},\"secret\":{\"type\":\"object\",\"required\":[\"totp\"],\"properties\":{\"totp\":{\"type\":\"object\",\"required\":[\"secret_key\",\"digits\",\"algorithm\"],\"properties\":{\"algorithm\":{\"type\":\"string\",\"minLength\":4,\"maxLength\":6},\"secret_key\":{\"type\":\"string\",\"maxLength\":1024},\"digits\":{\"type\":\"number\",\"minimum\":6,\"exclusiveMaximum\":9},\"period\":{\"type\":\"number\"}}}}}}',NULL,'2024-02-18 08:18:42','2024-02-18 08:18:42'),('669f8c64-242a-59fb-92fc-81f660975fd3','password-string','Simple password','The original passbolt resource type, where the secret is a non empty string.','{\"resource\":{\"type\":\"object\",\"required\":[\"name\"],\"properties\":{\"name\":{\"type\":\"string\",\"maxLength\":255},\"username\":{\"anyOf\":[{\"type\":\"string\",\"maxLength\":255},{\"type\":\"null\"}]},\"uri\":{\"anyOf\":[{\"type\":\"string\",\"maxLength\":1024},{\"type\":\"null\"}]},\"description\":{\"anyOf\":[{\"type\":\"string\",\"maxLength\":10000},{\"type\":\"null\"}]}}},\"secret\":{\"type\":\"string\",\"maxLength\":4096}}',NULL,'2024-02-18 08:18:41','2024-02-18 08:18:41'),('7438294d-f71c-5164-ba95-d9e60e295564','v5-default-with-totp','Default resource type with TOTP','The new default resource type with a TOTP introduced with v5.','[]',NULL,'2025-06-30 23:39:51','2025-06-30 23:39:51'),('761e5863-e17e-5ded-b3c2-76ffd5d0a2dc','v5-password-string','Simple Password (Deprecated)','The original passbolt resource type, kept for backward compatibility reasons.','[]',NULL,'2025-06-30 23:39:51','2025-06-30 23:39:51'),('8cca88d9-a3f6-56df-b860-3ef08de5c5c4','password-description-totp','Password, Description and TOTP','A resource with encrypted password, description and TOTP fields.','{\"resource\":{\"type\":\"object\",\"required\":[\"name\"],\"properties\":{\"name\":{\"type\":\"string\",\"maxLength\":255},\"username\":{\"anyOf\":[{\"type\":\"string\",\"maxLength\":255},{\"type\":\"null\"}]},\"uri\":{\"anyOf\":[{\"type\":\"string\",\"maxLength\":1024},{\"type\":\"null\"}]}}},\"secret\":{\"type\":\"object\",\"required\":[\"password\",\"totp\"],\"properties\":{\"password\":{\"type\":\"string\",\"maxLength\":4096},\"description\":{\"anyOf\":[{\"type\":\"string\",\"maxLength\":10000},{\"type\":\"null\"}]},\"totp\":{\"type\":\"object\",\"required\":[\"secret_key\",\"digits\",\"algorithm\"],\"properties\":{\"algorithm\":{\"type\":\"string\",\"minLength\":4,\"maxLength\":6},\"secret_key\":{\"type\":\"string\",\"maxLength\":1024},\"digits\":{\"type\":\"number\",\"minimum\":6,\"exclusiveMaximum\":9},\"period\":{\"type\":\"number\"}}}}}}',NULL,'2024-02-18 08:18:42','2024-02-18 08:18:42'),('a28a04cd-6f53-518a-967c-9963bf9cec51','password-and-description','Password with description','A resource with the password and the description encrypted.','{\"resource\":{\"type\":\"object\",\"required\":[\"name\"],\"properties\":{\"name\":{\"type\":\"string\",\"maxLength\":255},\"username\":{\"anyOf\":[{\"type\":\"string\",\"maxLength\":255},{\"type\":\"null\"}]},\"uri\":{\"anyOf\":[{\"type\":\"string\",\"maxLength\":1024},{\"type\":\"null\"}]}}},\"secret\":{\"type\":\"object\",\"required\":[\"password\"],\"properties\":{\"password\":{\"type\":\"string\",\"maxLength\":4096},\"description\":{\"anyOf\":[{\"type\":\"string\",\"maxLength\":10000},{\"type\":\"null\"}]}}}}',NULL,'2024-02-18 08:18:41','2024-02-18 08:18:41'),('bb2280b5-c4d9-569c-9337-62b307f1139c','v5-totp-standalone','Standalone TOTP','The new standalone TOTP resource type introduced with v5.','[]',NULL,'2025-06-30 23:39:51','2025-06-30 23:39:51'),('dd1f723d-0d1e-513f-8218-4055dc0530d0','v5-default','Default resource type','The new default resource type introduced with v5.','[]',NULL,'2025-06-30 23:39:51','2025-06-30 23:39:51'),('0551544e-2ccd-5ce8-95cf-86f0aab0f827','v5-custom-fields','Standalone custom fields','A resource with standalone custom fields.','[]',NULL,'2025-06-30 23:39:51','2025-06-30 23:39:51'),('0a72c76b-b8e6-53f0-8bef-0a8ca6b5c764','v5-note','Standalone note','A resource with standalone notes.','[]',NULL,'2025-06-30 23:39:51','2025-06-30 23:39:51');
 /*!40000 ALTER TABLE `resource_types` ENABLE KEYS */;
 
 --

@@ -23,8 +23,11 @@ import lombok.EqualsAndHashCode;
  * Schema notes (must stay aligned with Passbolt official schema,
  * ddl-auto=validate on MySQL):
  * - no {@code deleted} column: folders are HARD deleted (unlike Resource/User)
- * - v5 columns {@code metadata}/{@code metadata_key_id}/{@code metadata_key_type}
- * exist in the DB but are intentionally not mapped (v4 behaviour only)
+ * - v5 ADDITIVE NULLABLE columns {@code metadata}/{@code metadata_key_id}/
+ * {@code metadata_key_type} are mapped (zero-knowledge: the server only
+ * stores/forwards the encrypted metadata blob, never decrypts it). v4 folders
+ * leave them null; the v5 upgrade endpoints write ONLY these three, never
+ * the v4 {@code name}. Matches migration V4100AddMetadataFieldsToFolders.
  * </p>
  */
 @Data
@@ -39,6 +42,21 @@ public class Folder extends BaseEntity {
      */
     @Column(name = "name", length = 256)
     private String name;
+
+    /**
+     * v5 ADDITIVE NULLABLE metadata columns. {@code metadata} holds the
+     * client-encrypted OpenPGP metadata blob (mediumtext), {@code metadataKeyId}
+     * references the {@code metadata_keys} row used, {@code metadataKeyType}
+     * distinguishes shared vs personal key. Null for v4 folders.
+     */
+    @Column(name = "metadata", columnDefinition = "mediumtext")
+    private String metadata;
+
+    @Column(name = "metadata_key_id", length = 36, columnDefinition = "char(36)")
+    private String metadataKeyId;
+
+    @Column(name = "metadata_key_type", length = 100)
+    private String metadataKeyType;
 
     @Column(name = "created_by", nullable = false, length = 36, columnDefinition = "char(36)")
     private String createdBy;

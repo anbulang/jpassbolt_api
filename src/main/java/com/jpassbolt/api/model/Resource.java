@@ -33,6 +33,24 @@ public class Resource extends BaseEntity {
     @Column(name = "description", columnDefinition = "TEXT")
     private String description;
 
+    /**
+     * v5 ADDITIVE NULLABLE metadata columns (Passbolt v5 zero-knowledge
+     * metadata: the encrypted metadata blob is stored/forwarded by the server,
+     * never decrypted). v4 create/update flow leaves these null; the v5 upgrade
+     * endpoints write ONLY these three columns (name/username/uri/description
+     * stay intact). Matches migration V4100AddMetadataFieldsToResources:
+     * metadata TEXT_MEDIUM null, metadata_key_id uuid null, metadata_key_type
+     * string(100) null.
+     */
+    @Column(name = "metadata", columnDefinition = "mediumtext")
+    private String metadata;
+
+    @Column(name = "metadata_key_id", length = 36, columnDefinition = "char(36)")
+    private String metadataKeyId;
+
+    @Column(name = "metadata_key_type", length = 100)
+    private String metadataKeyType;
+
     @Column(name = "deleted", nullable = false)
     private Boolean deleted = false;
 

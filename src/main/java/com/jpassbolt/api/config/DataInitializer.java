@@ -184,6 +184,47 @@ public class DataInitializer implements CommandLineRunner {
                 """
                 {"resource":{"type":"object","required":["name"],"properties":{"name":{"type":"string","maxLength":255},"username":{"anyOf":[{"type":"string","maxLength":255},{"type":"null"}]},"uri":{"anyOf":[{"type":"string","maxLength":1024},{"type":"null"}]}}},"secret":{"type":"object","required":["password","totp"],"properties":{"password":{"type":"string","maxLength":4096},"description":{"anyOf":[{"type":"string","maxLength":10000},{"type":"null"}]},"totp":{"type":"object","required":["secret_key","digits","algorithm"],"properties":{"algorithm":{"type":"string","minLength":4,"maxLength":6},"secret_key":{"type":"string","maxLength":1024},"digits":{"type":"number","minimum":6,"exclusiveMaximum":9},"period":{"type":"number"}}}}}}""");
         log.info("Seeded 4 v4 resource types");
+        seedV5ResourceTypes();
+    }
+
+    /**
+     * Seed the 6 v5 resource types (Passbolt v5 metadata system). The v4 index
+     * endpoint filters {@link ResourceType#V5_RESOURCE_TYPE_SLUGS} out, so these
+     * rows are invisible to v4 clients and safe for v4 contract tests.
+     *
+     * <p>UUIDs are the canonical UuidFactory::uuid('resource-types.id.&lt;slug&gt;')
+     * values (UUIDv5 over PASSBOLT_SEED d5447ca1-950f-459d-8b20-86ddfdd0f922),
+     * matching the official seed dump. The v5 JSON-Schema definitions are stored
+     * as {@code "[]"} verbatim from the official resource_types dump
+     * (docs/ref_files/V1__Initial_Schema_Data_H2.sql) — the real schema bodies
+     * live in the client/plugin; the server only stores the definition string.</p>
+     */
+    private void seedV5ResourceTypes() {
+        createResourceType("761e5863-e17e-5ded-b3c2-76ffd5d0a2dc",
+                "v5-password-string", "Simple Password (Deprecated)",
+                "The original passbolt resource type, kept for backward compatibility reasons.",
+                "[]");
+        createResourceType("dd1f723d-0d1e-513f-8218-4055dc0530d0",
+                "v5-default", "Default resource type",
+                "The new default resource type introduced with v5.",
+                "[]");
+        createResourceType("bb2280b5-c4d9-569c-9337-62b307f1139c",
+                "v5-totp-standalone", "Standalone TOTP",
+                "The new standalone TOTP resource type introduced with v5.",
+                "[]");
+        createResourceType("7438294d-f71c-5164-ba95-d9e60e295564",
+                "v5-default-with-totp", "Default resource type with TOTP",
+                "The new default resource type with a TOTP introduced with v5.",
+                "[]");
+        createResourceType("0551544e-2ccd-5ce8-95cf-86f0aab0f827",
+                "v5-custom-fields", "Standalone custom fields",
+                "A resource with standalone custom fields.",
+                "[]");
+        createResourceType("0a72c76b-b8e6-53f0-8bef-0a8ca6b5c764",
+                "v5-note", "Standalone note",
+                "A resource with standalone notes.",
+                "[]");
+        log.info("Seeded 6 v5 resource types");
     }
 
     private void createResourceType(String id, String slug, String name, String description, String definition) {
