@@ -7,10 +7,12 @@ import com.jpassbolt.api.model.GroupUser;
 import com.jpassbolt.api.model.Permission;
 import com.jpassbolt.api.model.Secret;
 import com.jpassbolt.api.repository.FavoriteRepository;
+import com.jpassbolt.api.repository.GroupRepository;
 import com.jpassbolt.api.repository.GroupUserRepository;
 import com.jpassbolt.api.repository.PermissionRepository;
 import com.jpassbolt.api.repository.ResourceRepository;
 import com.jpassbolt.api.repository.SecretRepository;
+import com.jpassbolt.api.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -18,7 +20,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -26,6 +27,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 /**
  * Service for managing resource permissions and sharing.
@@ -47,11 +49,16 @@ public class PermissionService {
 
     private static final String VALIDATION_MESSAGE = "Could not validate resource data.";
 
+    private static final Pattern UUID_PATTERN = Pattern.compile(
+            "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$");
+
     private final PermissionRepository permissionRepository;
     private final ResourceRepository resourceRepository;
     private final SecretRepository secretRepository;
     private final FavoriteRepository favoriteRepository;
     private final GroupUserRepository groupUserRepository;
+    private final GroupRepository groupRepository;
+    private final UserRepository userRepository;
 
     /**
      * Get all permissions for a resource.
@@ -81,22 +88,12 @@ public class PermissionService {
     /**
      * Check if a user has at least the specified permission level on a
      * resource, either directly or inherited through one of their groups
-     * (PHP PermissionsTable::hasAccess semantics).
+     * (PHP PermissionsTable::hasAccess semantics). Delegates to a single
+     * JPQL query (behaviour unchanged, eliminates the former N+1 fan-out).
      */
     @Transactional(readOnly = true)
     public boolean hasAccessIncludingGroups(String resourceId, String userId, int minType) {
-        if (permissionRepository.userHasAccess(resourceId, userId, minType)) {
-            return true;
-        }
-        Set<String> groupIds = new HashSet<>();
-        for (GroupUser membership : groupUserRepository.findByUserId(userId)) {
-            groupIds.add(membership.getGroupId());
-        }
-        if (groupIds.isEmpty()) {
-            return false;
-        }
-        return permissionRepository.findByAcoForeignKeyAndAro(resourceId, Permission.GROUP_ARO).stream()
-                .anyMatch(p -> groupIds.contains(p.getAroForeignKey()) && p.getType() >= minType);
+        return permissionRepository.userHasAccessIncludingGroups(resourceId, userId, minType);
     }
 
     /**
@@ -163,11 +160,16 @@ public class PermissionService {
      * <p>
      * Row semantics: id present → update type (or physical delete when
      * delete=true); no id + delete=true → locate by (aco_foreign_key,
-     * aro_foreign_key) (the plugin also sends this id-less deleteUser shape);
-     * no id → create. Unknown id → per-row validation error. After applying,
-     * at least one OWNER must remain, and the provided secrets must cover
-     * exactly the set of users who newly gained access. Users who lost access
-     * get their secrets and favorites hard-deleted in the same transaction.
+     * aro_foreign_key [+ aro when provided]) (the plugin also sends this
+     * id-less deleteUser shape); no id → create (User or Group ARO — a Group
+     * row fans access out to every group member via groups_users). Unknown id
+     * → per-row validation error. After applying, at least one OWNER must
+     * remain, every user who newly gained access must have a provided secret,
+     * and every provided secret must target a user having access after the
+     * change (re-submitting a ciphertext for a user keeping access updates
+     * it — PHP SecretsUpdateSecretsService). Users without any remaining
+     * access path (direct or through a group) get their secrets and
+     * favorites hard-deleted in the same transaction.
      * </p>
      *
      * @param resourceId        the resource ID
@@ -189,7 +191,7 @@ public class PermissionService {
         Set<String> added = difference(after, before);
         Set<String> removed = difference(before, after);
 
-        validateSecretsCoverage(added, secrets);
+        validateSecretsCoverage(added, after, secrets);
 
         // --- Persist the validated change set ---
         for (String permissionId : changeSet.deletedIds()) {
@@ -216,30 +218,79 @@ public class PermissionService {
                     create.aro, create.aroForeignKey, resourceId, create.type);
         }
 
-        // --- Secrets for the users who gained access ---
-        if (secrets != null) {
+        // --- Secrets: create for users gaining access, update the ciphertext
+        // when a row already exists (PHP SecretsUpdateSecretsService::
+        // updateSecret is an update, NOT a skip — re-encrypting for users who
+        // keep access is a legal update). Existing rows are batch-indexed in
+        // one query. ---
+        if (secrets != null && !secrets.isEmpty()) {
+            Set<String> providedUserIds = new LinkedHashSet<>();
+            for (ShareDto.SecretAdd secretAdd : secrets) {
+                if (secretAdd.getUserId() != null && secretAdd.getData() != null) {
+                    providedUserIds.add(secretAdd.getUserId());
+                }
+            }
+            Map<String, Secret> existingByUserId = new LinkedHashMap<>();
+            if (!providedUserIds.isEmpty()) {
+                for (Secret existing : secretRepository
+                        .findByResourceIdAndUserIdIn(resourceId, providedUserIds)) {
+                    existingByUserId.put(existing.getUserId(), existing);
+                }
+            }
             for (ShareDto.SecretAdd secretAdd : secrets) {
                 if (secretAdd.getUserId() == null || secretAdd.getData() == null) {
                     continue; // already validated by validateSecretsCoverage
                 }
-                if (secretRepository.findByResourceIdAndUserId(resourceId, secretAdd.getUserId()).isEmpty()) {
+                Secret existing = existingByUserId.get(secretAdd.getUserId());
+                if (existing != null) {
+                    existing.setData(secretAdd.getData());
+                    secretRepository.save(existing);
+                    log.info("Updated secret for user {} on resource {}",
+                            secretAdd.getUserId(), resourceId);
+                } else {
                     Secret secret = new Secret();
                     secret.setResourceId(resourceId);
                     secret.setUserId(secretAdd.getUserId());
                     secret.setData(secretAdd.getData());
                     secretRepository.save(secret);
-                    log.info("Created secret for user {} on resource {}", secretAdd.getUserId(), resourceId);
+                    // Guard against duplicate rows for the same user within
+                    // one payload (last write wins as an update, not a second
+                    // insert).
+                    existingByUserId.put(secretAdd.getUserId(), secret);
+                    log.info("Created secret for user {} on resource {}",
+                            secretAdd.getUserId(), resourceId);
                 }
             }
         }
 
-        // --- Cascade for users who lost access (no remaining permission
-        // path, group fan-out included): hard-delete their secrets and
-        // favorites (PHP ResourcesTable::deleteLostAccessSecrets /
-        // deleteLostAccessFavorites). ---
+        // --- Cascade for users who lost access: NOT IN set semantics (PHP
+        // ResourcesTable::deleteLostAccessSecrets) — delete every secret of
+        // the resource whose user is NOT in the post-change access set. This
+        // naturally merges access paths: a user keeping a direct permission
+        // or another permitted group membership is in "after" and is never
+        // deleted. "after" may be empty (e.g. the sole OWNER is a zero-member
+        // group) — an empty NOT IN is illegal SQL, hence the dedicated
+        // full-delete branch. ---
+        if (after.isEmpty()) {
+            List<Secret> lostSecrets = secretRepository.findByResourceId(resourceId);
+            if (!lostSecrets.isEmpty()) {
+                secretRepository.deleteAll(lostSecrets);
+                log.info("Deleted all {} secrets of resource {} (no user has access anymore)",
+                        lostSecrets.size(), resourceId);
+            }
+        } else {
+            List<Secret> lostSecrets = secretRepository
+                    .findByResourceIdAndUserIdNotIn(resourceId, after);
+            if (!lostSecrets.isEmpty()) {
+                secretRepository.deleteAll(lostSecrets);
+                log.info("Deleted {} lost-access secrets on resource {}",
+                        lostSecrets.size(), resourceId);
+            }
+        }
+
+        // Favorites of the users who lost access (PHP
+        // ResourcesTable::deleteLostAccessFavorites).
         for (String lostUserId : removed) {
-            secretRepository.findByResourceIdAndUserId(resourceId, lostUserId)
-                    .ifPresent(secretRepository::delete);
             favoriteRepository.findByUserIdAndForeignKey(lostUserId, resourceId)
                     .ifPresent(favoriteRepository::delete);
             log.info("Revoked access cleanup for user {} on resource {}", lostUserId, resourceId);
@@ -313,11 +364,17 @@ public class PermissionService {
                     }
                 }
             } else if (isDelete) {
-                // Id-less deleteUser shape: locate by aro_foreign_key
-                // (lenient — a missing row is simply skipped, matching the
+                // Id-less deleteUser/deleteGroup shape: locate by
+                // aro_foreign_key, additionally matching the ARO kind when one
+                // is provided. A null aro falls back to the pure
+                // aro_foreign_key match (the plugin's legacy deleteUser shape
+                // omits "aro" — pinned by
+                // ShareControllerTest.testShareResource_RevokeAccess). A
+                // missing row is simply skipped (lenient, matching the
                 // previous Java behaviour the plugin tolerates).
                 sim.stream()
-                        .filter(p -> Objects.equals(p.aroForeignKey, change.getAroForeignKey()))
+                        .filter(p -> Objects.equals(p.aroForeignKey, change.getAroForeignKey())
+                                && (change.getAro() == null || change.getAro().equals(p.aro)))
                         .findFirst()
                         .ifPresent(p -> {
                             sim.remove(p);
@@ -328,38 +385,69 @@ public class PermissionService {
                             }
                         });
             } else {
-                // Create a new permission row.
+                // Create a new permission row — validation order mirrors PHP
+                // PermissionsTable (validationDefault + buildRules):
+                // aro inList → aro_foreign_key required → uuid format →
+                // type inList → aro_exists → permission uniqueness.
                 String aro = change.getAro() != null ? change.getAro() : Permission.USER_ARO;
                 String aroForeignKey = change.getAroForeignKey();
                 Integer type = change.getType();
+                if (!Permission.USER_ARO.equals(aro) && !Permission.GROUP_ARO.equals(aro)) {
+                    rowErrors.put(String.valueOf(i), Map.of("aro",
+                            Map.of("inList", "The aro must be one of the following: User, Group.")));
+                    continue;
+                }
                 if (aroForeignKey == null) {
                     rowErrors.put(String.valueOf(i), Map.of("aro_foreign_key",
                             Map.of("_required", "The aro_foreign_key is required.")));
+                    continue;
+                }
+                if (!isUuid(aroForeignKey)) {
+                    rowErrors.put(String.valueOf(i), Map.of("aro_foreign_key",
+                            Map.of("uuid", "The identifier should be a valid UUID.")));
                     continue;
                 }
                 if (type == null || !Permission.isValidType(type)) {
                     rowErrors.put(String.valueOf(i), invalidTypeError());
                     continue;
                 }
-                // Lenient upsert: PHP raises a uniqueness validation error
-                // when an id-less add targets an ARO that already has a row;
-                // the official plugin never sends that shape, and updating
-                // the existing row keeps backward compatibility with the
-                // previous Java behaviour (no unique-constraint blowup).
+                if (!aroExists(aro, aroForeignKey)) {
+                    rowErrors.put(String.valueOf(i), Map.of("aro_foreign_key",
+                            Map.of("aro_exists", "The access request object does not exist.")));
+                    continue;
+                }
                 Optional<SimPerm> existing = sim.stream()
                         .filter(p -> aroForeignKey.equals(p.aroForeignKey) && aro.equals(p.aro))
                         .findFirst();
                 if (existing.isPresent()) {
                     SimPerm target = existing.get();
-                    if (target.type != type) {
-                        target.type = type;
-                        if (target.id != null) {
-                            updatedTypes.put(target.id, type);
-                        }
-                        // id == null: the row was created earlier in this very
-                        // change set — the shared SimPerm reference in
-                        // "created" already carries the new type.
+                    if (target.type == type) {
+                        // PHP permission_unique buildRule. The real MySQL
+                        // schema has NO unique constraint on
+                        // (aco_foreign_key, aro_foreign_key) — plain index
+                        // aco_foreign_key_2 only — so uniqueness MUST be
+                        // enforced here at the service layer. (Cross-request
+                        // races are out of scope, exactly like PHP which also
+                        // relies on the buildRule rather than the DB.)
+                        rowErrors.put(String.valueOf(i), Map.of("aro_foreign_key",
+                                Map.of("permission_unique",
+                                        "A permission already exists for the given access control object and access request object.")));
+                        continue;
                     }
+                    // Deliberate deviation from PHP: an id-less add hitting an
+                    // existing row with a DIFFERENT type performs a lenient
+                    // type update instead of failing permission_unique —
+                    // pinned by ShareControllerTest.testShareResource_
+                    // UpdatePermissionType. The official plugin always sends
+                    // the id for updates, so plugin traffic never reaches
+                    // this path.
+                    target.type = type;
+                    if (target.id != null) {
+                        updatedTypes.put(target.id, type);
+                    }
+                    // id == null: the row was created earlier in this very
+                    // change set — the shared SimPerm reference in "created"
+                    // already carries the new type.
                 } else {
                     SimPerm fresh = new SimPerm(null, aro, aroForeignKey, type);
                     sim.add(fresh);
@@ -386,38 +474,65 @@ public class PermissionService {
     }
 
     /**
-     * The provided secrets must cover EXACTLY the users who newly gained
-     * access — a missing or an extra secret is a validation failure (the
-     * plugin encrypts for precisely the dry-run "added" set; a lax check
-     * here would silently swallow client-side encryption gaps).
+     * Secrets coverage validation, PHP semantics (SecretsUpdateSecretsService
+     * ::assertAllSecretsAreProvided): every user who newly gained access must
+     * have a provided secret (added ⊆ provided), and every provided secret
+     * must target a user having access AFTER the change (provided ⊆ after —
+     * re-submitting a ciphertext for a user keeping access is a legal
+     * update). On a group share, "added" is the full fan-out of new group
+     * members, so the client must encrypt for each of them. Any violation
+     * yields the single PHP error key
+     * {@code secrets.secrets_provided}; malformed rows (missing user_id or
+     * data) keep their per-row {@code data._required} error.
      */
-    private void validateSecretsCoverage(Set<String> addedUserIds, List<ShareDto.SecretAdd> secrets) {
+    private void validateSecretsCoverage(Set<String> addedUserIds, Set<String> afterUserIds,
+            List<ShareDto.SecretAdd> secrets) {
         Map<String, Object> secretErrors = new LinkedHashMap<>();
         Set<String> providedUserIds = new LinkedHashSet<>();
         if (secrets != null) {
-            for (ShareDto.SecretAdd secretAdd : secrets) {
+            for (int i = 0; i < secrets.size(); i++) {
+                ShareDto.SecretAdd secretAdd = secrets.get(i);
                 if (secretAdd.getUserId() == null || secretAdd.getData() == null
                         || secretAdd.getData().isEmpty()) {
-                    secretErrors.put(String.valueOf(secrets.indexOf(secretAdd)),
+                    secretErrors.put(String.valueOf(i),
                             Map.of("data", Map.of("_required", "A secret with user_id and data is required.")));
                     continue;
                 }
                 providedUserIds.add(secretAdd.getUserId());
             }
         }
-        for (String missing : difference(addedUserIds, providedUserIds)) {
-            secretErrors.put(missing, Map.of("_required",
-                    "A secret is required for each user who gains access to the resource."));
-        }
-        for (String extra : difference(providedUserIds, addedUserIds)) {
-            secretErrors.put(extra, Map.of("not_allowed",
-                    "The secret does not match a user who gains access to the resource."));
+        if (secretErrors.isEmpty()
+                && (!providedUserIds.containsAll(addedUserIds)
+                        || !afterUserIds.containsAll(providedUserIds))) {
+            secretErrors.put("secrets_provided",
+                    "The secrets of all the users having access to the resource are required.");
         }
         if (!secretErrors.isEmpty()) {
             Map<String, Object> errors = new LinkedHashMap<>();
             errors.put("secrets", secretErrors);
             throw new ShareValidationException(VALIDATION_MESSAGE, errors);
         }
+    }
+
+    /**
+     * PHP PermissionsTable::aroExistsRule (+ IsNotSoftDeletedRule +
+     * IsActiveRule): a User ARO must exist, be non-deleted AND active; a
+     * Group ARO must exist and be non-deleted.
+     */
+    private boolean aroExists(String aro, String aroForeignKey) {
+        if (Permission.GROUP_ARO.equals(aro)) {
+            return groupRepository.findById(aroForeignKey)
+                    .filter(g -> !Boolean.TRUE.equals(g.getDeleted()))
+                    .isPresent();
+        }
+        return userRepository.findById(aroForeignKey)
+                .filter(u -> !Boolean.TRUE.equals(u.getDeleted()))
+                .filter(u -> Boolean.TRUE.equals(u.getActive()))
+                .isPresent();
+    }
+
+    private static boolean isUuid(String value) {
+        return value != null && UUID_PATTERN.matcher(value).matches();
     }
 
     /**

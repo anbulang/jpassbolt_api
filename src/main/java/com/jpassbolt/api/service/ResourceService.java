@@ -38,7 +38,7 @@ public class ResourceService {
      */
     @Transactional(readOnly = true)
     public List<Resource> getAccessibleResources(String userId) {
-        List<String> resourceIds = permissionRepository.findAccessibleResourceIds(userId, Permission.READ);
+        List<String> resourceIds = permissionRepository.findAccessibleResourceIdsIncludingGroups(userId, Permission.READ);
         if (resourceIds.isEmpty()) {
             return List.of();
         }

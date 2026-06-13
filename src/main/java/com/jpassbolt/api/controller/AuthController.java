@@ -1,12 +1,17 @@
 package com.jpassbolt.api.controller;
 
 import com.jpassbolt.api.dto.AuthDto;
+import com.jpassbolt.api.exception.PassboltApiException;
 import com.jpassbolt.api.model.User;
 import com.jpassbolt.api.service.AuthService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.authentication.AnonymousAuthenticationToken;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
 import java.net.URLEncoder;
@@ -130,6 +135,71 @@ public class AuthController {
             log.error("Authentication error", e);
             return createErrorResponse(headers, e.getMessage());
         }
+    }
+
+    /**
+     * POST /auth/verify.json
+     * Server identity verification (GpgAuth Stage 0).
+     *
+     * The PHP routes (config/routes.php) map POST /auth/verify onto
+     * AuthLogin::loginPost — the exact same Stage 0 logic as
+     * /auth/login.json. Errors keep HTTP 200 + error envelope +
+     * X-GPGAuth-Error header, as the existing login Stage 0 does.
+     */
+    @PostMapping("/verify.json")
+    public ResponseEntity<?> verifyPost(@RequestBody AuthDto.LoginRequest request) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.add("X-GPGAuth-Authenticated", "false");
+
+        AuthDto.GpgAuth gpgAuth = null;
+        if (request.getData() != null) {
+            gpgAuth = request.getData().getGpgAuth();
+        }
+        if (gpgAuth == null) {
+            return createErrorResponse(headers, "Missing gpg_auth data");
+        }
+
+        String serverVerifyToken = gpgAuth.getServerVerifyToken();
+        if (serverVerifyToken == null || serverVerifyToken.isEmpty()) {
+            return createErrorResponse(headers, "Missing server verify token");
+        }
+
+        return handleStage0(headers, serverVerifyToken);
+    }
+
+    /**
+     * POST /auth/logout.json
+     * PHP AuthLogoutController allows unauthenticated access and destroys
+     * the server session. This API is stateless (JWT Bearer), so there is no
+     * server session to destroy: the endpoint is a protocol-compatibility
+     * action that always succeeds. JWT refresh token revocation lives in
+     * POST /auth/jwt/logout.json. Only POST is registered — GET is disabled
+     * by default in PHP (passbolt.security.getLogoutEndpointEnabled).
+     */
+    @PostMapping("/logout.json")
+    public ResponseEntity<Map<String, Object>> logout() {
+        return ResponseEntity.ok(createResponse("success", "You are successfully logged out.", null,
+                "2032ed46-bbd4-5b43-a18f-152b2a48ec26", "/auth/logout.json"));
+    }
+
+    /**
+     * GET /auth/is-authenticated.json
+     * PHP AuthIsAuthenticatedController::isAuthenticated only asserts JSON
+     * and returns success — authentication itself is enforced by the
+     * framework. Here /auth/** is permitAll in SecurityConfig, so the
+     * authentication state is checked manually: anonymous callers get a 401
+     * error envelope (via GlobalExceptionHandler), authenticated callers a
+     * success envelope. Useful as a session keep-alive probe.
+     */
+    @GetMapping("/is-authenticated.json")
+    public ResponseEntity<Map<String, Object>> isAuthenticated() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || auth.getName() == null || auth instanceof AnonymousAuthenticationToken) {
+            throw new PassboltApiException(HttpStatus.UNAUTHORIZED,
+                    "Authentication is required to continue.");
+        }
+        return ResponseEntity.ok(createResponse("success", "The operation was successful.", null,
+                "8f8c39e5-3a23-5e69-9449-7a32b0962b04", "/auth/is-authenticated.json"));
     }
 
     /**

@@ -179,11 +179,8 @@ public class AuthService {
 
         log.info("Stage 2: User {} authenticated successfully", user.getUsername());
 
-        // Generate JWT
-        return jwtService.generateToken(new org.springframework.security.core.userdetails.User(
-                user.getUsername(),
-                "",
-                java.util.Collections.emptyList()));
+        // Generate JWT (RS256, sub = user UUID — aligned with the PHP JWT plugin)
+        return jwtService.generateToken(user.getId());
     }
 
     /**

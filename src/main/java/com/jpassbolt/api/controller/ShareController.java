@@ -51,6 +51,15 @@ import java.util.stream.Collectors;
  *
  * The former GET /share/resource/{id}/permissions endpoint moved to the
  * standard PermissionsController (GET /permissions/resource/{id}.json).
+ *
+ * <p>
+ * Both write endpoints support the ARO=Group dimension (group-share
+ * cluster), handled entirely by PermissionService: group existence /
+ * soft-delete validation (aro_exists), secret fan-out coverage for every
+ * group member newly gaining access, and revocation with access-path
+ * merging (members keeping a direct permission or another permitted group
+ * membership are never cleaned up).
+ * </p>
  */
 @Slf4j
 @RestController

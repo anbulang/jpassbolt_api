@@ -78,7 +78,7 @@ public class CommentController {
                         return ResponseEntity.status(404)
                                         .body(createResponse("error", "The resource does not exist.", null, url));
                 }
-                if (!permissionRepository.userHasAccess(resourceId, userId, Permission.READ)) {
+                if (!permissionRepository.userHasAccessIncludingGroups(resourceId, userId, Permission.READ)) {
                         return ResponseEntity.status(403)
                                         .body(createResponse("error",
                                                         "You are not authorized to access this resource.", null, url));
@@ -113,7 +113,7 @@ public class CommentController {
                         return ResponseEntity.status(404)
                                         .body(createResponse("error", "The resource does not exist.", null, url));
                 }
-                if (!permissionRepository.userHasAccess(resourceId, userId, Permission.READ)) {
+                if (!permissionRepository.userHasAccessIncludingGroups(resourceId, userId, Permission.READ)) {
                         return ResponseEntity.status(403)
                                         .body(createResponse("error",
                                                         "You are not authorized to access this resource.", null, url));

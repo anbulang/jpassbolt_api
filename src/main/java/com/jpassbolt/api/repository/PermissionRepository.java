@@ -58,6 +58,26 @@ public interface PermissionRepository extends JpaRepository<Permission, String> 
                         @Param("minType") int minType);
 
         /**
+         * Group-inclusive access check (PHP PermissionsFindersTrait::hasAccess →
+         * findHighestByAcoAndAro → findAllByAro with checkGroupsUsers=true): the
+         * user's direct "User" rows are merged with the "Group" rows of every
+         * group the user belongs to, and access is granted as soon as any of
+         * them reaches the requested level. Single query — replaces the former
+         * N+1 service-level fan-out.
+         */
+        @Query("SELECT CASE WHEN COUNT(p) > 0 THEN true ELSE false END FROM Permission p " +
+                        "WHERE p.aco = :aco AND p.acoForeignKey = :acoForeignKey " +
+                        "AND p.type >= :minType " +
+                        "AND ((p.aro = 'User' AND p.aroForeignKey = :userId) " +
+                        "OR (p.aro = 'Group' AND p.aroForeignKey IN " +
+                        "(SELECT gu.groupId FROM GroupUser gu WHERE gu.userId = :userId)))")
+        boolean hasAccessIncludingGroups(
+                        @Param("aco") String aco,
+                        @Param("acoForeignKey") String acoForeignKey,
+                        @Param("userId") String userId,
+                        @Param("minType") int minType);
+
+        /**
          * Delete all permissions for a specific resource.
          */
         void deleteByAcoForeignKey(String acoForeignKey);
@@ -78,12 +98,38 @@ public interface PermissionRepository extends JpaRepository<Permission, String> 
         }
 
         /**
+         * Check if a user has access to a resource with at least the given
+         * permission level, either through a direct "User" permission or
+         * inherited from one of their groups (Resource ACO wrapper, symmetric
+         * with {@link #userHasAccess}).
+         */
+        default boolean userHasAccessIncludingGroups(String resourceId, String userId, int minPermissionType) {
+                return hasAccessIncludingGroups(Permission.RESOURCE_ACO, resourceId, userId, minPermissionType);
+        }
+
+        /**
          * Find all resource IDs that a user has at least the given permission level on.
          */
         @Query("SELECT p.acoForeignKey FROM Permission p " +
                         "WHERE p.aco = 'Resource' AND p.aro = 'User' " +
                         "AND p.aroForeignKey = :userId AND p.type >= :minType")
         List<String> findAccessibleResourceIds(
+                        @Param("userId") String userId,
+                        @Param("minType") int minType);
+
+        /**
+         * Group-inclusive variant of {@link #findAccessibleResourceIds}: every
+         * resource the user can reach with at least the given level, through a
+         * direct "User" row or any "Group" row of a group the user belongs to
+         * (DISTINCT — a user may hold several access paths to one resource).
+         * Used by the resources index so group-shared resources are listed.
+         */
+        @Query("SELECT DISTINCT p.acoForeignKey FROM Permission p " +
+                        "WHERE p.aco = 'Resource' AND p.type >= :minType " +
+                        "AND ((p.aro = 'User' AND p.aroForeignKey = :userId) " +
+                        "OR (p.aro = 'Group' AND p.aroForeignKey IN " +
+                        "(SELECT gu.groupId FROM GroupUser gu WHERE gu.userId = :userId)))")
+        List<String> findAccessibleResourceIdsIncludingGroups(
                         @Param("userId") String userId,
                         @Param("minType") int minType);
 

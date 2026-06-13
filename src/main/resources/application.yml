@@ -28,8 +28,16 @@ jpassbolt:
   auth:
     register-token-expiry-days: 10   # 对照 PHP PASSBOLT_AUTH_REGISTER_TOKEN_EXPIRY 默认 '10 days'
   jwt:
+    # Legacy HS256 secret — no longer used for signing (RS256 key pair below);
+    # still read by HealthcheckService (core.salt). Remove together with that check.
     secret: REDACTED-LEGACY-HMAC
     expiration: 3600000 # 1 hour
+    # RS256 key pair. The committed dev keys (like gpg/server_private.asc) are for
+    # dev/test only — production MUST override with a deployment-specific pair.
+    private-key-location: classpath:jwt/jwt.key
+    public-key-location: classpath:jwt/jwt.pem
+    refresh-token-expiry-days: 30   # PHP RefreshTokenAbstractService default
+    verify-token-expiry-hours: 1    # PHP VerifyTokenCreateService default
   gpg:
     server-key:
       private-location: classpath:gpg/server_private.asc
@@ -48,6 +56,7 @@ jpassbolt:
     plugins:
       jwtAuthentication: true
       previewPassword: true
+      multiFactorAuthentication: true
       export: false
       import: false
       mobile: false

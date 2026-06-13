@@ -42,7 +42,7 @@ public class SecretController {
                 String userId = getCurrentUserId();
 
                 // Check READ permission
-                if (!permissionRepository.userHasAccess(resourceId, userId, Permission.READ)) {
+                if (!permissionRepository.userHasAccessIncludingGroups(resourceId, userId, Permission.READ)) {
                         return ResponseEntity.status(403)
                                         .body(createResponse("error", "You are not authorized to access this secret.",
                                                         null, "/secrets/resource/" + resourceId + ".json"));
@@ -81,7 +81,7 @@ public class SecretController {
                 String userId = getCurrentUserId();
 
                 // Check UPDATE permission
-                if (!permissionRepository.userHasAccess(resourceId, userId, Permission.UPDATE)) {
+                if (!permissionRepository.userHasAccessIncludingGroups(resourceId, userId, Permission.UPDATE)) {
                         return ResponseEntity.status(403)
                                         .body(createResponse("error", "You are not authorized to update this secret.",
                                                         null, "/secrets/resource/" + resourceId + ".json"));

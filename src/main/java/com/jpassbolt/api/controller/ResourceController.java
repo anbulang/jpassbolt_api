@@ -102,7 +102,7 @@ public class ResourceController {
                 String userId = getCurrentUserId();
 
                 // Check READ permission
-                if (!permissionRepository.userHasAccess(id, userId, Permission.READ)) {
+                if (!permissionRepository.userHasAccessIncludingGroups(id, userId, Permission.READ)) {
                         return ResponseEntity.status(403)
                                         .body(createResponse("error", "You are not authorized to access this resource.",
                                                         null, "/resources/" + id + ".json"));
@@ -162,7 +162,7 @@ public class ResourceController {
                 String userId = getCurrentUserId();
 
                 // Check UPDATE permission
-                if (!permissionRepository.userHasAccess(id, userId, Permission.UPDATE)) {
+                if (!permissionRepository.userHasAccessIncludingGroups(id, userId, Permission.UPDATE)) {
                         return ResponseEntity.status(403)
                                         .body(createResponse("error", "You are not authorized to update this resource.",
                                                         null, "/resources/" + id + ".json"));
@@ -188,7 +188,7 @@ public class ResourceController {
                 String userId = getCurrentUserId();
 
                 // Check OWNER permission
-                if (!permissionRepository.userHasAccess(id, userId, Permission.OWNER)) {
+                if (!permissionRepository.userHasAccessIncludingGroups(id, userId, Permission.OWNER)) {
                         return ResponseEntity.status(403)
                                         .body(createResponse("error", "You are not authorized to delete this resource.",
                                                         null, "/resources/" + id + ".json"));

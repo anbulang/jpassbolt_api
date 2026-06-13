@@ -30,6 +30,7 @@ import java.util.List;
 public class SecurityConfig {
 
         private final JwtAuthenticationFilter jwtAuthenticationFilter;
+        private final MfaEnforcementFilter mfaEnforcementFilter;
 
         @Bean
         public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
@@ -43,15 +44,23 @@ public class SecurityConfig {
                                                 // - /healthcheck/status*: public liveness probe (old /health-check removed with controller rewrite)
                                                 // - /settings*: anonymous callers get the reduced guest view
                                                 // - /avatars/view/** ONLY (not /avatars/**): <img src> loads carry no JWT
+                                                // - /.well-known/jwks.json: anonymous alias of /auth/jwt/jwks.json
+                                                //   (PHP top-level route redirects to the jwks action)
                                                 .requestMatchers("/auth/**",
                                                                 "/healthcheck/status", "/healthcheck/status.json",
                                                                 "/settings", "/settings.json",
                                                                 "/avatars/view/**",
-                                                                "/setup/**")
+                                                                "/setup/**",
+                                                                "/.well-known/jwks.json")
                                                 .permitAll()
                                                 .anyRequest().authenticated())
                                 .addFilterBefore(jwtAuthenticationFilter,
-                                                UsernamePasswordAuthenticationFilter.class);
+                                                UsernamePasswordAuthenticationFilter.class)
+                                // MFA gate runs after the JWT principal is in place
+                                // (deterministic ordering inside the security chain;
+                                // OncePerRequestFilter prevents a double run via the
+                                // auto-registered servlet-chain instance).
+                                .addFilterAfter(mfaEnforcementFilter, JwtAuthenticationFilter.class);
                 return http.build();
         }
 

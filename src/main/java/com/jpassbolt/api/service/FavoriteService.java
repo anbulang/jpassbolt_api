@@ -53,7 +53,7 @@ public class FavoriteService {
         boolean resourceVisible = resourceRepository.findById(foreignId)
                 .filter(r -> !r.getDeleted())
                 .isPresent();
-        if (!resourceVisible || !permissionRepository.userHasAccess(foreignId, userId, Permission.READ)) {
+        if (!resourceVisible || !permissionRepository.userHasAccessIncludingGroups(foreignId, userId, Permission.READ)) {
             throw new PassboltApiException(HttpStatus.NOT_FOUND, "The resource does not exist.");
         }
 

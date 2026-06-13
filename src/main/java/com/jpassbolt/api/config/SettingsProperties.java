@@ -70,6 +70,7 @@ public class SettingsProperties {
         // Implemented in JPassbolt.
         defaults.put("jwtAuthentication", true);
         defaults.put("previewPassword", true);
+        defaults.put("multiFactorAuthentication", true);
         // Publicly visible flag in CE; feature not implemented yet.
         defaults.put("accountRecoveryRequestHelp", false);
         // Not implemented yet — must stay false until their clusters land.
