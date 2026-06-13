@@ -64,19 +64,19 @@ Model/Entity (数据模型)
 
 ### 3.2 当前实现清单
 
-**Models (8)**: `BaseEntity`, `User`, `Resource`, `Secret`, `Permission`, `GpgKey`, `AuthenticationToken`, `Role`
+**Models (19)**: `BaseEntity`, `User`, `Profile`, `Avatar`, `Resource`, `ResourceType`, `Secret`, `Permission`, `GpgKey`, `AuthenticationToken`, `Role`, `Group`, `GroupUser`, `Folder`, `FoldersRelation`, `Comment`, `Favorite`, `OrganizationSetting`, `AccountSetting`
 
-**Controllers (6)**: `AuthController`, `ResourceController`, `SecretController`, `ShareController`, `UsersController`, `HealthCheckController`
+**Controllers (20)**: `AuthController`, `JwtAuthController`, `MfaController`, `ResourceController`, `ResourceTypeController`, `SecretController`, `ShareController`, `PermissionsController`, `UsersController`, `SetupController`, `GroupController`, `FolderController`, `MoveController`, `CommentController`, `FavoriteController`, `AvatarController`, `GpgKeyController`, `RoleController`, `SettingsController`, `HealthCheckController`
 
-**Services (7)**: `AuthService`, `GpgService` (接口), `GpgServiceImpl`, `JwtService`, `PermissionService`, `ResourceService`, `UserService`
+**Services (25)**: `AuthService`, `JwtAuthService`, `JwtService`, `MfaService`, `TotpService`, `GpgService` (接口), `GpgServiceImpl`, `GpgKeyService`, `GpgKeyParserService`, `PermissionService`, `ResourceService`, `ResourceTypeService`, `ShareSearchService`, `UserService`, `UserDeleteService`, `SetupService`, `GroupService`, `FolderService`, `FoldersRelationsMoveService`, `CommentService`, `FavoriteService`, `AvatarService`, `RoleService`, `SettingsService`, `HealthcheckService`
 
-**Repositories (7)**: `AuthenticationTokenRepository`, `GpgKeyRepository`, `PermissionRepository`, `ResourceRepository`, `RoleRepository`, `SecretRepository`, `UserRepository`
+**Repositories (18)**: 与 18 个持久化实体一一对应（`BaseEntity` 除外），命名 `XxxRepository`
 
-**DTOs (2)**: `AuthDto`, `ResourceDto`
+**DTOs (14)**: `AuthDto`, `JwtAuthDto`, `MfaDto`, `ResourceDto`, `ResourceTypeDto`, `ShareDto`, `UserDto`, `SetupDto`, `GroupDto`, `FolderDto`, `CommentDto`, `FavoriteDto`, `GpgKeyDto`, `RoleDto`
 
-**Config (2)**: `SecurityConfig`, `GpgProperties`
+**Config (7)**: `SecurityConfig`, `GpgProperties`, `SettingsProperties`, `JwtAuthenticationFilter`, `MfaEnforcementFilter`, `GlobalExceptionHandler`, `DataInitializer`
 
-**Exception (1)**: `PassboltApiException`
+**Exception (2)**: `PassboltApiException`, `ShareValidationException`
 
 ### 3.3 编码模式和规范
 
@@ -309,20 +309,22 @@ jpassbolt:
 1. 项目结构搭建 + Maven 依赖
 2. 数据模型与 JPA 实体
 3. GPG 认证 (Stage 0/1/2) + Bouncy Castle 集成
-4. JWT 认证
+4. JWT 认证（HS256 会话 + RS256 JWT 登录 `/auth/jwt/*`）
 5. Resource CRUD
 6. Secret 管理
-7. Permission/Share 功能
+7. Permission/Share 功能（含 simulate / search-aros / Group 共享）
 8. 集成测试框架
+9. **49 端点全功能移植**（git log `d9d8247..HEAD`，wave1~4）：
+   - Wave1: settings / resource-types(读) / roles / gpgkeys / comments / favorites / avatars / healthcheck
+   - Wave2: users CRUD + setup（注册/恢复）、groups CRUD（含 dry-run）
+   - Wave3: share 扩展（simulate / search-aros）、folders CRUD + move
+   - Wave4: group 共享、auth 扩展（RS256 JWT login/refresh/logout/rsa/is-authenticated）、MFA TOTP（含 `MfaEnforcementFilter` 强制校验）
 
 ### 待实现 🔲
-- Folder 支持
-- Group 共享
-- User CRUD / 注册
-- 用户 Profile
-- MFA (多因素认证)
-- 完整的 OpenAPI 合规
-- 生产部署配置优化
+- v5 Metadata 体系（26 端点）
+- EE Tags（3 端点）
+- resource-types 写端点（v5-only）
+- 前端页面扩展（目前仅 Login / Dashboard）
 
 ---
 
