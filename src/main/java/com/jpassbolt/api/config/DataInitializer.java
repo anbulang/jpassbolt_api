@@ -55,10 +55,13 @@ public class DataInitializer implements CommandLineRunner {
         guestRole.setDescription("Non logged in user");
         roleRepository.save(guestRole);
 
-        // Create test user
+        // Create test user. Made an ADMIN so the local browser session can
+        // exercise the admin-only UI (Users/Groups management). This is the sole
+        // user holding the server key, so the GPGAuth login-by-keyid lookup is
+        // unambiguous (see the note on admin@passbolt.com below).
         User testUser = new User();
         testUser.setUsername("ada@passbolt.com");
-        testUser.setRoleId(userRole.getId());
+        testUser.setRoleId(adminRole.getId());
         testUser.setActive(true);
         testUser.setDeleted(false);
         userRepository.save(testUser);
@@ -106,18 +109,15 @@ public class DataInitializer implements CommandLineRunner {
         adminProfile.setLastName("User");
         profileRepository.save(adminProfile);
 
-        // Reuse the server's own public key so the admin can log in with the
-        // server private key (same pattern as ada@passbolt.com above)
-        GpgKey adminGpgKey = new GpgKey();
-        adminGpgKey.setUserId(adminUser.getId());
-        adminGpgKey.setArmoredKey(serverPublicKey);
-        adminGpgKey.setFingerprint(fingerprint);
-        adminGpgKey.setKeyId(keyId);
-        adminGpgKey.setUid("Admin User <admin@passbolt.com>");
-        adminGpgKey.setType("RSA");
-        adminGpgKey.setBits(4096);
-        adminGpgKey.setDeleted(false);
-        gpgKeyRepository.save(adminGpgKey);
+        // NOTE: admin@passbolt.com intentionally has NO gpgkey. The gpgkeys table
+        // is not uniquely constrained on fingerprint, and GPGAuth stage-1 looks up
+        // the user BY fingerprint — giving two users the same server key made that
+        // lookup return 2 rows ("Query did not return a unique result"), which
+        // silently broke browser login. ada@passbolt.com is the single server-key
+        // holder (and is an admin), so login is unambiguous. admin@passbolt.com
+        // remains as a keyless directory entry. To exercise multi-user sharing
+        // locally, seed a second user with a DISTINCT real keypair + its true
+        // fingerprint (the client verifies the recipient key against it).
 
         seedResourceTypes();
 
