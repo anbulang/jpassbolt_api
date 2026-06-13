@@ -7,7 +7,6 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.test.context.support.WithMockUser;
 
-// Kept for re-enabling the contract assertions below.
 import static com.atlassian.oai.validator.mockmvc.OpenApiValidationMatchers.openApi;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -18,14 +17,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * (paths /resource-types.json and /resource-types/{resourceTypeId}.json,
  * schemas resourceType / resourceTypeIndex in plugin-redoc-0.yaml).
  *
- * <p>The strict {@code openApi().isValid(...)} assertions are disabled, same
- * as in {@link AuthControllerContractTest}, because the shared response
- * envelope deviates from the spec in three known ways:
- * the header schema requires an {@code action} field that createResponse does
- * not output; the resourceTypeIndex schema requires a {@code default} field
- * that the PHP v4 implementation (and the spec's own example) never outputs;
- * and LocalDateTime serializes without a timezone offset while the spec
- * declares format: date-time.</p>
+ * <p>The strict {@code openApi().isValid(...)} assertions are enabled: the
+ * shared {@link com.jpassbolt.api.util.ApiResponse} envelope emits the required
+ * header {@code action} (uuid) and integer {@code servertime}, and the global
+ * {@link com.jpassbolt.api.config.JacksonConfig} serializes LocalDateTime as
+ * RFC3339 with a UTC offset, so the envelope and date-time fields satisfy the
+ * contract.</p>
  */
 @WithMockUser(username = "test@example.com", roles = { "USER" })
 public class ResourceTypeControllerContractTest extends OpenApiComplianceTest {
@@ -88,9 +85,15 @@ public class ResourceTypeControllerContractTest extends OpenApiComplianceTest {
                 .andExpect(jsonPath("$.body").isArray())
                 .andExpect(jsonPath("$.body.length()").value(4))
                 .andExpect(jsonPath("$.body[0].definition").isMap());
-        // .andExpect(openApi().isValid(OPEN_API_SPEC_URL)); // Disabled due to strict
-        // JSON header validation (header.action required, resourceTypeIndex requires
-        // "default", date-time without offset)
+        // openApi().isValid(CONTRACT_VALIDATOR) DISABLED for this single index
+        // assertion: the spec's resourceTypeIndex schema marks `default`
+        // (boolean) as REQUIRED, but `default` is a v5/metadata-plugin concept
+        // (the organization's default resource type) that the Passbolt CE v4
+        // ResourceTypes finder/entity does not emit — confirmed against
+        // passbolt_api_ref (no `default` virtual field). Emitting a fabricated
+        // `default` would diverge from the reference implementation, so the
+        // assertion is intentionally disabled rather than the response altered.
+        // The view assertion (plain resourceType schema, no `default`) stays on.
     }
 
     @Test
@@ -99,8 +102,7 @@ public class ResourceTypeControllerContractTest extends OpenApiComplianceTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.header.status").value("success"))
                 .andExpect(jsonPath("$.body.slug").value("password-and-description"))
-                .andExpect(jsonPath("$.body.definition").isMap());
-        // .andExpect(openApi().isValid(OPEN_API_SPEC_URL)); // Disabled due to strict
-        // JSON header validation (header.action required, date-time without offset)
+                .andExpect(jsonPath("$.body.definition").isMap())
+                .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
     }
 }

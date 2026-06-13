@@ -17,6 +17,7 @@ import org.springframework.security.test.context.support.WithMockUser;
 
 import java.util.UUID;
 
+import static com.atlassian.oai.validator.mockmvc.OpenApiValidationMatchers.openApi;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -77,14 +78,8 @@ public class JwtAuthControllerContractTest extends OpenApiComplianceTest {
                 .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.keys").isArray())
-                .andExpect(jsonPath("$.keys[0].kty").value("RSA"));
-        // .andExpect(openApi().isValid(OPEN_API_SPEC_URL)); // Disabled due to strict
-        // JSON header validation: the spec's header schema requires fields the
-        // project-wide envelope does not emit in the documented formats. Same
-        // known limitation and handling as AuthControllerContractTest /
-        // RoleControllerContractTest; the global envelope fix is a
-        // cross-cutting task outside this cluster.
-        // (static import: com.atlassian.oai.validator.mockmvc.OpenApiValidationMatchers.openApi)
+                .andExpect(jsonPath("$.keys[0].kty").value("RSA"))
+                .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
     }
 
     @Test
@@ -93,9 +88,8 @@ public class JwtAuthControllerContractTest extends OpenApiComplianceTest {
                 .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.header.status").value("success"))
-                .andExpect(jsonPath("$.body.keydata").exists());
-        // .andExpect(openApi().isValid(OPEN_API_SPEC_URL)); // Disabled — see
-        // testJwksContract comment.
+                .andExpect(jsonPath("$.body.keydata").exists())
+                .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
     }
 
     @Test
@@ -112,9 +106,8 @@ public class JwtAuthControllerContractTest extends OpenApiComplianceTest {
                 .content("{\"user_id\":\"" + testUser.getId()
                         + "\",\"refresh_token\":\"" + token.getToken() + "\"}"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.body.access_token").exists());
-        // .andExpect(openApi().isValid(OPEN_API_SPEC_URL)); // Disabled — see
-        // testJwksContract comment.
+                .andExpect(jsonPath("$.body.access_token").exists())
+                .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
     }
 
     @Test
@@ -123,9 +116,8 @@ public class JwtAuthControllerContractTest extends OpenApiComplianceTest {
         mockMvc.perform(get("/auth/is-authenticated.json")
                 .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.header.status").value("success"));
-        // .andExpect(openApi().isValid(OPEN_API_SPEC_URL)); // Disabled — see
-        // testJwksContract comment.
+                .andExpect(jsonPath("$.header.status").value("success"))
+                .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
     }
 
     @Test
@@ -133,8 +125,7 @@ public class JwtAuthControllerContractTest extends OpenApiComplianceTest {
         mockMvc.perform(post("/auth/logout.json")
                 .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.header.status").value("success"));
-        // .andExpect(openApi().isValid(OPEN_API_SPEC_URL)); // Disabled — see
-        // testJwksContract comment.
+                .andExpect(jsonPath("$.header.status").value("success"))
+                .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
     }
 }

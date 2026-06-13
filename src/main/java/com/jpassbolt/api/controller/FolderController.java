@@ -155,8 +155,11 @@ public class FolderController {
         String userId = getCurrentUserId();
         boolean cascadeFlag = "1".equals(cascade) || "true".equalsIgnoreCase(cascade);
         folderService.deleteFolder(id, cascadeFlag, userId);
-        return ResponseEntity.ok(createResponse("success", "The folder has been deleted successfully.",
-                null, "/folders/" + id + ".json"));
+        // PHP FoldersDeleteController returns $this->success() with no data, i.e.
+        // a JSON null body. Use nullBody so it serializes as null instead of the
+        // {} fallback that withCode applies for a null body.
+        return ResponseEntity.ok(ApiResponse.nullBody("success",
+                "The folder has been deleted successfully.", "/folders/" + id + ".json"));
     }
 
     private FolderDto.Response toResponseDto(Folder folder, String userId,

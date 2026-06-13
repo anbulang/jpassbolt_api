@@ -7,6 +7,9 @@ import com.jpassbolt.api.model.GpgKey;
 import com.jpassbolt.api.model.User;
 import com.jpassbolt.api.repository.AuthenticationTokenRepository;
 import com.jpassbolt.api.repository.GpgKeyRepository;
+import com.jpassbolt.api.repository.PermissionRepository;
+import com.jpassbolt.api.repository.ResourceRepository;
+import com.jpassbolt.api.repository.SecretRepository;
 import com.jpassbolt.api.repository.UserRepository;
 import com.jpassbolt.api.service.GpgService;
 import com.jpassbolt.api.util.GpgTestHelper;
@@ -43,12 +46,30 @@ public class AuthControllerContractTest extends OpenApiComplianceTest {
     @Autowired
     private GpgService gpgService;
 
+    @Autowired
+    private ResourceRepository resourceRepository;
+
+    @Autowired
+    private PermissionRepository permissionRepository;
+
+    @Autowired
+    private SecretRepository secretRepository;
+
     private User activeUser;
     private String testFingerprint;
 
     @BeforeEach
     void setUpData() {
+        // Clear in reverse FK-dependency order. The resources table carries a
+        // Hibernate-generated FK resources.created_by -> users.id, so any rows
+        // left over by a sibling contract test running earlier in the same JVM
+        // must be removed (together with their secrets/permissions) before
+        // users can be deleted — otherwise userRepository.deleteAll() trips the
+        // foreign-key constraint.
         tokenRepository.deleteAll();
+        permissionRepository.deleteAll();
+        secretRepository.deleteAll();
+        resourceRepository.deleteAll();
         gpgKeyRepository.deleteAll();
         userRepository.deleteAll();
 
@@ -80,9 +101,8 @@ public class AuthControllerContractTest extends OpenApiComplianceTest {
     public void testGetVerify() throws Exception {
         mockMvc.perform(get("/auth/verify.json")
                 .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk());
-        // .andExpect(openApi().isValid(OPEN_API_SPEC_URL)); // Disabled due to strict
-        // JSON header validation
+                .andExpect(status().isOk())
+                .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
     }
 
     @Test
@@ -93,9 +113,8 @@ public class AuthControllerContractTest extends OpenApiComplianceTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isOk())
-                .andExpect(header().string("X-GPGAuth-Progress", "stage1"));
-        // .andExpect(openApi().isValid(OPEN_API_SPEC_URL)); // Disabled due to strict
-        // JSON header validation
+                .andExpect(header().string("X-GPGAuth-Progress", "stage1"))
+                .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
     }
 
     @Test
@@ -119,9 +138,8 @@ public class AuthControllerContractTest extends OpenApiComplianceTest {
                 .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isOk())
                 .andExpect(header().string("X-GPGAuth-Progress", "complete"))
-                .andExpect(jsonPath("$.body.user.username").value("ada@passbolt.com"));
-        // .andExpect(openApi().isValid(OPEN_API_SPEC_URL)); // Disabled due to strict
-        // JSON header validation
+                .andExpect(jsonPath("$.body.user.username").value("ada@passbolt.com"))
+                .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
     }
 
     @Test
@@ -134,8 +152,7 @@ public class AuthControllerContractTest extends OpenApiComplianceTest {
                 .content(objectMapper.writeValueAsString(stage1Request)))
                 .andExpect(status().isOk())
                 .andExpect(header().string("X-GPGAuth-Progress", "stage1"))
-                // .andExpect(openApi().isValid(OPEN_API_SPEC_URL)) // Disabled due to strict
-                // JSON header validation
+                .andExpect(openApi().isValid(CONTRACT_VALIDATOR))
                 .andReturn();
 
         // Decrypt the token
@@ -150,9 +167,8 @@ public class AuthControllerContractTest extends OpenApiComplianceTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(stage2Request)))
                 .andExpect(status().isOk())
-                .andExpect(header().string("X-GPGAuth-Progress", "complete"));
-        // .andExpect(openApi().isValid(OPEN_API_SPEC_URL)); // Disabled due to strict
-        // JSON header validation
+                .andExpect(header().string("X-GPGAuth-Progress", "complete"))
+                .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
     }
 
     private AuthDto.LoginRequest createLoginRequest(String keyId, String serverVerifyToken, String userTokenResult) {

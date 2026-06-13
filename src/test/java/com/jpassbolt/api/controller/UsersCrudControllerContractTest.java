@@ -19,6 +19,7 @@ import org.springframework.security.test.context.support.WithMockUser;
 
 import java.util.Map;
 
+import static com.atlassian.oai.validator.mockmvc.OpenApiValidationMatchers.openApi;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
@@ -31,14 +32,24 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * /users/{userId}/dry-run.json L6568 in plugin-redoc-0.yaml).
  *
  * <p>
- * The openApi().isValid(OPEN_API_SPEC_URL) assertions are disabled, same as
- * AuthControllerContractTest, because of known project-wide spec frictions:
- * the header schema requires an "action" field createResponse never emits;
- * users_add/users_update declare the body as an ARRAY of userIndexAndView
- * while the official examples and the PHP implementation return a single
- * object (we follow PHP); nullBody requires body to be JSON null;
- * LocalDateTime serialization lacks an RFC3339 offset. The setup endpoints
- * are outside the spec and are not covered here.
+ * The header.action and RFC3339 date-time frictions that previously blocked
+ * every assertion are now solved project-wide (ApiResponse emits all 7
+ * required header fields incl. action; JacksonConfig serialises LocalDateTime
+ * as +00:00 RFC3339), so the DELETE and dry-run assertions — whose 200 body
+ * is the nullBody schema (body: null) — are ENABLED.
+ * </p>
+ *
+ * <p>
+ * Only POST /users.json and PUT /users/{id}.json keep openApi().isValid
+ * disabled: the spec declares users_add / users_update response bodies as an
+ * ARRAY of userIndexAndView, while the official examples and the PHP
+ * implementation return a single object (we follow PHP). This is a genuine
+ * spec body-type mismatch, recorded in assertions_left_disabled.
+ * </p>
+ *
+ * <p>
+ * The users index/view endpoints are covered by UsersControllerContractTest;
+ * the (out-of-spec) setup endpoints by SetupControllerContractTest.
  * </p>
  */
 @WithMockUser(username = "admin@example.com", roles = { "USER" })
@@ -126,9 +137,9 @@ public class UsersCrudControllerContractTest extends OpenApiComplianceTest {
                 .content(body))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.body.username").value("new.user@example.com"));
-        // .andExpect(openApi().isValid(OPEN_API_SPEC_URL)); // Disabled due to strict
-        // JSON header validation (header.action required; users_add body declared as
-        // array while PHP returns a single object)
+        // .andExpect(openApi().isValid(CONTRACT_VALIDATOR)); // Disabled: spec declares
+        // the users_add response body as an ARRAY of userIndexAndView, but the official
+        // examples and the PHP implementation return a single object (we follow PHP).
     }
 
     @Test
@@ -141,28 +152,28 @@ public class UsersCrudControllerContractTest extends OpenApiComplianceTest {
                 .content(body))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.body.profile.first_name").value("Updated"));
-        // .andExpect(openApi().isValid(OPEN_API_SPEC_URL)); // Disabled due to strict
-        // JSON header validation (header.action required; users_update body declared
-        // as array while PHP returns a single object)
+        // .andExpect(openApi().isValid(CONTRACT_VALIDATOR)); // Disabled: spec declares
+        // the users_update response body as an ARRAY of userIndexAndView, but the
+        // official examples and the PHP implementation return a single object.
     }
 
     @Test
     public void testUsersDeleteContract() throws Exception {
         mockMvc.perform(delete("/users/" + victim.getId() + ".json"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.header.status").value("success"));
-        // .andExpect(openApi().isValid(OPEN_API_SPEC_URL)); // Disabled due to strict
-        // JSON header validation (header.action required; nullBody requires body to
-        // be JSON null which the validator checks together with the strict header)
+                .andExpect(jsonPath("$.header.status").value("success"))
+                .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
+        // Enabled: 200 body is the nullBody schema (body: null) and the header now
+        // carries all required fields incl. action, so the response is spec-valid.
     }
 
     @Test
     public void testUsersDeleteDryRunContract() throws Exception {
         mockMvc.perform(delete("/users/" + victim.getId() + "/dry-run.json"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.header.status").value("success"));
-        // .andExpect(openApi().isValid(OPEN_API_SPEC_URL)); // Disabled due to strict
-        // JSON header validation (header.action required; nullBody requires body to
-        // be JSON null which the validator checks together with the strict header)
+                .andExpect(jsonPath("$.header.status").value("success"))
+                .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
+        // Enabled: 200 body is the nullBody schema (body: null) and the header now
+        // carries all required fields incl. action, so the response is spec-valid.
     }
 }

@@ -222,6 +222,13 @@ public class GroupDto {
 
         private Boolean deleted;
 
+        /**
+         * Disabled timestamp. Required (nullable) on the embedded user in the
+         * OpenAPI contract; the PHP User entity exposes a nullable `disabled`
+         * DateTime (null for active accounts), so it is always serialized.
+         */
+        private LocalDateTime disabled;
+
         private LocalDateTime created;
 
         private LocalDateTime modified;

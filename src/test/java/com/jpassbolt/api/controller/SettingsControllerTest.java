@@ -4,7 +4,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jpassbolt.api.model.OrganizationSetting;
 import com.jpassbolt.api.model.User;
 import com.jpassbolt.api.repository.OrganizationSettingRepository;
+import com.jpassbolt.api.repository.PermissionRepository;
+import com.jpassbolt.api.repository.ResourceRepository;
 import com.jpassbolt.api.repository.RoleRepository;
+import com.jpassbolt.api.repository.SecretRepository;
 import com.jpassbolt.api.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -52,6 +55,15 @@ class SettingsControllerTest {
         private RoleRepository roleRepository;
 
         @Autowired
+        private ResourceRepository resourceRepository;
+
+        @Autowired
+        private SecretRepository secretRepository;
+
+        @Autowired
+        private PermissionRepository permissionRepository;
+
+        @Autowired
         private ObjectMapper objectMapper;
 
         private User testUser;
@@ -60,6 +72,13 @@ class SettingsControllerTest {
         void setUp() {
                 // organization_settings has no FK dependencies — order is free.
                 organizationSettingRepository.deleteAll();
+                // Clear resource-graph rows a sibling test may have left in the
+                // shared in-memory DB before deleting users: resources.created_by
+                // -> users.id is an enforced FK, so orphan resources would block
+                // userRepository.deleteAll().
+                permissionRepository.deleteAll();
+                secretRepository.deleteAll();
+                resourceRepository.deleteAll();
                 userRepository.deleteAll();
 
                 testUser = new User();

@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.test.context.support.WithMockUser;
 
+import static com.atlassian.oai.validator.mockmvc.OpenApiValidationMatchers.openApi;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -22,6 +23,14 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * Spec references (src/test/resources/plugin-redoc-0.yaml):
  * - /gpgkeys.json (L1576) -> responses/gpgkeys_index (L9434, headerWithPagination)
  * - /gpgkeys/{gpgkeyId}.json (L1643) -> responses/gpgkeys_view (L9479)
+ *
+ * <p>The strict {@code openApi().isValid(...)} assertions are enabled: the
+ * shared {@link com.jpassbolt.api.util.ApiResponse} envelope emits the required
+ * header {@code action} (uuid) and integer {@code servertime} (plus the
+ * pagination block for the index), and the global
+ * {@link com.jpassbolt.api.config.JacksonConfig} serializes LocalDateTime as
+ * RFC3339 with a UTC offset, so header and date-time fields satisfy the
+ * contract.</p>
  */
 @WithMockUser(username = "test@example.com", roles = { "USER" })
 public class GpgKeyControllerContractTest extends OpenApiComplianceTest {
@@ -85,10 +94,8 @@ public class GpgKeyControllerContractTest extends OpenApiComplianceTest {
                 .andExpect(jsonPath("$.body").isArray())
                 .andExpect(jsonPath("$.body[0].id").value(testKey.getId()))
                 .andExpect(jsonPath("$.body[0].user_id").exists())
-                .andExpect(jsonPath("$.body[0].armored_key").exists());
-        // .andExpect(openApi().isValid(OPEN_API_SPEC_URL)); // Disabled due to strict
-        // JSON header validation (header requires "action"; date-time fields are
-        // serialized without a timezone offset)
+                .andExpect(jsonPath("$.body[0].armored_key").exists())
+                .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
     }
 
     @Test
@@ -98,9 +105,7 @@ public class GpgKeyControllerContractTest extends OpenApiComplianceTest {
                 .andExpect(jsonPath("$.header.status").value("success"))
                 .andExpect(jsonPath("$.body.id").value(testKey.getId()))
                 .andExpect(jsonPath("$.body.fingerprint").value(testKey.getFingerprint()))
-                .andExpect(jsonPath("$.body.user_id").exists());
-        // .andExpect(openApi().isValid(OPEN_API_SPEC_URL)); // Disabled due to strict
-        // JSON header validation (header requires "action"; date-time fields are
-        // serialized without a timezone offset)
+                .andExpect(jsonPath("$.body.user_id").exists())
+                .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
     }
 }

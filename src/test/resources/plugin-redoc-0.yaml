@@ -6820,9 +6820,12 @@ components:
       required:
         - access_token
       properties:
+        # access_token is a signed JWT (the PHP JWT plugin's refresh endpoint
+        # returns a fresh JWT access token, never a UUID). The original
+        # `format: uuid` contradicts the reference implementation — the PHP
+        # output (a JWT string) wins, so the uuid format constraint is dropped.
         access_token:
           type: string
-          format: uuid
     rsa:
       type: object
       required:
@@ -7097,6 +7100,13 @@ components:
           type: string
           format: date-time
           x-nullable: true
+        # key_created is listed under `required` above but the property was
+        # missing from this map (spec typo). The PHP Gpgkey entity exposes
+        # key_created (nullable DateTime), so it is added here to match.
+        key_created:
+          type: string
+          format: date-time
+          x-nullable: true
         deleted:
           type: boolean
         created:
@@ -7131,14 +7141,23 @@ components:
         modified:
           type: string
           format: date-time
+    # Flattened from the original allOf[commentUpdate, {parent_id}]. The two
+    # composed schemas are semantically a single object {content, parent_id},
+    # but swagger-request-validator validates each allOf branch independently
+    # under strict additionalProperties, so `content` was rejected while
+    # checking the parent_id branch and vice-versa. Inlining the union (content
+    # required, parent_id optional) preserves the contract while letting the
+    # plugin's actual {content, parent_id} body validate.
     commentAdd:
-      allOf:
-        - $ref: '#/components/schemas/commentUpdate'
-        - type: object
-          properties:
-            parent_id:
-              type: string
-              format: uuid
+      type: object
+      required:
+        - content
+      properties:
+        content:
+          type: string
+        parent_id:
+          type: string
+          format: uuid
     favorite:
       type: object
       required:
@@ -7935,6 +7954,11 @@ components:
               type: boolean
             gpgHomeWritable:
               type: boolean
+            # gpgKeyNotDefault is listed under `required` above but the property
+            # was missing from this map (spec typo). PHP's KeyNotDefaultGpgHealthcheck
+            # emits it (boolean), so it is added here to match the reference impl.
+            gpgKeyNotDefault:
+              type: boolean
             gpgKeyPublicBlock:
               type: boolean
             gpgKeyPrivateBlock:
@@ -8329,6 +8353,14 @@ components:
             enum:
               - totp
               - yubikey
+        # PHP MfaVerifyAjaxErrorController emits `providers` alongside
+        # `mfa_providers` (lines 41-43): a map of provider slug -> verify URL.
+        # The spec omitted it; the reference implementation wins, so it is
+        # declared here (a free-form provider -> URL string map).
+        providers:
+          type: object
+          additionalProperties:
+            type: string
     metadataSessionKeyIndexAndView:
       allOf:
         - $ref: '#/components/schemas/e2eeIdCreatedDataModifiedUserId'
@@ -8493,6 +8525,12 @@ components:
       properties:
         app:
           type: object
+          # The authenticated /settings.json (PHP SettingsIndexController, lines
+          # 119-143) adds app.version, app.debug, app.server_timezone,
+          # app.session_timeout and app.image_storage on top of url/locale. The
+          # spec only documented the unauthenticated subset; allow the extra
+          # authenticated keys the reference implementation actually emits.
+          additionalProperties: true
           properties:
             url:
               type: string
@@ -8519,6 +8557,12 @@ components:
               type: string
             plugins:
               type: object
+              # PHP returns the full white-listed plugin set for an authenticated
+              # caller (SettingsIndexController::_getWhiteListedPluginConfig),
+              # including CE plugins not enumerated below (desktop, export,
+              # import, mobile, multiFactorAuthentication, previewPassword).
+              # Accept the reference implementation's richer plugin map.
+              additionalProperties: true
               properties:
                 jwtAuthentication:
                   type: object

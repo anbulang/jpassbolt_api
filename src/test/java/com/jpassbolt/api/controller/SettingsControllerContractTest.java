@@ -5,6 +5,7 @@ import org.springframework.http.MediaType;
 import org.springframework.security.test.context.support.WithAnonymousUser;
 import org.springframework.security.test.context.support.WithMockUser;
 
+import static com.atlassian.oai.validator.mockmvc.OpenApiValidationMatchers.openApi;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -22,10 +23,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * </p>
  *
  * <p>
- * The openApi().isValid(...) assertions are commented out like in
- * AuthControllerContractTest: the shared createResponse envelope does not
- * output the header "action" field that the spec marks as required, and
- * fixing that is a cross-controller change outside this cluster's scope.
+ * The openApi().isValid(...) assertions are enabled: the shared
+ * {@link com.jpassbolt.api.util.ApiResponse} envelope emits the required header
+ * "action" (uuid) and integer "servertime" fields, so the response satisfies
+ * the spec's header schema.
  * </p>
  */
 public class SettingsControllerContractTest extends OpenApiComplianceTest {
@@ -38,9 +39,8 @@ public class SettingsControllerContractTest extends OpenApiComplianceTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.body.app.url").exists())
                 .andExpect(jsonPath("$.body.passbolt.edition").exists())
-                .andExpect(jsonPath("$.body.passbolt.plugins.jwtAuthentication.enabled").value(true));
-        // .andExpect(openApi().isValid(OPEN_API_SPEC_URL)); // Disabled due to strict
-        // JSON header validation
+                .andExpect(jsonPath("$.body.passbolt.plugins.jwtAuthentication.enabled").value(true))
+                .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
     }
 
     /**
@@ -55,8 +55,7 @@ public class SettingsControllerContractTest extends OpenApiComplianceTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.body.app.url").exists())
                 .andExpect(jsonPath("$.body.passbolt.edition").exists())
-                .andExpect(jsonPath("$.body.app.version").doesNotExist());
-        // .andExpect(openApi().isValid(OPEN_API_SPEC_URL)); // Disabled due to strict
-        // JSON header validation
+                .andExpect(jsonPath("$.body.app.version").doesNotExist())
+                .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
     }
 }

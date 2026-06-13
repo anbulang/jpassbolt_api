@@ -313,6 +313,7 @@ public class GroupController {
                                 .roleId(user.getRoleId())
                                 .active(user.getActive())
                                 .deleted(user.getDeleted())
+                                .disabled(user.getDisabled())
                                 .created(user.getCreated())
                                 .modified(user.getModified())
                                 .build();

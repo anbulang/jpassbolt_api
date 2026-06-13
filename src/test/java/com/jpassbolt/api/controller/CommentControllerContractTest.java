@@ -4,10 +4,12 @@ import com.jpassbolt.api.dto.CommentDto;
 import com.jpassbolt.api.model.Comment;
 import com.jpassbolt.api.model.Permission;
 import com.jpassbolt.api.model.Resource;
+import com.jpassbolt.api.model.Role;
 import com.jpassbolt.api.model.User;
 import com.jpassbolt.api.repository.CommentRepository;
 import com.jpassbolt.api.repository.PermissionRepository;
 import com.jpassbolt.api.repository.ResourceRepository;
+import com.jpassbolt.api.repository.RoleRepository;
 import com.jpassbolt.api.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -15,6 +17,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.security.test.context.support.WithMockUser;
 
+import static com.atlassian.oai.validator.mockmvc.OpenApiValidationMatchers.openApi;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
@@ -22,11 +25,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * OpenAPI contract tests for the Comments endpoints
  * (/comments/resource/{resourceId}.json and /comments/{commentId}.json).
  *
- * NOTE: the openApi().isValid(OPEN_API_SPEC_URL) assertions are present but
- * commented out, in line with the existing AuthControllerContractTest:
- * the Atlassian Swagger Request Validator's strict JSON header validation
- * currently rejects our response envelope. Re-enable them once the envelope
- * validation issue is resolved project-wide.
+ * Both paths exist in the spec, so the openApi().isValid(CONTRACT_VALIDATOR)
+ * assertions are ENABLED on every request.
  */
 @WithMockUser(username = "test@example.com", roles = { "USER" })
 class CommentControllerContractTest extends OpenApiComplianceTest {
@@ -43,6 +43,9 @@ class CommentControllerContractTest extends OpenApiComplianceTest {
         @Autowired
         private UserRepository userRepository;
 
+        @Autowired
+        private RoleRepository roleRepository;
+
         private User testUser;
         private Resource resource;
         private Comment comment;
@@ -53,10 +56,19 @@ class CommentControllerContractTest extends OpenApiComplianceTest {
                 permissionRepository.deleteAll();
                 resourceRepository.deleteAll();
                 userRepository.deleteAll();
+                roleRepository.deleteAll();
+
+                // role_id is a uuid in the embedded creator/modifier contract
+                // schema, so the user must reference a real Role row (its UUID),
+                // not the literal string "user".
+                Role userRole = new Role();
+                userRole.setName("user");
+                userRole.setDescription("Logged in user");
+                roleRepository.save(userRole);
 
                 testUser = new User();
                 testUser.setUsername("test@example.com");
-                testUser.setRoleId("user");
+                testUser.setRoleId(userRole.getId());
                 testUser.setActive(true);
                 testUser.setDeleted(false);
                 userRepository.save(testUser);
@@ -94,9 +106,8 @@ class CommentControllerContractTest extends OpenApiComplianceTest {
                                 .accept(MediaType.APPLICATION_JSON))
                                 .andExpect(status().isOk())
                                 .andExpect(jsonPath("$.header.status").value("success"))
-                                .andExpect(jsonPath("$.body").isArray());
-                // Disabled due to strict JSON header validation:
-                // .andExpect(openApi().isValid(OPEN_API_SPEC_URL));
+                                .andExpect(jsonPath("$.body").isArray())
+                                .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
         }
 
         @Test
@@ -111,9 +122,8 @@ class CommentControllerContractTest extends OpenApiComplianceTest {
                                 .content(objectMapper.writeValueAsString(request)))
                                 .andExpect(status().isOk())
                                 .andExpect(jsonPath("$.header.status").value("success"))
-                                .andExpect(jsonPath("$.body.content").value("no comment"));
-                // Disabled due to strict JSON header validation:
-                // .andExpect(openApi().isValid(OPEN_API_SPEC_URL));
+                                .andExpect(jsonPath("$.body.content").value("no comment"))
+                                .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
         }
 
         @Test
@@ -128,9 +138,8 @@ class CommentControllerContractTest extends OpenApiComplianceTest {
                                 .content(objectMapper.writeValueAsString(request)))
                                 .andExpect(status().isOk())
                                 .andExpect(jsonPath("$.header.status").value("success"))
-                                .andExpect(jsonPath("$.body.content").value("updated comment"));
-                // Disabled due to strict JSON header validation:
-                // .andExpect(openApi().isValid(OPEN_API_SPEC_URL));
+                                .andExpect(jsonPath("$.body.content").value("updated comment"))
+                                .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
         }
 
         @Test
@@ -138,8 +147,7 @@ class CommentControllerContractTest extends OpenApiComplianceTest {
                 mockMvc.perform(delete("/comments/" + comment.getId() + ".json")
                                 .accept(MediaType.APPLICATION_JSON))
                                 .andExpect(status().isOk())
-                                .andExpect(jsonPath("$.header.status").value("success"));
-                // Disabled due to strict JSON header validation:
-                // .andExpect(openApi().isValid(OPEN_API_SPEC_URL));
+                                .andExpect(jsonPath("$.header.status").value("success"))
+                                .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
         }
 }

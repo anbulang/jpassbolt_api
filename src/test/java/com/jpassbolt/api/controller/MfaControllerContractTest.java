@@ -22,6 +22,7 @@ import org.springframework.security.test.context.support.WithMockUser;
 
 import java.util.UUID;
 
+import static com.atlassian.oai.validator.mockmvc.OpenApiValidationMatchers.openApi;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.cookie;
@@ -36,7 +37,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * MfaControllerTest only).
  *
  * <p>
- * The openApi().isValid(OPEN_API_SPEC_URL) assertions are disabled, same as
+ * The openApi().isValid(CONTRACT_VALIDATOR) assertions are disabled, same as
  * AuthControllerContractTest and UsersCrudControllerContractTest, because of
  * known project-wide spec frictions: the header schema requires an "action"
  * field createResponse never emits, and nullBody (type: 'null') vs the
@@ -136,9 +137,8 @@ public class MfaControllerContractTest extends OpenApiComplianceTest {
 
         mockMvc.perform(get("/mfa/verify/totp.json"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.header.status").value("success"));
-        // .andExpect(openApi().isValid(OPEN_API_SPEC_URL)); // Disabled due to strict
-        // JSON header validation (header schema requires "action")
+                .andExpect(jsonPath("$.header.status").value("success"))
+                .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
     }
 
     @Test
@@ -148,9 +148,8 @@ public class MfaControllerContractTest extends OpenApiComplianceTest {
 
         mockMvc.perform(get("/mfa/verify/totp.json"))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.header.status").value("error"));
-        // .andExpect(openApi().isValid(OPEN_API_SPEC_URL)); // Disabled due to strict
-        // JSON header validation (header schema requires "action")
+                .andExpect(jsonPath("$.header.status").value("error"))
+                .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
     }
 
     @Test
@@ -164,9 +163,8 @@ public class MfaControllerContractTest extends OpenApiComplianceTest {
                 .content("{\"totp\":\"" + code + "\",\"remember\":0}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.header.status").value("success"))
-                .andExpect(cookie().exists("passbolt_mfa"));
-        // .andExpect(openApi().isValid(OPEN_API_SPEC_URL)); // Disabled due to strict
-        // JSON header validation (header schema requires "action")
+                .andExpect(cookie().exists("passbolt_mfa"))
+                .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
     }
 
     @Test
@@ -180,9 +178,8 @@ public class MfaControllerContractTest extends OpenApiComplianceTest {
                 .content("{\"totp\":\"" + wrong + "\"}"))
                 .andExpect(status().isBadRequest())
                 // invalidOtp response shape: body.totp.{rule: message}
-                .andExpect(jsonPath("$.body.totp.isValidOtp").value("This OTP is not valid."));
-        // .andExpect(openApi().isValid(OPEN_API_SPEC_URL)); // Disabled due to strict
-        // JSON header validation (header schema requires "action")
+                .andExpect(jsonPath("$.body.totp.isValidOtp").value("This OTP is not valid."))
+                .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
     }
 
     @Test
@@ -194,8 +191,7 @@ public class MfaControllerContractTest extends OpenApiComplianceTest {
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.header.code").value(403))
                 // schema "error" requires mfa_providers
-                .andExpect(jsonPath("$.body.mfa_providers[0]").value("totp"));
-        // .andExpect(openApi().isValid(OPEN_API_SPEC_URL)); // Disabled due to strict
-        // JSON header validation (header schema requires "action")
+                .andExpect(jsonPath("$.body.mfa_providers[0]").value("totp"))
+                .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
     }
 }

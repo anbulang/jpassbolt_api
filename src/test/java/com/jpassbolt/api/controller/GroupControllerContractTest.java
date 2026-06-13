@@ -17,6 +17,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.security.test.context.support.WithMockUser;
 
+import static com.atlassian.oai.validator.mockmvc.OpenApiValidationMatchers.openApi;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
@@ -96,12 +97,8 @@ public class GroupControllerContractTest extends OpenApiComplianceTest {
         mockMvc.perform(get("/groups.json"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.header.status").value("success"))
-                .andExpect(jsonPath("$.body[0].name").value("Contract Group"));
-        // .andExpect(openApi().isValid(OPEN_API_SPEC_URL)); // Disabled due to strict
-        // JSON header validation: the spec's header schema requires an `action` (uuid)
-        // field that createResponse does not emit, and LocalDateTime serialization
-        // lacks the RFC3339 timezone offset required by date-time. Same handling as
-        // AuthControllerContractTest.
+                .andExpect(jsonPath("$.body[0].name").value("Contract Group"))
+                .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
     }
 
     @Test
@@ -116,10 +113,8 @@ public class GroupControllerContractTest extends OpenApiComplianceTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.header.status").value("success"))
                 .andExpect(jsonPath("$.body.name").value("Groupe B"))
-                .andExpect(jsonPath("$.body.groups_users[0].is_admin").value(true));
-        // .andExpect(openApi().isValid(OPEN_API_SPEC_URL)); // Disabled due to strict
-        // JSON header validation (missing required header.action and date-time offset).
-        // Same handling as AuthControllerContractTest.
+                .andExpect(jsonPath("$.body.groups_users[0].is_admin").value(true))
+                .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
     }
 
     @Test
@@ -127,10 +122,8 @@ public class GroupControllerContractTest extends OpenApiComplianceTest {
         mockMvc.perform(get("/groups/" + group.getId() + ".json"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.header.status").value("success"))
-                .andExpect(jsonPath("$.body.id").value(group.getId()));
-        // .andExpect(openApi().isValid(OPEN_API_SPEC_URL)); // Disabled due to strict
-        // JSON header validation (missing required header.action and date-time offset).
-        // Same handling as AuthControllerContractTest.
+                .andExpect(jsonPath("$.body.id").value(group.getId()))
+                .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
     }
 
     @Test
@@ -143,9 +136,7 @@ public class GroupControllerContractTest extends OpenApiComplianceTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.header.status").value("success"))
                 .andExpect(jsonPath("$.body['dry-run'].SecretsNeeded").isArray())
-                .andExpect(jsonPath("$.body['dry-run'].Secrets").isArray());
-        // .andExpect(openApi().isValid(OPEN_API_SPEC_URL)); // Disabled due to strict
-        // JSON header validation (missing required header.action and date-time offset).
-        // Same handling as AuthControllerContractTest.
+                .andExpect(jsonPath("$.body['dry-run'].Secrets").isArray())
+                .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
     }
 }

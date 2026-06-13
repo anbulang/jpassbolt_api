@@ -15,6 +15,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.security.test.context.support.WithMockUser;
 
+import static com.atlassian.oai.validator.mockmvc.OpenApiValidationMatchers.openApi;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -27,6 +28,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * SINGULAR paths /favorite/{favoriteId}.json and /favorite/{foreignModel}/{foreignId}.json,
  * so contract requests must hit the singular paths — the plural /favorites/... paths
  * (used by the real plugin) are unknown to the validator and would fail as such.
+ *
+ * Both singular paths exist in the spec, so the openApi().isValid(CONTRACT_VALIDATOR)
+ * assertions are ENABLED on every request.
  */
 @WithMockUser(username = "test@example.com", roles = { "USER" })
 public class FavoriteControllerContractTest extends OpenApiComplianceTest {
@@ -88,12 +92,8 @@ public class FavoriteControllerContractTest extends OpenApiComplianceTest {
                 .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.header.status").value("success"))
-                .andExpect(jsonPath("$.body.foreign_model").value("Resource"));
-        // .andExpect(openApi().isValid(OPEN_API_SPEC_URL)); // Disabled due to strict
-        // JSON header validation: the spec's header schema requires an `action` (uuid)
-        // field that createResponse does not emit, and LocalDateTime serialization
-        // lacks the RFC3339 timezone offset required by date-time. Same handling as
-        // AuthControllerContractTest.
+                .andExpect(jsonPath("$.body.foreign_model").value("Resource"))
+                .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
     }
 
     @Test
@@ -103,10 +103,7 @@ public class FavoriteControllerContractTest extends OpenApiComplianceTest {
 
         mockMvc.perform(delete("/favorite/" + favorite.getId() + ".json"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.header.status").value("success"));
-        // .andExpect(openApi().isValid(OPEN_API_SPEC_URL)); // Disabled due to strict
-        // JSON header validation (missing required header.action; the nullBody schema
-        // is satisfied by this controller's literal "body": null, but the shared
-        // header issues remain). Same handling as AuthControllerContractTest.
+                .andExpect(jsonPath("$.header.status").value("success"))
+                .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
     }
 }

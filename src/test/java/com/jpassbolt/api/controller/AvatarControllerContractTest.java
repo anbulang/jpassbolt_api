@@ -63,15 +63,12 @@ public class AvatarControllerContractTest extends OpenApiComplianceTest {
     public void testViewAvatarContract() throws Exception {
         mockMvc.perform(get("/avatars/view/" + avatar.getId() + "/medium.jpg"))
                 .andExpect(status().isOk())
-                .andExpect(content().contentType(MediaType.IMAGE_JPEG));
-        // .andExpect(openApi().isValid(OPEN_API_SPEC_URL)); // Disabled: swagger-request-validator
-        // 2.39.0 erroneously JSON-parses SIMPLE-style string path params (avatarId/avatarFormat),
-        // reporting invalidJson on valid segments. Same validator quirk that disabled the other
-        // contract tests' isValid assertions; status + content-type assertions still prove behavior.
+                .andExpect(content().contentType(MediaType.IMAGE_JPEG))
+                .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
 
         mockMvc.perform(get("/avatars/view/" + avatar.getId() + "/small.jpg"))
                 .andExpect(status().isOk())
-                .andExpect(content().contentType(MediaType.IMAGE_JPEG));
-        // .andExpect(openApi().isValid(OPEN_API_SPEC_URL)); // Disabled (see note above).
+                .andExpect(content().contentType(MediaType.IMAGE_JPEG))
+                .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
     }
 }

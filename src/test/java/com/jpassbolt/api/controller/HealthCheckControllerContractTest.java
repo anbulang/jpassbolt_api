@@ -23,11 +23,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * (/healthcheck.json and /healthcheck/status.json).
  *
  * <p>
- * Note: the strict {@code openApi().isValid(...)} assertions are disabled —
- * the spec's header schema requires an {@code action} (uuid) field that the
- * project-wide {@code createResponse} envelope does not output. This is the
- * same known limitation (and the same handling) as in
- * {@link AuthControllerContractTest}.
+ * Both paths exist in the spec, so the strict {@code openApi().isValid(...)}
+ * assertions are ENABLED on every request.
  * </p>
  */
 public class HealthCheckControllerContractTest extends OpenApiComplianceTest {
@@ -78,10 +75,8 @@ public class HealthCheckControllerContractTest extends OpenApiComplianceTest {
     public void testStatusContract() throws Exception {
         mockMvc.perform(get("/healthcheck/status.json"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.body").value("OK"));
-        // .andExpect(openApi().isValid(OPEN_API_SPEC_URL)); // Disabled due to strict
-        // JSON header validation (header schema requires "action" which the shared
-        // createResponse envelope does not output)
+                .andExpect(jsonPath("$.body").value("OK"))
+                .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
     }
 
     /**
@@ -93,9 +88,7 @@ public class HealthCheckControllerContractTest extends OpenApiComplianceTest {
     public void testHealthcheckIndexContract() throws Exception {
         mockMvc.perform(get("/healthcheck.json"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.body.database.connect").value(true));
-        // .andExpect(openApi().isValid(OPEN_API_SPEC_URL)); // Disabled due to strict
-        // JSON header validation (header schema requires "action" which the shared
-        // createResponse envelope does not output)
+                .andExpect(jsonPath("$.body.database.connect").value(true))
+                .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
     }
 }

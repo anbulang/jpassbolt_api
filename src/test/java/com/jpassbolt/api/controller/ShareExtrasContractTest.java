@@ -21,6 +21,7 @@ import org.springframework.security.test.context.support.WithMockUser;
 import java.util.List;
 import java.util.Map;
 
+import static com.atlassian.oai.validator.mockmvc.OpenApiValidationMatchers.openApi;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
@@ -35,11 +36,14 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * src/test/resources/plugin-redoc-0.yaml (identical in the authoritative
  * docs/ref_files copy).
  *
- * The openApi().isValid(OPEN_API_SPEC_URL) assertions are disabled below for
- * the same project-wide reasons documented in AuthControllerContractTest /
- * RoleControllerContractTest (strict JSON header validation), plus one
- * cluster-specific contradiction for the simulate endpoint (see the comment
- * on testShareSimulateContract).
+ * The openApi().isValid(CONTRACT_VALIDATOR) contract assertions are ENABLED for
+ * search-aros, permissions/resource and the share PUT: the ApiResponse envelope
+ * now emits all 7 spec-required header fields (incl. action:uuid) with
+ * servertime as a Unix-epoch integer, so the previously-cited header/date-time
+ * validation no longer blocks them. Only testShareSimulateContract keeps the
+ * assertion disabled, for a genuine spec self-contradiction on the response
+ * body shape (changes-wrapper vs the schema's top-level added/removed — see the
+ * comment on that test); that is unrelated to the envelope/date concern.
  */
 @WithMockUser(username = "test@example.com", roles = { "USER" })
 public class ShareExtrasContractTest extends OpenApiComplianceTest {
@@ -129,14 +133,12 @@ public class ShareExtrasContractTest extends OpenApiComplianceTest {
                 .andExpect(jsonPath("$.header.status").value("success"))
                 .andExpect(jsonPath("$.body").isArray())
                 .andExpect(jsonPath("$.body[0].username").value("target@example.com"))
-                .andExpect(jsonPath("$.body[0].profile.first_name").value("Target"));
-        // .andExpect(openApi().isValid(OPEN_API_SPEC_URL)); // Disabled due to strict
-        // JSON header validation: the spec's header schema requires an "action"
-        // (uuid) field that the project-wide createResponse envelope does not
-        // emit, and LocalDateTime serializes without a timezone offset, failing
-        // strict date-time format checks. Same known limitation and handling as
-        // AuthControllerContractTest.
-        // (static import: com.atlassian.oai.validator.mockmvc.OpenApiValidationMatchers.openApi)
+                .andExpect(jsonPath("$.body[0].profile.first_name").value("Target"))
+                // The ApiResponse envelope now emits all 7 required header fields
+                // (incl. action:uuid) with servertime as a Unix-epoch integer, so
+                // the previously-blocking header/date-time validation no longer
+                // applies and the contract assertion is enabled.
+                .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
     }
 
     @Test
@@ -147,9 +149,8 @@ public class ShareExtrasContractTest extends OpenApiComplianceTest {
                 .andExpect(jsonPath("$.header.status").value("success"))
                 .andExpect(jsonPath("$.body").isArray())
                 .andExpect(jsonPath("$.body.length()").value(2))
-                .andExpect(jsonPath("$.body[0].aco").value("Resource"));
-        // .andExpect(openApi().isValid(OPEN_API_SPEC_URL)); // Disabled due to strict
-        // JSON header validation (see testSearchArosContract).
+                .andExpect(jsonPath("$.body[0].aco").value("Resource"))
+                .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
     }
 
     @Test
@@ -163,15 +164,15 @@ public class ShareExtrasContractTest extends OpenApiComplianceTest {
                 .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.body.changes.removed[0].User.id").value(targetUser.getId()));
-        // .andExpect(openApi().isValid(OPEN_API_SPEC_URL)); // Disabled — TWO reasons:
-        // 1) the strict JSON header validation issue shared by all contract tests
-        // (see testSearchArosContract);
-        // 2) the spec contradicts ITSELF for this endpoint: schema
-        // shareUpdateDryRun (L8677) requires top-level added/removed, while the
-        // official example (L11457) and the actual PHP output wrap them in
-        // "changes". The plugin consumes changes.added, so we follow PHP/the
-        // example — do NOT flatten the body just to satisfy the schema, that
-        // would break plugin compatibility.
+        // .andExpect(openApi().isValid(CONTRACT_VALIDATOR)); // INTENTIONALLY left
+        // disabled — NOT an envelope/date reason. The spec contradicts ITSELF for
+        // this endpoint's body: schema shareUpdateDryRun (L8676) marks top-level
+        // added/removed as required, while the official example (L11446) and the
+        // actual PHP output wrap them in "changes". The plugin consumes
+        // changes.added, so we follow PHP/the example — flattening the body just
+        // to satisfy the schema would break plugin compatibility. The validator
+        // enforces the schema, so this body legitimately fails contract
+        // validation; recorded in assertions_left_disabled.
     }
 
     @Test
@@ -185,10 +186,10 @@ public class ShareExtrasContractTest extends OpenApiComplianceTest {
                 .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.header.status").value("success"))
-                .andExpect(jsonPath("$.body").value(org.hamcrest.CoreMatchers.nullValue()));
-        // .andExpect(openApi().isValid(OPEN_API_SPEC_URL)); // Disabled due to strict
-        // JSON header validation (see testSearchArosContract). Note the success
-        // body here IS the spec-mandated JSON null (responses/nullBody).
+                // The success body here IS the spec-mandated JSON null
+                // (responses/nullBody, body type 'null').
+                .andExpect(jsonPath("$.body").value(org.hamcrest.CoreMatchers.nullValue()))
+                .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
     }
 
     // ------------------------------------------------------------------

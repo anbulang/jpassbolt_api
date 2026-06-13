@@ -12,6 +12,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.security.test.context.support.WithMockUser;
 
+import static com.atlassian.oai.validator.mockmvc.OpenApiValidationMatchers.openApi;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -20,6 +21,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * OpenAPI contract test for GET /roles.json.
  * The /roles.json path and roles_index response are defined in
  * src/test/resources/plugin-redoc-0.yaml (L5456 / L11130).
+ *
+ * <p>The strict {@code openApi().isValid(...)} assertion is enabled: the shared
+ * {@link com.jpassbolt.api.util.ApiResponse} envelope emits the required header
+ * {@code action} (uuid) and integer {@code servertime}, and the global
+ * {@link com.jpassbolt.api.config.JacksonConfig} serializes LocalDateTime as
+ * RFC3339 with a UTC offset, so the response satisfies the contract.</p>
  */
 @WithMockUser(username = "test@example.com", roles = { "USER" })
 public class RoleControllerContractTest extends OpenApiComplianceTest {
@@ -69,14 +76,7 @@ public class RoleControllerContractTest extends OpenApiComplianceTest {
                 .andExpect(jsonPath("$.body").isArray())
                 .andExpect(jsonPath("$.body.length()").value(3))
                 .andExpect(jsonPath("$.body[0].id").exists())
-                .andExpect(jsonPath("$.body[0].name").exists());
-        // .andExpect(openApi().isValid(OPEN_API_SPEC_URL)); // Disabled due to strict
-        // JSON header validation: the spec's header schema requires an "action"
-        // (uuid) field that the project-wide createResponse envelope does not
-        // emit, and LocalDateTime serializes without a timezone offset, failing
-        // strict date-time format checks. Same known limitation and handling as
-        // AuthControllerContractTest; the global envelope fix is a cross-cutting
-        // task outside this cluster.
-        // (static import: com.atlassian.oai.validator.mockmvc.OpenApiValidationMatchers.openApi)
+                .andExpect(jsonPath("$.body[0].name").exists())
+                .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
     }
 }

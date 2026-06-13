@@ -61,13 +61,12 @@ public class MoveController {
 
         foldersRelationsMoveService.move(foreignModel, foreignId, (String) rawFolderParentId, userId);
 
-        return ResponseEntity.ok(createResponse("success", "The object has been moved successfully.",
-                null, url));
-    }
-
-    private Map<String, Object> createResponse(String status, String message, Object body, String url) {
-        // 迁移到共享信封工具：补 action(uuid) 等 spec required 字段，保留原 200/400 code 与 null→{} 语义。
-        return ApiResponse.withCode(status, message, body, "success".equals(status) ? 200 : 400, url);
+        // The spec maps /move/{foreignModel}/{foreignId}.json 200 to
+        // responses/nullBody (body: type 'null'), matching PHP's success() with
+        // no data. Use ApiResponse.nullBody so the body serializes as JSON null
+        // rather than the {} fallback that withCode/success applies.
+        return ResponseEntity.ok(ApiResponse.nullBody("success",
+                "The object has been moved successfully.", url));
     }
 
     private String getCurrentUserId() {

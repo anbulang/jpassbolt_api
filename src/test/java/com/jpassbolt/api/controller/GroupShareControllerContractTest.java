@@ -21,6 +21,7 @@ import org.springframework.security.test.context.support.WithMockUser;
 import java.util.List;
 import java.util.Map;
 
+import static com.atlassian.oai.validator.mockmvc.OpenApiValidationMatchers.openApi;
 import static org.hamcrest.CoreMatchers.nullValue;
 import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -37,10 +38,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * src/test/resources/plugin-redoc-0.yaml, identical in the authoritative
  * docs/ref_files copy).
  *
- * The openApi().isValid(OPEN_API_SPEC_URL) assertions are disabled below for
- * the same project-wide reasons documented in AuthControllerContractTest /
- * ShareExtrasContractTest — see the per-test comments for the two concrete
- * causes.
+ * The openApi().isValid(CONTRACT_VALIDATOR) contract assertion is enabled on
+ * the PUT /share update test. It remains intentionally disabled only on the
+ * simulate test, for a body-shape reason (the spec self-contradiction around
+ * changes.added vs top-level added/removed) — see the per-test comment.
  */
 @WithMockUser(username = "test@example.com", roles = { "USER" })
 public class GroupShareControllerContractTest extends OpenApiComplianceTest {
@@ -136,14 +137,8 @@ public class GroupShareControllerContractTest extends OpenApiComplianceTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.header.status").value("success"))
                 // Spec-mandated nullBody (responses/nullBody): body IS JSON null
-                .andExpect(jsonPath("$.body").value(nullValue()));
-        // .andExpect(openApi().isValid(OPEN_API_SPEC_URL)); // Disabled due to strict
-        // JSON header validation: the spec's header schema requires an "action"
-        // (uuid) field that the project-wide createResponse envelope does not
-        // emit, and LocalDateTime serializes without a timezone offset, failing
-        // strict date-time format checks. Same known limitation and handling as
-        // AuthControllerContractTest / ShareExtrasContractTest.
-        // (static import: com.atlassian.oai.validator.mockmvc.OpenApiValidationMatchers.openApi)
+                .andExpect(jsonPath("$.body").value(nullValue()))
+                .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
     }
 
     @Test
@@ -164,16 +159,15 @@ public class GroupShareControllerContractTest extends OpenApiComplianceTest {
                 .andExpect(jsonPath("$.body.changes.added[*].User.id",
                         containsInAnyOrder(memberA.getId(), memberB.getId())))
                 .andExpect(jsonPath("$.body.changes.removed").isEmpty());
-        // .andExpect(openApi().isValid(OPEN_API_SPEC_URL)); // Disabled — TWO reasons:
-        // 1) the strict JSON header validation issue shared by all contract tests
-        // (see testGroupShareUpdateContract);
-        // 2) the spec contradicts ITSELF for this endpoint: schema
-        // shareUpdateDryRun (L8677) requires top-level added/removed, while the
-        // official example (L11457) and the actual PHP output wrap them in
-        // "changes". The plugin consumes changes.added, so we follow PHP/the
-        // example — do NOT flatten the body just to satisfy the schema, that
-        // would break plugin compatibility. (Same precedent as
-        // ShareExtrasContractTest.testShareSimulateContract.)
+        // .andExpect(openApi().isValid(CONTRACT_VALIDATOR)); // Intentionally left
+        // DISABLED for a body-shape reason (NOT the envelope/date-time issue): the
+        // spec contradicts ITSELF for this endpoint — schema shareUpdateDryRun
+        // (L8677) requires top-level added/removed, while the official example
+        // (L11457) and the actual PHP output wrap them in "changes". The plugin
+        // consumes changes.added, so we follow PHP/the example — flattening the
+        // body just to satisfy the schema would break plugin compatibility. Same
+        // precedent as ShareExtrasContractTest.testShareSimulateContract.
+        // (static import: com.atlassian.oai.validator.mockmvc.OpenApiValidationMatchers.openApi)
     }
 
     // ------------------------------------------------------------------
