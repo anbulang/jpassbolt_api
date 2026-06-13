@@ -6,6 +6,7 @@ import com.jpassbolt.api.model.User;
 import com.jpassbolt.api.repository.UserRepository;
 import com.jpassbolt.api.service.JwtAuthService;
 import com.jpassbolt.api.service.JwtService;
+import com.jpassbolt.api.util.ApiResponse;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -223,18 +224,10 @@ public class JwtAuthController {
     }
 
     private Map<String, Object> createResponse(String status, String message, Object body, String action, String url) {
-        Map<String, Object> response = new LinkedHashMap<>();
-        response.put("header", Map.of(
-                "id", java.util.UUID.randomUUID().toString(),
-                "status", status,
-                "servertime", System.currentTimeMillis() / 1000,
-                "code", 200,
-                "message", message,
-                "action", action != null ? action : "e8f6e1a8-39c0-5d4d-9a5b-1f8a93b6b4c1",
-                "url", url != null ? url : "/auth/jwt/login.json"));
-
-        response.put("body", body != null ? body : new LinkedHashMap<>());
-        return response;
+        // 迁移到共享信封工具：保留显式 action 与 code=200（JWT 端点既有偏差），body null→{}。
+        return ApiResponse.withExplicitAction(status, message, body != null ? body : new LinkedHashMap<>(), 200,
+                action != null ? action : "e8f6e1a8-39c0-5d4d-9a5b-1f8a93b6b4c1",
+                url != null ? url : "/auth/jwt/login.json");
     }
 
     /**

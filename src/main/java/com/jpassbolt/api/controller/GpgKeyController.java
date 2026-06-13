@@ -4,6 +4,7 @@ import com.jpassbolt.api.dto.GpgKeyDto;
 import com.jpassbolt.api.exception.PassboltApiException;
 import com.jpassbolt.api.model.GpgKey;
 import com.jpassbolt.api.service.GpgKeyService;
+import com.jpassbolt.api.util.ApiResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -15,7 +16,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.time.Instant;
 import java.time.LocalDateTime;
-import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -153,10 +154,10 @@ public class GpgKeyController {
      * QueryStringComponent::validateFilterTimestamp / isTimestamp — the value
      * must be a unix timestamp (seconds), otherwise 400 BadRequest.
      *
-     * The epoch is converted with ZoneId.systemDefault() on purpose: entity
-     * timestamps are written with LocalDateTime.now() (JVM default zone) in
-     * BaseEntity, so the comparison must use the same zone to stay internally
-     * consistent. A full-chain UTC alignment is a cross-cutting task.
+     * The epoch is converted with ZoneOffset.UTC: entity timestamps are now
+     * written with LocalDateTime.now(ZoneOffset.UTC) in BaseEntity (full-chain
+     * UTC alignment), so the comparison must use UTC to stay internally
+     * consistent.
      */
     private LocalDateTime parseModifiedAfterFilter(String value) {
         if (value == null) {
@@ -173,7 +174,7 @@ public class GpgKeyController {
             throw new PassboltApiException(HttpStatus.BAD_REQUEST,
                     "Invalid filter. \"" + value + "\" is not a valid timestamp for filter modified-after.");
         }
-        return LocalDateTime.ofInstant(Instant.ofEpochSecond(epochSeconds), ZoneId.systemDefault());
+        return LocalDateTime.ofInstant(Instant.ofEpochSecond(epochSeconds), ZoneOffset.UTC);
     }
 
     /**
@@ -200,15 +201,7 @@ public class GpgKeyController {
     }
 
     private Map<String, Object> createResponse(String status, String message, Object body, String url) {
-        Map<String, Object> response = new LinkedHashMap<>();
-        response.put("header", Map.of(
-                "id", java.util.UUID.randomUUID().toString(),
-                "status", status,
-                "servertime", System.currentTimeMillis() / 1000,
-                "code", "success".equals(status) ? 200 : 400,
-                "message", message,
-                "url", url));
-        response.put("body", body != null ? body : new LinkedHashMap<>());
-        return response;
+        // 迁移到共享信封工具：补 action(uuid) 等 spec required 字段，保留原 200/400 code 语义。
+        return ApiResponse.withCode(status, message, body, "success".equals(status) ? 200 : 400, url);
     }
 }

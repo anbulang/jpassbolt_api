@@ -15,6 +15,7 @@ import jakarta.persistence.Table;
 import lombok.Data;
 
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.UUID;
 
 /**
@@ -72,7 +73,8 @@ public class GroupUser {
             id = UUID.randomUUID().toString();
         }
         if (created == null) {
-            created = LocalDateTime.now();
+            // 统一以 UTC 写入，与全局 RFC3339(+00:00) 序列化对齐。
+            created = LocalDateTime.now(ZoneOffset.UTC);
         }
         if (isAdmin == null) {
             isAdmin = false;

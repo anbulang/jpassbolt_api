@@ -21,6 +21,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -394,7 +395,8 @@ public class MfaService {
      */
     @Transactional
     public LocalDateTime enableTotpProvider(String userId, String otpProvisioningUri) {
-        LocalDateTime verified = LocalDateTime.now();
+        // 统一以 UTC 写入，与全局 RFC3339(+00:00) 序列化对齐。
+        LocalDateTime verified = LocalDateTime.now(ZoneOffset.UTC);
         Optional<AccountSetting> existing = accountSettingRepository.findFirstByUserIdAndProperty(userId, MFA_PROPERTY);
 
         ObjectNode root = existing

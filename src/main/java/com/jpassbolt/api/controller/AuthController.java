@@ -4,6 +4,7 @@ import com.jpassbolt.api.dto.AuthDto;
 import com.jpassbolt.api.exception.PassboltApiException;
 import com.jpassbolt.api.model.User;
 import com.jpassbolt.api.service.AuthService;
+import com.jpassbolt.api.util.ApiResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpHeaders;
@@ -57,16 +58,10 @@ public class AuthController {
         body.put("fingerprint", fingerprint);
         body.put("keydata", publicKey);
 
-        Map<String, Object> response = new LinkedHashMap<>();
-        response.put("header", Map.of(
-                "id", java.util.UUID.randomUUID().toString(),
-                "status", "success",
-                "servertime", System.currentTimeMillis() / 1000,
-                "action", "cd37a3ca-7d88-5fb6-bb02-f1b56423f03a",
-                "message", "The operation was successful.",
-                "code", 200,
-                "url", "/auth/verify.json"));
-        response.put("body", body);
+        // 迁移到共享信封工具：保留显式 action 与 code=200（GpgAuth Stage 0 既有偏差），body 透传。
+        Map<String, Object> response = ApiResponse.withExplicitAction("success",
+                "The operation was successful.", body, 200,
+                "cd37a3ca-7d88-5fb6-bb02-f1b56423f03a", "/auth/verify.json");
 
         return ResponseEntity.ok(response);
     }
@@ -292,17 +287,9 @@ public class AuthController {
      * Create a response body
      */
     private Map<String, Object> createResponse(String status, String message, Object body, String action, String url) {
-        Map<String, Object> response = new LinkedHashMap<>();
-        response.put("header", Map.of(
-                "id", java.util.UUID.randomUUID().toString(),
-                "status", status,
-                "servertime", System.currentTimeMillis() / 1000,
-                "code", 200,
-                "message", message,
-                "action", action != null ? action : "d54c1605-9e69-4d63-9828-090c80c0f80e",
-                "url", url != null ? url : "/auth/login.json"));
-
-        response.put("body", body != null ? body : new LinkedHashMap<>());
-        return response;
+        // 迁移到共享信封工具：保留显式 action 与 code=200（GpgAuth 既有偏差，含 error 分支也为 200），body null→{}。
+        return ApiResponse.withExplicitAction(status, message, body != null ? body : new LinkedHashMap<>(), 200,
+                action != null ? action : "d54c1605-9e69-4d63-9828-090c80c0f80e",
+                url != null ? url : "/auth/login.json");
     }
 }

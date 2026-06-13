@@ -4,6 +4,7 @@ import com.jpassbolt.api.exception.PassboltApiException;
 import com.jpassbolt.api.model.User;
 import com.jpassbolt.api.repository.UserRepository;
 import com.jpassbolt.api.service.FoldersRelationsMoveService;
+import com.jpassbolt.api.util.ApiResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -16,7 +17,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 
@@ -66,16 +66,8 @@ public class MoveController {
     }
 
     private Map<String, Object> createResponse(String status, String message, Object body, String url) {
-        Map<String, Object> response = new LinkedHashMap<>();
-        response.put("header", Map.of(
-                "id", java.util.UUID.randomUUID().toString(),
-                "status", status,
-                "servertime", System.currentTimeMillis() / 1000,
-                "code", "success".equals(status) ? 200 : 400,
-                "message", message,
-                "url", url));
-        response.put("body", body != null ? body : new LinkedHashMap<>());
-        return response;
+        // 迁移到共享信封工具：补 action(uuid) 等 spec required 字段，保留原 200/400 code 与 null→{} 语义。
+        return ApiResponse.withCode(status, message, body, "success".equals(status) ? 200 : 400, url);
     }
 
     private String getCurrentUserId() {

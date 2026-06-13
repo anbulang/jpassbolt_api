@@ -2,6 +2,7 @@ package com.jpassbolt.api.controller;
 
 import com.jpassbolt.api.exception.PassboltApiException;
 import com.jpassbolt.api.service.SettingsService;
+import com.jpassbolt.api.util.ApiResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -13,7 +14,6 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
@@ -92,15 +92,8 @@ public class SettingsController {
     }
 
     private Map<String, Object> createResponse(String status, String message, Object body, String url) {
-        Map<String, Object> response = new LinkedHashMap<>();
-        response.put("header", Map.of(
-                "id", java.util.UUID.randomUUID().toString(),
-                "status", status,
-                "servertime", System.currentTimeMillis() / 1000,
-                "code", "success".equals(status) ? 200 : 400,
-                "message", message,
-                "url", url));
-        response.put("body", body != null ? body : new LinkedHashMap<>());
-        return response;
+        // 迁移到共享信封工具：补 action(uuid) 等 spec required 字段，保留原 200/400 code 语义。
+        // contain[header]=0 整体省略信封的特例由调用方处理，不经过此方法。
+        return ApiResponse.withCode(status, message, body, "success".equals(status) ? 200 : 400, url);
     }
 }

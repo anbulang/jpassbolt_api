@@ -7,6 +7,7 @@ import com.jpassbolt.api.model.User;
 import com.jpassbolt.api.repository.PermissionRepository;
 import com.jpassbolt.api.repository.SecretRepository;
 import com.jpassbolt.api.repository.UserRepository;
+import com.jpassbolt.api.util.ApiResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -132,15 +133,7 @@ public class SecretController {
         }
 
         private Map<String, Object> createResponse(String status, String message, Object body, String url) {
-                Map<String, Object> response = new LinkedHashMap<>();
-                response.put("header", Map.of(
-                                "id", java.util.UUID.randomUUID().toString(),
-                                "status", status,
-                                "servertime", System.currentTimeMillis() / 1000,
-                                "code", "success".equals(status) ? 200 : 400,
-                                "message", message,
-                                "url", url));
-                response.put("body", body != null ? body : new LinkedHashMap<>());
-                return response;
+                // 迁移到共享信封工具：补 action(uuid) 等 spec required 字段，保留原 200/400 code 语义。
+                return ApiResponse.withCode(status, message, body, "success".equals(status) ? 200 : 400, url);
         }
 }

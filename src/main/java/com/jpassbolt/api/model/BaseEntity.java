@@ -9,6 +9,7 @@ import jakarta.persistence.PreUpdate;
 import lombok.Data;
 
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.UUID;
 
 @Data
@@ -28,8 +29,10 @@ public abstract class BaseEntity {
 
     @PrePersist
     protected void onCreate() {
-        created = LocalDateTime.now();
-        modified = LocalDateTime.now();
+        // 统一以 UTC 写入：序列化层会按 UTC 附加 +00:00 offset 输出 RFC3339，
+        // 二者必须同一时区，否则给本地时刻硬加 offset 会得到错误时刻。
+        created = LocalDateTime.now(ZoneOffset.UTC);
+        modified = LocalDateTime.now(ZoneOffset.UTC);
         if (id == null) {
             id = UUID.randomUUID().toString();
         }
@@ -37,6 +40,6 @@ public abstract class BaseEntity {
 
     @PreUpdate
     protected void onUpdate() {
-        modified = LocalDateTime.now();
+        modified = LocalDateTime.now(ZoneOffset.UTC);
     }
 }

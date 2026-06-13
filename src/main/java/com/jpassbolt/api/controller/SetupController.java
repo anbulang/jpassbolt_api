@@ -8,6 +8,7 @@ import com.jpassbolt.api.model.User;
 import com.jpassbolt.api.repository.ProfileRepository;
 import com.jpassbolt.api.repository.RoleRepository;
 import com.jpassbolt.api.service.SetupService;
+import com.jpassbolt.api.util.ApiResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
@@ -178,15 +179,7 @@ public class SetupController {
      * controllers.
      */
     private Map<String, Object> createResponse(String status, String message, Object body, String url) {
-        Map<String, Object> response = new LinkedHashMap<>();
-        response.put("header", Map.of(
-                "id", UUID.randomUUID().toString(),
-                "status", status,
-                "servertime", System.currentTimeMillis() / 1000,
-                "code", "success".equals(status) ? 200 : 400,
-                "message", message,
-                "url", url));
-        response.put("body", body);
-        return response;
+        // 迁移到共享信封工具：补 action(uuid) 等 spec required 字段，保留 body 透传（不回退 {}）特例。
+        return ApiResponse.passthrough(status, message, body, url);
     }
 }

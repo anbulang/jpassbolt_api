@@ -1,14 +1,13 @@
 package com.jpassbolt.api.config;
 
 import com.jpassbolt.api.exception.PassboltApiException;
+import com.jpassbolt.api.util.ApiResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ControllerAdvice;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 
-import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.UUID;
 
 /**
  * Global exception handler that catches {@link PassboltApiException} and
@@ -33,17 +32,10 @@ public class GlobalExceptionHandler {
     public ResponseEntity<Map<String, Object>> handlePassboltApiException(PassboltApiException ex) {
         log.warn("API error [{}]: {}", ex.getStatus().value(), ex.getMessage());
 
-        Map<String, Object> header = new LinkedHashMap<>();
-        header.put("id", UUID.randomUUID().toString());
-        header.put("status", "error");
-        header.put("servertime", System.currentTimeMillis() / 1000);
-        header.put("code", ex.getStatus().value());
-        header.put("message", ex.getMessage());
-        header.put("url", "");
-
-        Map<String, Object> response = new LinkedHashMap<>();
-        response.put("header", header);
-        response.put("body", null);
+        // 迁移到共享信封工具：补 action(uuid) 等 spec required 字段，code 用真实 HTTP 状态码，
+        // body 保持 JSON null，url 维持空串（既有偏差，未在本任务范围内修改）。
+        Map<String, Object> response = ApiResponse.withExplicitAction("error", ex.getMessage(), null,
+                ex.getStatus().value(), ApiResponse.actionFor(""), "");
 
         return ResponseEntity.status(ex.getStatus()).body(response);
     }

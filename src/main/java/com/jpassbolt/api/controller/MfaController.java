@@ -8,6 +8,7 @@ import com.jpassbolt.api.repository.UserRepository;
 import com.jpassbolt.api.service.MfaService;
 import com.jpassbolt.api.service.TotpService;
 import com.jpassbolt.api.service.UserService;
+import com.jpassbolt.api.util.ApiResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpHeaders;
@@ -468,16 +469,8 @@ public class MfaController {
      * Create a Passbolt-style response body.
      */
     private Map<String, Object> createResponse(String status, String message, Object body, String url) {
-        Map<String, Object> response = new LinkedHashMap<>();
-        response.put("header", Map.of(
-                "id", UUID.randomUUID().toString(),
-                "status", status,
-                "servertime", System.currentTimeMillis() / 1000,
-                "code", "success".equals(status) ? 200 : 400,
-                "message", message,
-                "url", url));
-        response.put("body", body != null ? body : new LinkedHashMap<>());
-        return response;
+        // 迁移到共享信封工具：补 action(uuid) 等 spec required 字段，保留原 200/400 code 与 null→{} 语义。
+        return ApiResponse.withCode(status, message, body, "success".equals(status) ? 200 : 400, url);
     }
 
     /**
@@ -488,16 +481,8 @@ public class MfaController {
      * ShareController/UsersController).
      */
     private Map<String, Object> createNullBodyResponse(String status, String message, String url) {
-        Map<String, Object> response = new LinkedHashMap<>();
-        response.put("header", Map.of(
-                "id", UUID.randomUUID().toString(),
-                "status", status,
-                "servertime", System.currentTimeMillis() / 1000,
-                "code", "success".equals(status) ? 200 : 400,
-                "message", message,
-                "url", url));
-        response.put("body", null);
-        return response;
+        // 迁移到共享信封工具：补 action(uuid)，保留 body=null 的有意偏差。
+        return ApiResponse.nullBody(status, message, url);
     }
 
     /**
@@ -507,15 +492,7 @@ public class MfaController {
      * (deliberate local deviation, scoped to this endpoint).
      */
     private Map<String, Object> createErrorResponseWithCode(int code, String message, Object body, String url) {
-        Map<String, Object> response = new LinkedHashMap<>();
-        response.put("header", Map.of(
-                "id", UUID.randomUUID().toString(),
-                "status", "error",
-                "servertime", System.currentTimeMillis() / 1000,
-                "code", code,
-                "message", message,
-                "url", url));
-        response.put("body", body);
-        return response;
+        // 迁移到共享信封工具：补 action(uuid)，显式传入 code（如 403）并透传 body，保留此端点的有意偏差。
+        return ApiResponse.withExplicitAction("error", message, body, code, ApiResponse.actionFor(url), url);
     }
 }
