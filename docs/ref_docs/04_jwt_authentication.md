@@ -63,7 +63,7 @@
 ```yaml
 jpassbolt:
   jwt:
-    secret: REDACTED-LEGACY-HMAC
+    secret: ${JPASSBOLT_LEGACY_HMAC_SECRET}   # 原硬编码值已泄露；HS256 已弃用（仅 healthcheck core.salt），改 env 注入
     expiration: 3600000  # 1 小时 (毫秒)
 ```
 

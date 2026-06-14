@@ -17,7 +17,7 @@ jpassbolt:
   auth:
     register-token-expiry-days: 10
   jwt:
-    secret: REDACTED-LEGACY-HMAC
+    secret: ${JPASSBOLT_LEGACY_HMAC_SECRET:test-only-inert-hmac-not-a-real-secret}   # 仅测试占位；HS256 已非签名用途（仅 healthcheck core.salt）
     expiration: 3600000
     # Tests run with an ephemeral in-memory RS256 pair (no key pair is
     # committed to the repository anymore).

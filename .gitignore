@@ -42,3 +42,8 @@ startup.log
 ### Secrets — never commit key material ###
 src/main/resources/jwt/
 *.key
+*.pem
+.env
+.env.*
+# 注意：dev/test 服务端 GPG 密钥 (src/main/resources/gpg/*.asc) 为有意提交（passphrase 公开，仅 dev/test），
+# 故此处不 blanket 忽略 *.asc；生产 GPG/JWT 私钥务必经 env 注入、绝不入库。

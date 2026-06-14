@@ -11,9 +11,9 @@
 ```yaml
 spring:
   datasource:
-    url: jdbc:mysql://REDACTED-DB-HOST:3307/jpassbolt
-    username: root
-    password: REDACTED-ROTATED-DB-PW
+    url: ${JPASSBOLT_DB_URL}            # 原硬编码远程 MySQL 已泄露并轮换，改 env 注入
+    username: ${JPASSBOLT_DB_USERNAME}
+    password: ${JPASSBOLT_DB_PASSWORD}
     driver-class-name: com.mysql.cj.jdbc.Driver
   jpa:
     hibernate:
@@ -245,7 +245,7 @@ public interface GpgKeyRepository extends JpaRepository<GpgKey, String> {
 
 ```bash
 # 连接数据库
-mysql -h REDACTED-DB-HOST -P 3307 -u root -p'REDACTED-ROTATED-DB-PW' jpassbolt
+mysql -h "$JPASSBOLT_DB_HOST" -P "$JPASSBOLT_DB_PORT" -u "$JPASSBOLT_DB_USERNAME" -p jpassbolt   # 凭据经 env 注入（原硬编码值已泄露并轮换）
 
 # 查看用户及其 GPG 密钥
 SELECT u.id, u.username, g.fingerprint, g.key_id

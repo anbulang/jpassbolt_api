@@ -242,7 +242,7 @@ jpassbolt:
 ```
 
 ### 7.2 数据库配置
-- **远程测试 MySQL**: `REDACTED-DB-HOST:3307/jpassbolt` (user: `root`, pass: `REDACTED-ROTATED-DB-PW`)
+- **远程测试 MySQL**: 连接信息经环境变量 `JPASSBOLT_DB_*` 注入（原硬编码 host/user/pass 曾入 git 历史，已视为泄露并轮换，不再入库）
 - **Schema**: 兼容 Passbolt v3/v4 官方 Schema
 - **H2 测试**: 使用 `V1__Initial_Schema_Data_H2.sql` 初始化
 - `jpa.hibernate.ddl-auto`: **必须为 `validate`**，严禁 `update`/`create`

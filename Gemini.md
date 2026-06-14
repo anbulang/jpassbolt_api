@@ -9,11 +9,8 @@
 ### 数据库 (Database)
 * **类型**: MySQL 8.
 * **环境**: 远程测试数据库
-  * **Host**: `REDACTED-DB-HOST`
-  * **Port**: `3307`
-  * **Database**: `jpassbolt`
-  * **User**: `root`
-  * **Password**: `REDACTED-ROTATED-DB-PW`
+  * **连接信息**: 通过环境变量注入 `JPASSBOLT_DB_URL` / `JPASSBOLT_DB_USERNAME` / `JPASSBOLT_DB_PASSWORD`
+  * ⚠️ 原先此处硬编码的远程 MySQL host/user/password 曾入 git 历史，**须视为已泄露并轮换**，不再写入版本库
 * **Schema**: 兼容 Passbolt v3/v4 官方 Schema
 
 ### 认证 (Authentication)
@@ -21,7 +18,7 @@
   * **Stage 0**: Server Verify (验证服务器公钥)
   * **Stage 1**: Login Challenge (获取加密 Nonce)
   * **Stage 2**: Authenticate (验证解密后的 Nonce)
-* **JWT**: 认证成功后颁发 JWT Token (HS256 签名)
+* **JWT**: 认证成功后颁发 JWT Token (RS256 签名；旧 HS256 已弃用，仅 healthcheck core.salt 保留)
 
 ### 关键路径
 * **API 前缀**: `/api` (例如 `/api/auth/login.json`)
