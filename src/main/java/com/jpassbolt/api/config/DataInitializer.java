@@ -1,27 +1,62 @@
 package com.jpassbolt.api.config;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.jpassbolt.api.dto.MetadataSettingsDto;
 import com.jpassbolt.api.model.AuthenticationToken;
 import com.jpassbolt.api.model.GpgKey;
+import com.jpassbolt.api.model.MetadataKey;
+import com.jpassbolt.api.model.MetadataPrivateKey;
 import com.jpassbolt.api.model.ResourceType;
 import com.jpassbolt.api.model.Role;
 import com.jpassbolt.api.model.User;
 import com.jpassbolt.api.repository.AuthenticationTokenRepository;
 import com.jpassbolt.api.repository.GpgKeyRepository;
+import com.jpassbolt.api.repository.MetadataKeyRepository;
+import com.jpassbolt.api.repository.MetadataPrivateKeyRepository;
 import com.jpassbolt.api.repository.ProfileRepository;
 import com.jpassbolt.api.repository.ResourceTypeRepository;
 import com.jpassbolt.api.repository.RoleRepository;
 import com.jpassbolt.api.repository.UserRepository;
 import com.jpassbolt.api.service.GpgService;
+import com.jpassbolt.api.service.MetadataTypesSettingsService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.context.annotation.Profile;
+import org.springframework.core.io.ResourceLoader;
 import org.springframework.stereotype.Component;
+
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 /**
  * Seed test data into H2 when running with the "local" profile.
- * Creates a test user whose GPG key is the server's own key,
- * allowing login with the server private key and passphrase "password".
+ *
+ * <p>
+ * Two ACTIVE users with DISTINCT real keypairs so cross-user sharing can be
+ * exercised end-to-end in a real browser:
+ * <ul>
+ *   <li><b>ada@passbolt.com</b> (admin) — holds the committed dev SERVER key
+ *       (login with {@code src/main/resources/gpg/server_private.asc} +
+ *       passphrase {@code password});</li>
+ *   <li><b>betty@passbolt.com</b> (user) — holds the canonical Passbolt test
+ *       key (login with the {@code betty_private.key} fixture + passphrase
+ *       {@code betty@passbolt.com}); her public key + true fingerprint are
+ *       seeded so the client's {@code verifyArmoredKeyFingerprint} passes when
+ *       ada shares a secret with her.</li>
+ * </ul>
+ *
+ * <p>
+ * It also seeds a v5 cross-user metadata demo: an active shared metadata key
+ * (the server keypair is reused as the shared metadata key for the demo) with a
+ * per-user encrypted private-key copy for BOTH ada and betty, and flips the
+ * organization metadata-types settings to enable v5 resource creation. With this
+ * in place the (already shipped) frontend transparent layer creates v5 resources
+ * automatically and both users can decrypt the encrypted metadata. The server
+ * stays ZERO-KNOWLEDGE: it only stores the armored blobs; all encryption of the
+ * per-user copies happens via {@link GpgService#encrypt} (Bouncy Castle).
  */
 @Slf4j
 @Component
@@ -36,6 +71,14 @@ public class DataInitializer implements CommandLineRunner {
     private final ProfileRepository profileRepository;
     private final AuthenticationTokenRepository authenticationTokenRepository;
     private final GpgService gpgService;
+    private final MetadataKeyRepository metadataKeyRepository;
+    private final MetadataPrivateKeyRepository metadataPrivateKeyRepository;
+    private final MetadataTypesSettingsService metadataTypesSettingsService;
+    private final ObjectMapper objectMapper;
+    private final ResourceLoader resourceLoader;
+
+    /** Canonical Passbolt test key for betty@passbolt.com (40-hex fingerprint). */
+    private static final String BETTY_FINGERPRINT = "A754860C3ADE5AB04599025ED3F1FE4BE61D7009";
 
     @Override
     public void run(String... args) {
@@ -115,34 +158,55 @@ public class DataInitializer implements CommandLineRunner {
         // lookup return 2 rows ("Query did not return a unique result"), which
         // silently broke browser login. ada@passbolt.com is the single server-key
         // holder (and is an admin), so login is unambiguous. admin@passbolt.com
-        // remains as a keyless directory entry. To exercise multi-user sharing
-        // locally, seed a second user with a DISTINCT real keypair + its true
-        // fingerprint (the client verifies the recipient key against it).
+        // remains as a keyless directory entry.
 
         seedResourceTypes();
 
-        log.info("=== LOCAL TEST DATA SEEDED ===");
-        log.info("Test user: ada@passbolt.com");
-        log.info("Admin user: admin@passbolt.com");
-        log.info("GPG fingerprint: {}", fingerprint);
-        log.info("Login with the SERVER's private key (src/main/resources/gpg/server_private.asc)");
-        log.info("Passphrase: password");
-        log.info("==============================");
+        // Second ACTIVE user with a DISTINCT real keypair (canonical Passbolt
+        // betty test key). Required for cross-user sharing: when ada shares a
+        // secret with betty the client re-encrypts it to betty's public key AND
+        // verifies betty's armored key against this fingerprint, so the seeded
+        // gpgkey MUST be betty's real key with her true fingerprint.
+        User betty = new User();
+        betty.setUsername("betty@passbolt.com");
+        betty.setRoleId(userRole.getId());
+        betty.setActive(true);
+        betty.setDeleted(false);
+        userRepository.save(betty);
 
-        // Pending (not yet activated) user + register token so the /setup
-        // flow can be exercised end-to-end locally.
+        com.jpassbolt.api.model.Profile bettyProfile = new com.jpassbolt.api.model.Profile();
+        bettyProfile.setUserId(betty.getId());
+        bettyProfile.setFirstName("Betty");
+        bettyProfile.setLastName("Holberton");
+        profileRepository.save(bettyProfile);
+
+        String bettyPublicKey = readClasspath("classpath:gpg/betty_public.asc");
+        GpgKey bettyKey = new GpgKey();
+        bettyKey.setUserId(betty.getId());
+        bettyKey.setArmoredKey(bettyPublicKey);
+        bettyKey.setFingerprint(BETTY_FINGERPRINT);
+        bettyKey.setKeyId(BETTY_FINGERPRINT.substring(BETTY_FINGERPRINT.length() - 16));
+        bettyKey.setUid("Betty Holberton <betty@passbolt.com>");
+        bettyKey.setType("RSA");
+        bettyKey.setBits(2048);
+        bettyKey.setDeleted(false);
+        gpgKeyRepository.save(bettyKey);
+
+        // Pending (not yet activated) user + register token so the /setup flow can
+        // still be exercised end-to-end locally (carol is the setup placeholder
+        // now that betty is a real active user).
         User pending = new User();
-        pending.setUsername("betty@passbolt.com");
+        pending.setUsername("carol@passbolt.com");
         pending.setRoleId(userRole.getId());
         pending.setActive(false);
         pending.setDeleted(false);
         userRepository.save(pending);
 
-        com.jpassbolt.api.model.Profile bettyProfile = new com.jpassbolt.api.model.Profile();
-        bettyProfile.setUserId(pending.getId());
-        bettyProfile.setFirstName("Betty");
-        bettyProfile.setLastName("Holberton");
-        profileRepository.save(bettyProfile);
+        com.jpassbolt.api.model.Profile carolProfile = new com.jpassbolt.api.model.Profile();
+        carolProfile.setUserId(pending.getId());
+        carolProfile.setFirstName("Carol");
+        carolProfile.setLastName("Shaw");
+        profileRepository.save(carolProfile);
 
         AuthenticationToken regToken = new AuthenticationToken();
         regToken.setUserId(pending.getId());
@@ -151,7 +215,105 @@ public class DataInitializer implements CommandLineRunner {
         regToken.setActive(true);
         authenticationTokenRepository.save(regToken);
 
+        // v5 cross-user metadata demo (shared metadata key + per-user private
+        // copies for ada & betty, settings flipped to enable v5).
+        seedV5CrossUserDemo(testUser.getId(), betty.getId(), serverPublicKey,
+                fingerprint, bettyPublicKey);
+
+        log.info("=== LOCAL TEST DATA SEEDED ===");
+        log.info("ada@passbolt.com (admin) — login with server_private.asc, passphrase: password");
+        log.info("betty@passbolt.com (user) — login with betty_private.key, passphrase: betty@passbolt.com");
+        log.info("admin@passbolt.com — keyless directory entry");
         log.info("Setup URL: /setup/start/{}/d4c0c497-be4f-47c5-8f50-cb618a4a1d32.json", pending.getId());
+        log.info("v5 metadata: enabled (default_resource_types=v5); shared key seeded for ada + betty");
+        log.info("==============================");
+    }
+
+    /**
+     * Seed the v5 cross-user metadata demo.
+     *
+     * <p>
+     * For demo simplicity the SERVER keypair is reused as the shared metadata
+     * key: its public half becomes {@code metadata_keys.armored_key}; the
+     * cleartext {@code PASSBOLT_METADATA_PRIVATE_KEY} JSON wraps the server
+     * PRIVATE key (passphrase {@code password}). That JSON is encrypted ONCE PER
+     * USER to their own public key (ada == server key, betty == betty's key) via
+     * {@link GpgService#encrypt} and stored in {@code metadata_private_keys.data}.
+     * Both users can therefore recover the shared private key in-browser (two-hop
+     * decrypt) and read/write v5 metadata. The server never decrypts any of it.
+     * </p>
+     */
+    private void seedV5CrossUserDemo(String adaId, String bettyId, String serverPublicKey,
+            String serverFingerprint, String bettyPublicKey) {
+        // 1. Active shared metadata key (reuse the server public key for the demo).
+        MetadataKey metadataKey = new MetadataKey();
+        metadataKey.setFingerprint(serverFingerprint);
+        metadataKey.setArmoredKey(serverPublicKey);
+        metadataKey.setCreatedBy(adaId);
+        metadataKey.setModifiedBy(adaId);
+        metadataKeyRepository.save(metadataKey);
+
+        // 2. Cleartext PASSBOLT_METADATA_PRIVATE_KEY blob (the inner armored_key is
+        //    the SHARED metadata PRIVATE key = the server private key here).
+        String serverPrivateKey = readClasspath("classpath:gpg/server_private.asc");
+        Map<String, Object> cleartext = new LinkedHashMap<>();
+        cleartext.put("object_type", "PASSBOLT_METADATA_PRIVATE_KEY");
+        cleartext.put("domain", "http://localhost:8080");
+        cleartext.put("fingerprint", serverFingerprint);
+        cleartext.put("armored_key", serverPrivateKey);
+        cleartext.put("passphrase", "password");
+        String cleartextJson;
+        try {
+            cleartextJson = objectMapper.writeValueAsString(cleartext);
+        } catch (Exception e) {
+            throw new IllegalStateException("Could not serialize the metadata private key blob", e);
+        }
+
+        // 3. Per-user encrypted copies (zero-knowledge: encrypt to each user's
+        //    public key via Bouncy Castle; the server never keeps the cleartext).
+        saveMetadataPrivateKey(metadataKey.getId(), adaId,
+                gpgService.encrypt(cleartextJson, serverPublicKey), adaId);
+        saveMetadataPrivateKey(metadataKey.getId(), bettyId,
+                gpgService.encrypt(cleartextJson, bettyPublicKey), adaId);
+
+        // 4. Flip the organization metadata-types settings to enable v5 (an active
+        //    metadata key now exists, satisfying the service's v5 precondition).
+        MetadataSettingsDto.TypesSettings v5Settings = MetadataSettingsDto.TypesSettings.builder()
+                .defaultResourceTypes(MetadataTypesSettingsService.V5)
+                .defaultFolderType(MetadataTypesSettingsService.V4)
+                .defaultTagType(MetadataTypesSettingsService.V4)
+                .defaultCommentType(MetadataTypesSettingsService.V4)
+                .allowCreationOfV5Resources(true)
+                .allowCreationOfV5Folders(true)
+                .allowCreationOfV5Tags(false)
+                .allowCreationOfV5Comments(false)
+                .allowCreationOfV4Resources(true)
+                .allowCreationOfV4Folders(true)
+                .allowCreationOfV4Tags(true)
+                .allowCreationOfV4Comments(true)
+                .allowV5V4Downgrade(false)
+                .allowV4V5Upgrade(true)
+                .build();
+        metadataTypesSettingsService.setTypesSettings(v5Settings, adaId);
+    }
+
+    private void saveMetadataPrivateKey(String metadataKeyId, String userId, String data, String createdBy) {
+        MetadataPrivateKey copy = new MetadataPrivateKey();
+        copy.setMetadataKeyId(metadataKeyId);
+        copy.setUserId(userId);
+        copy.setData(data);
+        copy.setCreatedBy(createdBy);
+        copy.setModifiedBy(createdBy);
+        metadataPrivateKeyRepository.save(copy);
+    }
+
+    /** Read a classpath resource (e.g. {@code classpath:gpg/betty_public.asc}) as UTF-8. */
+    private String readClasspath(String location) {
+        try (InputStream in = resourceLoader.getResource(location).getInputStream()) {
+            return new String(in.readAllBytes(), StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            throw new IllegalStateException("Could not read classpath resource: " + location, e);
+        }
     }
 
     /**

@@ -6,6 +6,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.bouncycastle.bcpg.ArmoredOutputStream;
 import org.bouncycastle.bcpg.HashAlgorithmTags;
+import org.bouncycastle.bcpg.sig.KeyFlags;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.bouncycastle.openpgp.*;
 import org.bouncycastle.openpgp.jcajce.JcaPGPObjectFactory;
@@ -323,16 +324,63 @@ public class GpgServiceImpl implements GpgService {
                 PGPUtil.getDecoderStream(keyStream),
                 new JcaKeyFingerprintCalculator());
 
+        // Select the key by its declared USAGE (key-flags), not merely the
+        // algorithm's encryption capability. PGPPublicKey.isEncryptionKey() is
+        // true for ANY encryption-capable ALGORITHM (e.g. a plain RSA primary),
+        // even when that key's self-signature marks it sign/certify-only. Modern
+        // OpenPGP keys — including the ones real Passbolt clients generate — carry
+        // a sign-only primary plus a dedicated encryption SUBKEY. Encrypting to the
+        // primary then yields ciphertext the owner's client refuses to decrypt
+        // ("No decryption key packets found"). Prefer a key whose KeyFlags include
+        // ENCRYPT_COMMS/ENCRYPT_STORAGE; fall back to a subkey over the primary,
+        // then the primary, to stay robust for keys that declare no flags.
+        PGPPublicKey fallbackSubkey = null;
+        PGPPublicKey fallbackMaster = null;
         for (PGPPublicKeyRing keyRing : keyRings) {
             Iterator<PGPPublicKey> keys = keyRing.getPublicKeys();
             while (keys.hasNext()) {
                 PGPPublicKey key = keys.next();
-                if (key.isEncryptionKey()) {
+                if (!key.isEncryptionKey()) {
+                    continue;
+                }
+                if (hasEncryptionKeyFlags(key)) {
                     return key;
+                }
+                if (key.isMasterKey()) {
+                    if (fallbackMaster == null) {
+                        fallbackMaster = key;
+                    }
+                } else if (fallbackSubkey == null) {
+                    fallbackSubkey = key;
                 }
             }
         }
+        if (fallbackSubkey != null) {
+            return fallbackSubkey;
+        }
+        if (fallbackMaster != null) {
+            return fallbackMaster;
+        }
         throw new RuntimeException("No encryption key found in the provided public key");
+    }
+
+    /**
+     * True when any self/binding signature on the key declares encryption usage
+     * (KeyFlags ENCRYPT_COMMS / ENCRYPT_STORAGE). Used to pick the real
+     * encryption (sub)key over an encryption-algorithm-capable but sign-only
+     * primary (the standard modern OpenPGP key layout).
+     */
+    private boolean hasEncryptionKeyFlags(PGPPublicKey key) {
+        Iterator<PGPSignature> sigs = key.getSignatures();
+        while (sigs.hasNext()) {
+            PGPSignature sig = sigs.next();
+            PGPSignatureSubpacketVector hashed = sig.getHashedSubPackets();
+            if (hashed != null
+                    && (hashed.getKeyFlags() & (KeyFlags.ENCRYPT_COMMS | KeyFlags.ENCRYPT_STORAGE)) != 0) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
