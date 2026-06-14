@@ -24,8 +24,9 @@ import java.util.stream.Collectors;
  * compatible with the Passbolt v4 API:
  *
  * <ul>
- *   <li>GET /resource-types.json — active v4 types (deleted IS NULL,
- *       v5 slugs excluded). Any authenticated user, no role check.</li>
+ *   <li>GET /resource-types.json — active types (deleted IS NULL), v4 AND v5
+ *       (matches PHP with passbolt.v5.enabled=true, the default; no slug-version
+ *       filter). Any authenticated user, no role check.</li>
  *   <li>GET /resource-types/{id}.json — single type by id, no deleted/v5
  *       filtering (PHP Table::get() semantics).</li>
  * </ul>
@@ -51,7 +52,8 @@ public class ResourceTypeController {
 
         /**
          * GET /resource-types.json
-         * Returns all active v4 resource types. Any authenticated user.
+         * Returns all active resource types (v4 and v5), excluding only
+         * soft-deleted rows. Any authenticated user.
          */
         @GetMapping({ "/resource-types", "/resource-types.json" })
         public ResponseEntity<Map<String, Object>> index() {

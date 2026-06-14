@@ -7,7 +7,12 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.test.context.support.WithMockUser;
 
+import java.time.LocalDateTime;
+
 import static com.atlassian.oai.validator.mockmvc.OpenApiValidationMatchers.openApi;
+import static org.hamcrest.Matchers.hasItem;
+import static org.hamcrest.Matchers.hasItems;
+import static org.hamcrest.Matchers.not;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -96,6 +101,34 @@ public class ResourceTypeControllerContractTest extends OpenApiComplianceTest {
         // assertion is intentionally disabled rather than the response altered.
         // The view assertion (plain resourceType schema, no `default`) stays on.
         // .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
+    }
+
+    @Test
+    public void testIndexExposesV5Types() throws Exception {
+        // @BeforeEach already seeded the 4 v4 types; add the canonical v5 types
+        // plus one soft-deleted row to assert the new index contract: v5 IS
+        // exposed (PHP passbolt.v5.enabled=true default — no slug-version filter),
+        // while soft-deleted rows stay hidden.
+        createResourceType("v5-default", "Default resource type",
+                "The new default resource type introduced with v5.", "[]");
+        createResourceType("v5-password-string", "Simple Password (Deprecated)",
+                "Kept for backward compatibility reasons.", "[]");
+        ResourceType deleted = createResourceType("legacy-type", "Legacy type",
+                "Soft-deleted, must stay hidden from the index.",
+                PASSWORD_STRING_DEFINITION);
+        deleted.setDeleted(LocalDateTime.now());
+        resourceTypeRepository.save(deleted);
+
+        mockMvc.perform(get("/resource-types.json"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.header.status").value("success"))
+                .andExpect(jsonPath("$.body").isArray())
+                // 4 v4 + 2 v5 = 6 active; the soft-deleted row is excluded.
+                .andExpect(jsonPath("$.body.length()").value(6))
+                .andExpect(jsonPath("$.body[*].slug",
+                        hasItems("v5-default", "v5-password-string",
+                                "password-string", "password-and-description")))
+                .andExpect(jsonPath("$.body[*].slug", not(hasItem("legacy-type"))));
     }
 
     @Test

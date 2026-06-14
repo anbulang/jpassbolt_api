@@ -123,11 +123,13 @@ class ResourceTypeControllerTest {
         }
 
         @Test
-        void testIndexReturnsOnlyActiveV4Types() throws Exception {
+        void testIndexReturnsActiveV4AndV5TypesExcludingDeleted() throws Exception {
                 seedV4Types();
-                // v5 type: must be excluded by slug
+                // v5 type: MUST now appear. The PHP ResourceTypesIndexController with
+                // passbolt.v5.enabled=true (the default) applies NO slug-version filter;
+                // the client gates creation via /metadata/types/settings.
                 createResourceType("v5-default", "Default resource type", "[]", null);
-                // Soft-deleted type: must be excluded by deleted IS NULL
+                // Soft-deleted type: still excluded by deleted IS NULL.
                 createResourceType("legacy-type", "Legacy type", PASSWORD_STRING_DEFINITION,
                                 LocalDateTime.now());
 
@@ -135,15 +137,17 @@ class ResourceTypeControllerTest {
                                 .andExpect(status().isOk())
                                 .andExpect(jsonPath("$.header.status").value("success"))
                                 .andExpect(jsonPath("$.body").isArray())
-                                .andExpect(jsonPath("$.body.length()").value(4))
+                                .andExpect(jsonPath("$.body.length()").value(5))
                                 .andReturn();
 
                 JsonNode body = objectMapper.readTree(result.getResponse().getContentAsString()).get("body");
                 List<String> slugs = new ArrayList<>();
                 body.forEach(node -> slugs.add(node.get("slug").asText()));
                 assertThat(slugs).containsExactlyInAnyOrder(
-                                "password-string", "password-and-description", "totp", "password-description-totp");
-                assertThat(slugs).doesNotContain("v5-default", "legacy-type");
+                                "password-string", "password-and-description", "totp",
+                                "password-description-totp", "v5-default");
+                // Soft-deleted rows are still hidden from the index.
+                assertThat(slugs).doesNotContain("legacy-type");
         }
 
         @Test

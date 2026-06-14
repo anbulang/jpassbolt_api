@@ -4,7 +4,6 @@ import com.jpassbolt.api.model.ResourceType;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
-import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -19,11 +18,14 @@ import java.util.Optional;
 public interface ResourceTypeRepository extends JpaRepository<ResourceType, String> {
 
     /**
-     * Find all active (non soft-deleted) resource types whose slug is not in
-     * the given collection. Used by the index endpoint to apply v4 semantics:
-     * deleted IS NULL AND slug NOT IN (v5 slugs).
+     * Find all active (non soft-deleted) resource types, ordered by slug for a
+     * deterministic response. Used by the index endpoint, which mirrors the PHP
+     * reference with {@code passbolt.v5.enabled=true} (the default): return every
+     * active type (v4 AND v5), excluding only soft-deleted rows. There is no
+     * slug-version filter — the client decides what to offer for creation via
+     * {@code /metadata/types/settings}.
      */
-    List<ResourceType> findByDeletedIsNullAndSlugNotIn(Collection<String> slugs);
+    List<ResourceType> findByDeletedIsNullOrderBySlugAsc();
 
     /**
      * Find a resource type by its unique slug (used by tests and seed data).
