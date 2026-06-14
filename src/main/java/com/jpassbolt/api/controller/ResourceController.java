@@ -220,6 +220,9 @@ public class ResourceController {
                                 .createdBy(resource.getCreatedBy())
                                 .modifiedBy(resource.getModifiedBy())
                                 .resourceTypeId(resource.getResourceTypeId())
+                                .metadata(resource.getMetadata())
+                                .metadataKeyId(resource.getMetadataKeyId())
+                                .metadataKeyType(resource.getMetadataKeyType())
                                 .build();
         }
 

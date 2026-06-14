@@ -25,6 +25,17 @@ public class FolderDto {
 
         @JsonProperty("folder_parent_id")
         private String folderParentId;
+
+        // v5 e2ee metadata shape (transport-only). When present, the create path
+        // stores the encrypted metadata blob verbatim and leaves name null; when
+        // absent the folder follows the v4 plaintext (name) flow.
+        private String metadata;
+
+        @JsonProperty("metadata_key_id")
+        private String metadataKeyId;
+
+        @JsonProperty("metadata_key_type")
+        private String metadataKeyType;
     }
 
     @Data
@@ -33,6 +44,16 @@ public class FolderDto {
     @AllArgsConstructor
     public static class UpdateRequest {
         private String name;
+
+        // v5 e2ee metadata shape (transport-only). When present, the update path
+        // sets the metadata trio and leaves name untouched (v4 vs v5 branch).
+        private String metadata;
+
+        @JsonProperty("metadata_key_id")
+        private String metadataKeyId;
+
+        @JsonProperty("metadata_key_type")
+        private String metadataKeyType;
     }
 
     @Data
@@ -41,7 +62,15 @@ public class FolderDto {
     @AllArgsConstructor
     public static class Response {
         private String id;
+
+        /**
+         * Folder name. NON_NULL so a v5 folder (name stored in the encrypted
+         * metadata blob, column null) omits the key — folderV5IndexAndView does
+         * not require name — while a v4 folder still emits it.
+         */
+        @JsonInclude(JsonInclude.Include.NON_NULL)
         private String name;
+
         private LocalDateTime created;
         private LocalDateTime modified;
 
@@ -50,6 +79,20 @@ public class FolderDto {
 
         @JsonProperty("modified_by")
         private String modifiedBy;
+
+        // v5 e2ee metadata shape (transport-only). NON_NULL keeps v4 responses
+        // byte-for-byte unchanged: these keys only appear when a v5 folder
+        // carries a metadata blob, and are omitted entirely for v4 rows.
+        @JsonInclude(JsonInclude.Include.NON_NULL)
+        private String metadata;
+
+        @JsonInclude(JsonInclude.Include.NON_NULL)
+        @JsonProperty("metadata_key_id")
+        private String metadataKeyId;
+
+        @JsonInclude(JsonInclude.Include.NON_NULL)
+        @JsonProperty("metadata_key_type")
+        private String metadataKeyType;
 
         /**
          * Parent folder in the CURRENT user's tree (folders_relations), null =

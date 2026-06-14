@@ -51,4 +51,15 @@ public interface MetadataKeyRepository extends JpaRepository<MetadataKey, String
     boolean existsByFingerprint(String fingerprint);
 
     Optional<MetadataKey> findByFingerprint(String fingerprint);
+
+    /**
+     * Active shared metadata key existence check (active = {@code deleted IS NULL
+     * AND expired IS NULL}). Used for the {@code IsValidEncryptedMetadata}
+     * shared-key resolution and the {@code MetadataKeyIdNotExpiredRule} shared
+     * branch (PHP: {@code MetadataKeys.exists({id, expired IS NULL})}; the
+     * additional {@code deleted IS NULL} keeps a soft-deleted shared key from
+     * being treated as usable). Sole caller is {@code MetadataValidationSupport}
+     * (foundation). Additive derived query — no schema impact.
+     */
+    boolean existsByIdAndDeletedIsNullAndExpiredIsNull(String id);
 }

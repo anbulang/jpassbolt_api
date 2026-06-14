@@ -39,4 +39,13 @@ public interface GpgKeyRepository extends JpaRepository<GpgKey, String> {
      * the PHP findIndex "modified > X" semantics for filter[modified-after].
      */
     List<GpgKey> findByDeletedAndModifiedAfter(boolean deleted, LocalDateTime modifiedAfter);
+
+    /**
+     * v5 metadata-key expiry rule (PHP {@code MetadataKeyIdNotExpiredRule},
+     * {@code user_key} branch): a personal GPG key is usable as a metadata key
+     * only while it has NOT expired, i.e. {@code Gpgkeys.expires IS NULL}.
+     * Sole caller is {@code MetadataValidationSupport} (foundation). Additive
+     * Spring Data derived query — no schema impact.
+     */
+    boolean existsByIdAndExpiresIsNull(String id);
 }

@@ -4,11 +4,15 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jpassbolt.api.dto.FolderDto;
 import com.jpassbolt.api.model.Folder;
 import com.jpassbolt.api.model.FoldersRelation;
+import com.jpassbolt.api.model.MetadataKey;
+import com.jpassbolt.api.model.OrganizationSetting;
 import com.jpassbolt.api.model.Permission;
 import com.jpassbolt.api.model.Resource;
 import com.jpassbolt.api.model.User;
 import com.jpassbolt.api.repository.FolderRepository;
 import com.jpassbolt.api.repository.FoldersRelationRepository;
+import com.jpassbolt.api.repository.MetadataKeyRepository;
+import com.jpassbolt.api.repository.OrganizationSettingRepository;
 import com.jpassbolt.api.repository.PermissionRepository;
 import com.jpassbolt.api.repository.ResourceRepository;
 import com.jpassbolt.api.repository.UserRepository;
@@ -57,13 +61,24 @@ class FolderControllerTest {
         private UserRepository userRepository;
 
         @Autowired
+        private MetadataKeyRepository metadataKeyRepository;
+
+        @Autowired
+        private OrganizationSettingRepository organizationSettingRepository;
+
+        @Autowired
         private ObjectMapper objectMapper;
 
         private User testUser;
         private User otherUser;
 
+        /** Single-line placeholder accepted by the lenient parse-only validator. */
+        private static final String ARMORED = "-----BEGIN PGP MESSAGE-----";
+
         @BeforeEach
         void setUp() {
+                organizationSettingRepository.deleteAll();
+                metadataKeyRepository.deleteAll();
                 foldersRelationRepository.deleteAll();
                 permissionRepository.deleteAll();
                 folderRepository.deleteAll();
@@ -448,5 +463,339 @@ class FolderControllerTest {
                 mockMvc.perform(delete("/folders/" + UUID.randomUUID() + ".json"))
                                 .andExpect(status().isNotFound())
                                 .andExpect(jsonPath("$.header.status").value("error"));
+        }
+
+        // =================================================================
+        // v4 <-> v5 metadata fusion (FolderService.createFolder /
+        // updateFolder branch on request.getMetadata() != null).
+        //
+        // v5 path: the encrypted metadata blob is stored VERBATIM
+        // (zero-knowledge — never decrypted), the metadata trio persists, the
+        // v4 plaintext name column is left NULL, and the OWNER permission +
+        // tree relation are written as usual. The response carries the
+        // metadata trio + folder_parent_id + personal and OMITS name
+        // (NON_NULL). The folder gate / structural checks all surface as 400.
+        // =================================================================
+
+        @Test
+        void testCreateFolder_V5_StoresMetadataVerbatim_NameNull() throws Exception {
+                enableV5FolderCreation();
+                MetadataKey key = seedActiveSharedKey();
+
+                FolderDto.CreateRequest request = FolderDto.CreateRequest.builder()
+                                .metadata(ARMORED)
+                                .metadataKeyId(key.getId())
+                                .metadataKeyType("shared_key")
+                                .build();
+
+                mockMvc.perform(post("/folders.json")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsString(request)))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.header.status").value("success"))
+                                .andExpect(jsonPath("$.body.metadata").value(ARMORED))
+                                .andExpect(jsonPath("$.body.metadata_key_id").value(key.getId()))
+                                .andExpect(jsonPath("$.body.metadata_key_type").value("shared_key"))
+                                .andExpect(jsonPath("$.body.folder_parent_id").value(Matchers.nullValue()))
+                                .andExpect(jsonPath("$.body.personal").value(true))
+                                // v5 folder omits name (NON_NULL).
+                                .andExpect(jsonPath("$.body.name").doesNotExist());
+
+                List<Folder> folders = folderRepository.findAll();
+                assertThat(folders).hasSize(1);
+                Folder stored = folders.get(0);
+                assertThat(stored.getMetadata()).isEqualTo(ARMORED);
+                assertThat(stored.getMetadataKeyId()).isEqualTo(key.getId());
+                assertThat(stored.getMetadataKeyType()).isEqualTo("shared_key");
+                assertThat(stored.getName()).isNull();
+
+                // OWNER permission + tree relation still written in the v5 branch.
+                List<Permission> perms = permissionRepository
+                                .findByAcoAndAcoForeignKey(FolderService.FOLDER_ACO, stored.getId());
+                assertThat(perms).hasSize(1);
+                assertThat(perms.get(0).getType()).isEqualTo(Permission.OWNER);
+                FoldersRelation rel = foldersRelationRepository
+                                .findByUserIdAndForeignId(testUser.getId(), stored.getId()).orElseThrow();
+                assertThat(rel.getFolderParentId()).isNull();
+        }
+
+        @Test
+        void testCreateFolder_V5_WithParent_HonorsTree() throws Exception {
+                enableV5FolderCreation();
+                MetadataKey key = seedActiveSharedKey();
+                Folder parent = createFolderFor("Parent", testUser, null, Permission.OWNER);
+
+                FolderDto.CreateRequest request = FolderDto.CreateRequest.builder()
+                                .metadata(ARMORED)
+                                .metadataKeyId(key.getId())
+                                .metadataKeyType("shared_key")
+                                .folderParentId(parent.getId())
+                                .build();
+
+                mockMvc.perform(post("/folders.json")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsString(request)))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.body.metadata").value(ARMORED))
+                                .andExpect(jsonPath("$.body.folder_parent_id").value(parent.getId()));
+        }
+
+        @Test
+        void testUpdateFolder_V5_SetsMetadataTrio() throws Exception {
+                enableV5FolderCreation();
+                MetadataKey key = seedActiveSharedKey();
+                Folder folder = createFolderFor("v4 name", testUser, null, Permission.UPDATE);
+
+                FolderDto.UpdateRequest request = FolderDto.UpdateRequest.builder()
+                                .metadata(ARMORED)
+                                .metadataKeyId(key.getId())
+                                .metadataKeyType("shared_key")
+                                .build();
+
+                mockMvc.perform(put("/folders/" + folder.getId() + ".json")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsString(request)))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.body.metadata").value(ARMORED))
+                                .andExpect(jsonPath("$.body.metadata_key_id").value(key.getId()))
+                                .andExpect(jsonPath("$.body.metadata_key_type").value("shared_key"));
+
+                Folder stored = folderRepository.findById(folder.getId()).orElseThrow();
+                assertThat(stored.getMetadata()).isEqualTo(ARMORED);
+                assertThat(stored.getMetadataKeyId()).isEqualTo(key.getId());
+                assertThat(stored.getMetadataKeyType()).isEqualTo("shared_key");
+                // The stale v4 plaintext name MUST be cleared on the v5 upgrade
+                // (PHP FoldersUpdateService::patchEntity nulls it server-side) —
+                // otherwise the row leaks the old plaintext name alongside the blob.
+                assertThat(stored.getName()).isNull();
+        }
+
+        @Test
+        void testUpdateFolder_MixedPayload_BadRequest() throws Exception {
+                enableV5FolderCreation();
+                MetadataKey key = seedActiveSharedKey();
+                Folder folder = createFolderFor("v4 name", testUser, null, Permission.UPDATE);
+
+                FolderDto.UpdateRequest request = FolderDto.UpdateRequest.builder()
+                                .name("v4 name not allowed with v5")
+                                .metadata(ARMORED)
+                                .metadataKeyId(key.getId())
+                                .metadataKeyType("shared_key")
+                                .build();
+
+                mockMvc.perform(put("/folders/" + folder.getId() + ".json")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsString(request)))
+                                .andExpect(status().isBadRequest())
+                                .andExpect(jsonPath("$.header.status").value("error"))
+                                .andExpect(jsonPath("$.header.message")
+                                                .value(Matchers.containsString(
+                                                                "V4 related fields are not supported for V5")));
+
+                // Rejected: the v4 row is untouched (no partial/corrupt write).
+                Folder stored = folderRepository.findById(folder.getId()).orElseThrow();
+                assertThat(stored.getName()).isEqualTo("v4 name");
+                assertThat(stored.getMetadata()).isNull();
+        }
+
+        @Test
+        void testGetFolder_V5_EmitsMetadataTrio_OmitsName() throws Exception {
+                MetadataKey key = seedActiveSharedKey();
+                Folder folder = createV5FolderFor(testUser, key.getId());
+
+                mockMvc.perform(get("/folders/" + folder.getId() + ".json"))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.body.metadata").value(ARMORED))
+                                .andExpect(jsonPath("$.body.metadata_key_id").value(key.getId()))
+                                .andExpect(jsonPath("$.body.metadata_key_type").value("shared_key"))
+                                .andExpect(jsonPath("$.body.name").doesNotExist())
+                                .andExpect(jsonPath("$.body.personal").value(true));
+        }
+
+        @Test
+        void testCreateFolder_MixedPayload_BadRequest() throws Exception {
+                enableV5FolderCreation();
+                MetadataKey key = seedActiveSharedKey();
+
+                FolderDto.CreateRequest request = FolderDto.CreateRequest.builder()
+                                .name("v4 name not allowed with v5")
+                                .metadata(ARMORED)
+                                .metadataKeyId(key.getId())
+                                .metadataKeyType("shared_key")
+                                .build();
+
+                mockMvc.perform(post("/folders.json")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsString(request)))
+                                .andExpect(status().isBadRequest())
+                                .andExpect(jsonPath("$.header.status").value("error"))
+                                .andExpect(jsonPath("$.header.message")
+                                                .value(Matchers.containsString(
+                                                                "V4 related fields are not supported for V5")));
+
+                assertThat(folderRepository.findAll()).isEmpty();
+        }
+
+        @Test
+        void testCreateFolder_PartialV5_BadRequest() throws Exception {
+                enableV5FolderCreation();
+                // metadata + metadata_key_id but NO metadata_key_type -> partial-v5.
+                MetadataKey key = seedActiveSharedKey();
+
+                FolderDto.CreateRequest request = FolderDto.CreateRequest.builder()
+                                .metadata(ARMORED)
+                                .metadataKeyId(key.getId())
+                                .build();
+
+                mockMvc.perform(post("/folders.json")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsString(request)))
+                                .andExpect(status().isBadRequest())
+                                .andExpect(jsonPath("$.header.status").value("error"))
+                                .andExpect(jsonPath("$.header.message")
+                                                .value(Matchers.containsString("Few fields are missing for the V5")));
+
+                assertThat(folderRepository.findAll()).isEmpty();
+        }
+
+        @Test
+        void testCreateFolder_PartialAndMixedV5_ReportsMissingFieldsFirst() throws Exception {
+                enableV5FolderCreation();
+                // Simultaneously PARTIAL (no metadata_key_type) AND MIXED (a v4 name).
+                // PHP MetadataFolderDto::validate checks partial-v5 BEFORE the
+                // superfluous-v4 (mixed) check, so the missing-fields message wins.
+                MetadataKey key = seedActiveSharedKey();
+
+                FolderDto.CreateRequest request = FolderDto.CreateRequest.builder()
+                                .name("v4 name present")
+                                .metadata(ARMORED)
+                                .metadataKeyId(key.getId())
+                                .build();
+
+                mockMvc.perform(post("/folders.json")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsString(request)))
+                                .andExpect(status().isBadRequest())
+                                .andExpect(jsonPath("$.header.status").value("error"))
+                                .andExpect(jsonPath("$.header.message")
+                                                .value(Matchers.containsString("Few fields are missing for the V5")));
+
+                assertThat(folderRepository.findAll()).isEmpty();
+        }
+
+        @Test
+        void testCreateFolder_V5_MalformedMetadataBlob_BadRequest() throws Exception {
+                enableV5FolderCreation();
+                MetadataKey key = seedActiveSharedKey();
+
+                FolderDto.CreateRequest request = FolderDto.CreateRequest.builder()
+                                .metadata("not an armored pgp message")
+                                .metadataKeyId(key.getId())
+                                .metadataKeyType("shared_key")
+                                .build();
+
+                mockMvc.perform(post("/folders.json")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsString(request)))
+                                .andExpect(status().isBadRequest())
+                                .andExpect(jsonPath("$.header.status").value("error"));
+
+                assertThat(folderRepository.findAll()).isEmpty();
+        }
+
+        @Test
+        void testCreateFolder_V5_BadMetadataKeyType_BadRequest() throws Exception {
+                enableV5FolderCreation();
+                MetadataKey key = seedActiveSharedKey();
+
+                FolderDto.CreateRequest request = FolderDto.CreateRequest.builder()
+                                .metadata(ARMORED)
+                                .metadataKeyId(key.getId())
+                                .metadataKeyType("bogus_type")
+                                .build();
+
+                mockMvc.perform(post("/folders.json")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsString(request)))
+                                .andExpect(status().isBadRequest())
+                                .andExpect(jsonPath("$.header.status").value("error"));
+
+                assertThat(folderRepository.findAll()).isEmpty();
+        }
+
+        @Test
+        void testCreateFolder_V5_DisabledBySettings_BadRequest() throws Exception {
+                // No metadataTypes row -> allow_creation_of_v5_folders defaults to
+                // false. The folder service throws PassboltApiException(BAD_REQUEST);
+                // FolderController does not wrap, so the global handler surfaces 400.
+                MetadataKey key = seedActiveSharedKey();
+
+                FolderDto.CreateRequest request = FolderDto.CreateRequest.builder()
+                                .metadata(ARMORED)
+                                .metadataKeyId(key.getId())
+                                .metadataKeyType("shared_key")
+                                .build();
+
+                mockMvc.perform(post("/folders.json")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsString(request)))
+                                .andExpect(status().isBadRequest())
+                                .andExpect(jsonPath("$.header.status").value("error"))
+                                .andExpect(jsonPath("$.header.message")
+                                                .value(Matchers.containsString("prevent from creating a V5 folder")));
+
+                assertThat(folderRepository.findAll()).isEmpty();
+        }
+
+        // ----------------------------------------------------------------
+        // v5 helpers
+        // ----------------------------------------------------------------
+
+        /** Seed the metadataTypes org-setting flipping v5 folder creation ON. */
+        private void enableV5FolderCreation() {
+                OrganizationSetting setting = new OrganizationSetting();
+                setting.setProperty("metadataTypes");
+                setting.setPropertyId(UUID.randomUUID().toString());
+                setting.setValue("{\"allow_creation_of_v5_folders\":true}");
+                setting.setCreatedBy(testUser.getId());
+                setting.setModifiedBy(testUser.getId());
+                organizationSettingRepository.save(setting);
+        }
+
+        private MetadataKey seedActiveSharedKey() {
+                MetadataKey key = new MetadataKey();
+                key.setFingerprint(randomFingerprint());
+                key.setArmoredKey("-----BEGIN PGP PUBLIC KEY BLOCK-----");
+                key.setCreatedBy(testUser.getId());
+                key.setModifiedBy(testUser.getId());
+                return metadataKeyRepository.save(key);
+        }
+
+        /** A persisted v5 folder (metadata trio, name null) + OWNER perm + tree row. */
+        private Folder createV5FolderFor(User user, String metadataKeyId) {
+                Folder folder = new Folder();
+                folder.setMetadata(ARMORED);
+                folder.setMetadataKeyId(metadataKeyId);
+                folder.setMetadataKeyType("shared_key");
+                folder.setCreatedBy(user.getId());
+                folder.setModifiedBy(user.getId());
+                folderRepository.save(folder);
+
+                Permission perm = new Permission();
+                perm.setAco(FolderService.FOLDER_ACO);
+                perm.setAcoForeignKey(folder.getId());
+                perm.setAro(Permission.USER_ARO);
+                perm.setAroForeignKey(user.getId());
+                perm.setType(Permission.OWNER);
+                permissionRepository.save(perm);
+
+                addRelation(FoldersRelation.FOREIGN_MODEL_FOLDER, folder.getId(), user.getId(), null);
+                return folder;
+        }
+
+        /** 40-hex-char fingerprint (column is varchar(51) unique). */
+        private String randomFingerprint() {
+                return (UUID.randomUUID().toString() + UUID.randomUUID().toString())
+                                .replace("-", "").substring(0, 40).toUpperCase();
         }
 }

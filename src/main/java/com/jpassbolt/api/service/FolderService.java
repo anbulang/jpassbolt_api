@@ -39,10 +39,19 @@ public class FolderService {
     /** Max folder name length (folders.name varchar(256)). */
     private static final int NAME_MAX_LENGTH = 256;
 
+    /** Item-specific 400 message for an undecryptable folder metadata blob (PHP verbatim, note "cannot"). */
+    private static final String FOLDER_METADATA_UNDECRYPTABLE = "The folder metadata provided cannot be decrypted.";
+
+    /** Item-specific 400 message for a personal (user_key) folder that is shared (PHP verbatim). */
+    private static final String FOLDER_PERSONAL_SHARED =
+            "A folder of type personal cannot be shared with other users or a group.";
+
     private final FolderRepository folderRepository;
     private final FoldersRelationRepository foldersRelationRepository;
     private final PermissionRepository permissionRepository;
     private final ResourceService resourceService;
+    private final MetadataValidationSupport metadataValidationSupport;
+    private final MetadataTypesSettingsService metadataTypesSettingsService;
 
     /**
      * Get all folders the user has at least READ access to (aco = "Folder"),
@@ -129,15 +138,27 @@ public class FolderService {
      */
     @Transactional
     public Folder createFolder(FolderDto.CreateRequest request, String userId) {
-        validateName(request.getName());
+        boolean isV5 = request.getMetadata() != null;
+
+        Folder folder = new Folder();
+        if (isV5) {
+            // v5 metadata path. Mixed-payload + partial-v5 + settings gate + the
+            // parse-only/key-type/expiry/settings asserts ported from PHP. The
+            // metadata blob is stored VERBATIM (zero-knowledge, never decrypted)
+            // and the v4 plaintext name column is left null.
+            applyV5Metadata(request.getName(), request.getMetadata(),
+                    request.getMetadataKeyId(), request.getMetadataKeyType(), folder, true);
+        } else {
+            // v4 plaintext path — UNCHANGED.
+            validateName(request.getName());
+            folder.setName(request.getName());
+        }
 
         String folderParentId = request.getFolderParentId();
         if (folderParentId != null) {
             validateParentFolder(folderParentId, userId);
         }
 
-        Folder folder = new Folder();
-        folder.setName(request.getName());
         folder.setCreatedBy(userId);
         folder.setModifiedBy(userId);
         Folder saved = folderRepository.save(folder);
@@ -182,10 +203,69 @@ public class FolderService {
         Folder folder = folderRepository.findById(id)
                 .orElseThrow(() -> new PassboltApiException(HttpStatus.NOT_FOUND, "The folder does not exist."));
 
-        validateName(request.getName());
-        folder.setName(request.getName());
+        if (request.getMetadata() != null) {
+            // v5 metadata path. Same structural/parse/key asserts as create, plus
+            // the update-only IsMetadataKeyTypeSharedOnSharedItemRule (a personal
+            // user_key folder may not already be shared). Settings creation-gate
+            // is NOT applied on update (PHP only gates creation).
+            applyV5Metadata(request.getName(), request.getMetadata(),
+                    request.getMetadataKeyId(), request.getMetadataKeyType(), folder, false);
+            metadataValidationSupport.assertKeyTypeSharedOnSharedItem(
+                    request.getMetadataKeyType(), id, FOLDER_PERSONAL_SHARED);
+        } else {
+            // v4 plaintext path — UNCHANGED.
+            validateName(request.getName());
+            folder.setName(request.getName());
+        }
         folder.setModifiedBy(userId);
         return folderRepository.save(folder);
+    }
+
+    /**
+     * Apply the v5 metadata trio to a folder (create + update share this).
+     *
+     * <p>
+     * Structural rules ported from PHP {@code MetadataFolderDto::validate} /
+     * {@code FoldersTable::validationV5}: a v5 payload may not also carry the v4
+     * {@code name} (mixed payload) and must carry all three metadata fields
+     * (partial-v5). On create only, creation is gated by the
+     * {@code metadataTypes} org setting ({@code allow_creation_of_v5_folders});
+     * modeled as 400 for cross-endpoint consistency. Update is NOT
+     * creation-gated (PHP only gates creation). The blob itself is validated
+     * PARSE-ONLY (zero-knowledge, never decrypted) and stored verbatim —
+     * {@code name} stays null.
+     * </p>
+     *
+     * @param applyCreationGate {@code true} on create (apply the v5-folder
+     *                          creation settings gate), {@code false} on update
+     */
+    private void applyV5Metadata(String name, String metadata, String metadataKeyId,
+            String metadataKeyType, Folder folder, boolean applyCreationGate) {
+        // Structural guards in PHP order (MetadataFolderDto::validate):
+        // (1) partial-v5 (all three v5 fields required) BEFORE (2) mixed-payload
+        // (no v4 fields). Shared with ResourceService for identical rules/order;
+        // folders only have the v4 name field (username/uri/description = null).
+        metadataValidationSupport.assertV5FieldsComplete(metadata, metadataKeyId, metadataKeyType);
+        metadataValidationSupport.assertNoV4Fields(name, null, null, null);
+        // Settings creation-gate (allow_creation_of_v5_folders) — create only.
+        // Update is NOT creation-gated (PHP only gates creation).
+        if (applyCreationGate && !metadataTypesSettingsService.isV5FolderCreationAllowed()) {
+            throw new PassboltApiException(HttpStatus.BAD_REQUEST,
+                    "The settings selected by your administrator prevent from creating a V5 folder.");
+        }
+        metadataValidationSupport.assertParsableMetadataMessage(metadata, FOLDER_METADATA_UNDECRYPTABLE);
+        metadataValidationSupport.assertMetadataKeyType(metadataKeyType);
+        metadataValidationSupport.assertMetadataKeyTypeAllowedBySettings(metadataKeyType);
+        metadataValidationSupport.assertMetadataKeyIdNotExpired(metadataKeyType, metadataKeyId);
+
+        folder.setMetadata(metadata);
+        folder.setMetadataKeyId(metadataKeyId);
+        folder.setMetadataKeyType(metadataKeyType);
+        // v5: clear the v4 plaintext name column. On create it is already null;
+        // on update of a v4 row this nulls the stale plaintext name, matching PHP
+        // FoldersUpdateService::patchEntity ($data['name'] = null). Without this a
+        // v5 update would leave a mixed/corrupt row leaking the old plaintext name.
+        folder.setName(null);
     }
 
     /**

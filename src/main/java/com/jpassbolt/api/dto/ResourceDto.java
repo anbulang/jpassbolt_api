@@ -1,5 +1,6 @@
 package com.jpassbolt.api.dto;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -28,6 +29,17 @@ public class ResourceDto {
         @JsonProperty("folder_parent_id")
         private String folderParentId;
 
+        // v5 e2ee metadata shape (transport-only). When present, the create path
+        // persists this trio + resource_type_id and leaves the v4 plaintext
+        // columns (name/username/uri/description) null.
+        private String metadata;
+
+        @JsonProperty("metadata_key_id")
+        private String metadataKeyId;
+
+        @JsonProperty("metadata_key_type")
+        private String metadataKeyType;
+
         // The encrypted secret data (PGP armored)
         private List<SecretData> secrets;
 
@@ -55,6 +67,17 @@ public class ResourceDto {
         @JsonProperty("resource_type_id")
         private String resourceTypeId;
 
+        // v5 e2ee metadata shape (transport-only). When present, the update path
+        // persists this trio + resource_type_id and leaves the v4 plaintext
+        // columns untouched.
+        private String metadata;
+
+        @JsonProperty("metadata_key_id")
+        private String metadataKeyId;
+
+        @JsonProperty("metadata_key_type")
+        private String metadataKeyType;
+
         private List<CreateRequest.SecretData> secrets;
     }
 
@@ -81,6 +104,20 @@ public class ResourceDto {
 
         @JsonProperty("resource_type_id")
         private String resourceTypeId;
+
+        // v5 e2ee metadata shape (transport-only). NON_NULL keeps v4 responses
+        // byte-for-byte unchanged: these keys only appear when a v5 row carries
+        // a metadata blob, and are omitted entirely for v4 rows.
+        @JsonInclude(JsonInclude.Include.NON_NULL)
+        private String metadata;
+
+        @JsonInclude(JsonInclude.Include.NON_NULL)
+        @JsonProperty("metadata_key_id")
+        private String metadataKeyId;
+
+        @JsonInclude(JsonInclude.Include.NON_NULL)
+        @JsonProperty("metadata_key_type")
+        private String metadataKeyType;
 
         // Optionally include secrets in response
         private List<SecretResponse> secrets;

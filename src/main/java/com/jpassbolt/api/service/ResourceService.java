@@ -32,6 +32,16 @@ public class ResourceService {
     private final PermissionRepository permissionRepository;
     private final FavoriteRepository favoriteRepository;
     private final FoldersRelationRepository foldersRelationRepository;
+    private final MetadataValidationSupport metadataValidationSupport;
+    private final MetadataTypesSettingsService metadataTypesSettingsService;
+
+    /** PHP v5 resource undecryptable-metadata message (note: "can not"). */
+    private static final String RESOURCE_METADATA_NOT_DECRYPTABLE =
+            "The resource metadata provided can not be decrypted.";
+
+    /** PHP v5 personal-resource-shared message. */
+    private static final String RESOURCE_PERSONAL_SHARED =
+            "A resource of type personal cannot be shared with other users or a group.";
 
     /**
      * Get all non-deleted resources that the user has at least READ access to.
@@ -84,11 +94,21 @@ public class ResourceService {
     @Transactional
     public Resource createResource(ResourceDto.CreateRequest request, String userId) {
         Resource resource = new Resource();
-        resource.setName(request.getName());
-        resource.setUsername(request.getUsername());
-        resource.setUri(request.getUri());
-        resource.setDescription(request.getDescription());
-        resource.setResourceTypeId(request.getResourceTypeId());
+        if (request.getMetadata() != null) {
+            // v5 metadata shape: validate (parse-only) + settings/key-type rules,
+            // persist the metadata trio + resource_type_id, leave the v4 plaintext
+            // columns (name/username/uri/description) null. Mirrors the PHP fusion:
+            // the IsMetadataKeyTypeSharedOnSharedItemRule is an UPDATE-only rule
+            // (the item has no permissions yet at create), so it is NOT run here.
+            applyV5MetadataOnCreate(resource, request);
+        } else {
+            // v4 plaintext shape — EXACT existing behaviour, byte-for-byte.
+            resource.setName(request.getName());
+            resource.setUsername(request.getUsername());
+            resource.setUri(request.getUri());
+            resource.setDescription(request.getDescription());
+            resource.setResourceTypeId(request.getResourceTypeId());
+        }
         resource.setCreatedBy(userId);
         resource.setModifiedBy(userId);
         resource.setDeleted(false);
@@ -130,6 +150,78 @@ public class ResourceService {
     }
 
     /**
+     * v5 CREATE path: settings gate + parse-only metadata validation + key-type
+     * rules, then persist the metadata trio + resource_type_id. Leaves the v4
+     * plaintext columns null. Does NOT run the shared-on-shared rule (update-only
+     * in PHP). All failures surface as 400 (controller wraps them as 400 too).
+     */
+    private void applyV5MetadataOnCreate(Resource resource, ResourceDto.CreateRequest request) {
+        // Structural guards in PHP order (MetadataResourceDto::validateRequestPayload):
+        // (1) partial-v5 (all three v5 fields required) BEFORE (2) mixed-payload
+        // (no v4 fields). Both live in the shared MetadataValidationSupport so
+        // ResourceService and FolderService enforce identical rules/messages/order.
+        metadataValidationSupport.assertV5FieldsComplete(
+                request.getMetadata(), request.getMetadataKeyId(), request.getMetadataKeyType());
+        metadataValidationSupport.assertNoV4Fields(request.getName(), request.getUsername(),
+                request.getUri(), request.getDescription());
+        if (!metadataTypesSettingsService.isV5ResourceCreationAllowed()) {
+            throw new com.jpassbolt.api.exception.PassboltApiException(
+                    org.springframework.http.HttpStatus.BAD_REQUEST,
+                    "The settings selected by your administrator prevent from creating a V5 resource.");
+        }
+        metadataValidationSupport.assertParsableMetadataMessage(
+                request.getMetadata(), RESOURCE_METADATA_NOT_DECRYPTABLE);
+        metadataValidationSupport.assertMetadataKeyType(request.getMetadataKeyType());
+        metadataValidationSupport.assertMetadataKeyTypeAllowedBySettings(request.getMetadataKeyType());
+        metadataValidationSupport.assertMetadataKeyIdNotExpired(
+                request.getMetadataKeyType(), request.getMetadataKeyId());
+
+        resource.setMetadata(request.getMetadata());
+        resource.setMetadataKeyId(request.getMetadataKeyId());
+        resource.setMetadataKeyType(request.getMetadataKeyType());
+        resource.setResourceTypeId(request.getResourceTypeId());
+        // name/username/uri/description intentionally left null (v5).
+    }
+
+    /**
+     * v5 UPDATE path: parse-only metadata validation + key-type rules + the
+     * shared-on-shared rule against the EXISTING permissions of {@code id}, then
+     * persist the metadata trio + resource_type_id. Update is NOT creation-gated
+     * (PHP gates creation only). All failures surface as 400.
+     */
+    private void applyV5MetadataOnUpdate(Resource resource, ResourceDto.UpdateRequest request, String id) {
+        // Structural guards in PHP order (MetadataResourceDto::validateRequestPayload):
+        // (1) partial-v5 (all three v5 fields required) BEFORE (2) mixed-payload
+        // (no v4 fields). Shared with FolderService for identical rules/order.
+        metadataValidationSupport.assertV5FieldsComplete(
+                request.getMetadata(), request.getMetadataKeyId(), request.getMetadataKeyType());
+        metadataValidationSupport.assertNoV4Fields(request.getName(), request.getUsername(),
+                request.getUri(), request.getDescription());
+        metadataValidationSupport.assertParsableMetadataMessage(
+                request.getMetadata(), RESOURCE_METADATA_NOT_DECRYPTABLE);
+        metadataValidationSupport.assertMetadataKeyType(request.getMetadataKeyType());
+        metadataValidationSupport.assertMetadataKeyTypeAllowedBySettings(request.getMetadataKeyType());
+        metadataValidationSupport.assertMetadataKeyIdNotExpired(
+                request.getMetadataKeyType(), request.getMetadataKeyId());
+        metadataValidationSupport.assertKeyTypeSharedOnSharedItem(
+                request.getMetadataKeyType(), id, RESOURCE_PERSONAL_SHARED);
+
+        resource.setMetadata(request.getMetadata());
+        resource.setMetadataKeyId(request.getMetadataKeyId());
+        resource.setMetadataKeyType(request.getMetadataKeyType());
+        if (request.getResourceTypeId() != null) {
+            resource.setResourceTypeId(request.getResourceTypeId());
+        }
+        // Clear the stale v4 plaintext columns when upgrading a v4 row to v5
+        // (PHP ResourcesUpdateService::patchEntity: name/username/uri/description = null).
+        // Prevents a mixed/corrupt row that leaks plaintext alongside the blob.
+        resource.setName(null);
+        resource.setUsername(null);
+        resource.setUri(null);
+        resource.setDescription(null);
+    }
+
+    /**
      * Update an existing resource.
      *
      * @param id      the resource ID
@@ -156,6 +248,14 @@ public class ResourceService {
                     }
                     if (request.getResourceTypeId() != null) {
                         resource.setResourceTypeId(request.getResourceTypeId());
+                    }
+                    if (request.getMetadata() != null) {
+                        // v5 metadata update: validate (parse-only) + key-type rules,
+                        // enforce the shared-on-shared rule against the existing
+                        // permissions, then persist the metadata trio + resource_type_id.
+                        // The v4 conditional setters above are no-ops when those fields
+                        // are absent, so a pure-v5 request never touches them.
+                        applyV5MetadataOnUpdate(resource, request, id);
                     }
                     resource.setModifiedBy(userId);
 
