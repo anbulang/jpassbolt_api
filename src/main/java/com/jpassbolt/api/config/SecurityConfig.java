@@ -51,6 +51,12 @@ public class SecurityConfig {
                                                                 "/settings", "/settings.json",
                                                                 "/avatars/view/**",
                                                                 "/setup/**",
+                                                                // Guest-only account-recovery request
+                                                                // (POST /users/recover.json). The
+                                                                // /setup/recover/** start|complete|abort
+                                                                // endpoints are already covered by
+                                                                // /setup/** above.
+                                                                "/users/recover", "/users/recover.json",
                                                                 "/.well-known/jwks.json")
                                                 .permitAll()
                                                 .anyRequest().authenticated())

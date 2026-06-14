@@ -28,6 +28,14 @@ public interface GpgKeyRepository extends JpaRepository<GpgKey, String> {
     Optional<GpgKey> findByKeyIdAndDeletedFalse(String keyId);
 
     /**
+     * Account-recovery completion (PHP {@code GpgkeysTable::getByFingerprintAndUserId}):
+     * the submitted public key's fingerprint must match the user's already-stored,
+     * non-deleted key. Used by RecoverService to reject a key that does not belong
+     * to the recovering user.
+     */
+    Optional<GpgKey> findByFingerprintAndUserIdAndDeletedFalse(String fingerprint, String userId);
+
+    /**
      * List keys by deleted flag. Used by the /gpgkeys.json index endpoint
      * (filter[is-deleted], defaults to false).
      */
