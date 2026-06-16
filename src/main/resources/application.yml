@@ -31,6 +31,7 @@ logging:
 jpassbolt:
   auth:
     register-token-expiry-days: 10   # 对照 PHP PASSBOLT_AUTH_REGISTER_TOKEN_EXPIRY 默认 '10 days'
+    recover-token-expiry-days: 10    # 对照 PHP PASSBOLT_AUTH_RECOVER_TOKEN_EXPIRY 默认 '10 days'
   jwt:
     # Legacy HS256 secret — no longer used for signing (RS256 key pair below);
     # still read by HealthcheckService (core.salt). Inject via env, never commit.
