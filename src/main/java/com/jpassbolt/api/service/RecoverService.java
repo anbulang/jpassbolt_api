@@ -7,6 +7,7 @@ import com.jpassbolt.api.model.User;
 import com.jpassbolt.api.repository.AuthenticationTokenRepository;
 import com.jpassbolt.api.repository.GpgKeyRepository;
 import com.jpassbolt.api.repository.UserRepository;
+import com.jpassbolt.api.service.email.MailService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -61,6 +62,7 @@ public class RecoverService {
     private final AuthenticationTokenRepository authenticationTokenRepository;
     private final GpgKeyRepository gpgKeyRepository;
     private final GpgKeyParserService gpgKeyParserService;
+    private final MailService mailService;
 
     /**
      * Recover token lifetime in days. The authentication_tokens table has no
@@ -121,9 +123,16 @@ public class RecoverService {
         token.setActive(true);
         authenticationTokenRepository.save(token);
 
-        // Stand-in for the recovery email (no SMTP in this backend).
-        log.info("Recovery process started for user {} — recover link: /setup/recover/start/{}/{} (token type {})",
-                user.getUsername(), user.getId(), token.getToken(), tokenType);
+        // Deliver the link by email. Active user -> recovery email; a not-yet-active
+        // user (register token) -> setup invite to restart setup. MailService is
+        // best-effort: when email is disabled/unconfigured it logs the link instead,
+        // so this never breaks the (already-committed) token issuance.
+        if (TOKEN_TYPE_RECOVER.equals(tokenType)) {
+            mailService.sendRecoverEmail(user.getUsername(), user.getId(), token.getToken(),
+                    request.getRecoveryCase());
+        } else {
+            mailService.sendSetupInviteEmail(user.getUsername(), user.getId(), token.getToken());
+        }
         return token;
     }
 
@@ -201,6 +210,7 @@ public class RecoverService {
 
         log.info("Recovery completed for user {} (fingerprint {})", user.getUsername(),
                 metadata.getFingerprint());
+        mailService.sendRecoverCompleteEmail(user.getUsername());
         return user;
     }
 

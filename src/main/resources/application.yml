@@ -29,6 +29,18 @@ logging:
     com.jpassbolt.api: DEBUG
 
 jpassbolt:
+  # Base URL of the CLIENT (the React SPA), used to build the setup/recover links
+  # placed in emails. Distinct from settings.full-base-url (the API/server URL):
+  # the recovery link must open the SPA, not the JSON API.
+  app:
+    base-url: ${JPASSBOLT_APP_BASE_URL:http://localhost:5173}
+  # Outbound email. Disabled by default: when off (or when no JavaMailSender bean
+  # is configured, i.e. spring.mail.host unset), MailService LOGS the link instead
+  # of sending — so default/test profiles need no SMTP. The `local` profile turns
+  # this on and points spring.mail at a local MailHog.
+  email:
+    enabled: ${JPASSBOLT_EMAIL_ENABLED:false}
+    from: ${JPASSBOLT_EMAIL_FROM:no-reply@jpassbolt.local}
   auth:
     register-token-expiry-days: 10   # 对照 PHP PASSBOLT_AUTH_REGISTER_TOKEN_EXPIRY 默认 '10 days'
     recover-token-expiry-days: 10    # 对照 PHP PASSBOLT_AUTH_RECOVER_TOKEN_EXPIRY 默认 '10 days'

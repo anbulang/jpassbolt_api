@@ -12,8 +12,23 @@ spring:
     properties:
       hibernate:
         format_sql: true
+  # Local dev SMTP -> MailHog (run: docker run -p 1025:1025 -p 8025:8025 mailhog/mailhog).
+  # No auth/TLS; view captured mail at http://localhost:8025. Switching to a real
+  # provider in prod is just these host/port/credentials, no code change.
+  mail:
+    host: ${JPASSBOLT_SMTP_HOST:localhost}
+    port: ${JPASSBOLT_SMTP_PORT:1025}
+    properties:
+      mail:
+        smtp:
+          auth: false
+          starttls:
+            enable: false
 
 jpassbolt:
+  # Turn on real email sending in local dev (captured by MailHog above).
+  email:
+    enabled: true
   jwt:
     # Local development only: generate an ephemeral in-memory RS256 pair at
     # startup instead of requiring an externally injected key pair.
