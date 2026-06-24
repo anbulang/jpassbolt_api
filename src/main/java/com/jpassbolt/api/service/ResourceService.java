@@ -6,6 +6,7 @@ import com.jpassbolt.api.model.Permission;
 import com.jpassbolt.api.model.Resource;
 import com.jpassbolt.api.model.Secret;
 import com.jpassbolt.api.repository.FavoriteRepository;
+import com.jpassbolt.api.repository.FolderRepository;
 import com.jpassbolt.api.repository.FoldersRelationRepository;
 import com.jpassbolt.api.repository.PermissionRepository;
 import com.jpassbolt.api.repository.ResourceRepository;
@@ -32,6 +33,7 @@ public class ResourceService {
     private final PermissionRepository permissionRepository;
     private final FavoriteRepository favoriteRepository;
     private final FoldersRelationRepository foldersRelationRepository;
+    private final FolderRepository folderRepository;
     private final MetadataValidationSupport metadataValidationSupport;
     private final MetadataTypesSettingsService metadataTypesSettingsService;
 
@@ -93,6 +95,15 @@ public class ResourceService {
      */
     @Transactional
     public Resource createResource(ResourceDto.CreateRequest request, String userId) {
+        // Validate the destination folder up-front (PHP Folders plugin
+        // ResourcesAfterCreateService::validateParentFolder): a non-null
+        // folder_parent_id must be a valid UUID, point to an existing folder, and
+        // be writable (UPDATE) by the creator — otherwise 400, exactly as the
+        // reference. A throw here rolls back the whole create transaction.
+        if (request.getFolderParentId() != null) {
+            validateFolderParent(request.getFolderParentId(), userId);
+        }
+
         Resource resource = new Resource();
         if (request.getMetadata() != null) {
             // v5 metadata shape: validate (parse-only) + settings/key-type rules,
@@ -147,6 +158,45 @@ public class ResourceService {
         foldersRelationRepository.save(relation);
 
         return savedResource;
+    }
+
+    /**
+     * Validate a resource's destination folder at create time (PHP Folders plugin
+     * {@code ResourcesAfterCreateService::validateParentFolder}). {@code folder_parent_id}
+     * is not a column on resources — it seeds a {@code folders_relations} row — so
+     * the checks live here rather than in bean validation. Messages mirror the
+     * reference verbatim; all failures surface as 400 and roll back the create.
+     */
+    private void validateFolderParent(String folderParentId, String userId) {
+        if (!isUuid(folderParentId)) {
+            throw new com.jpassbolt.api.exception.PassboltApiException(
+                    org.springframework.http.HttpStatus.BAD_REQUEST,
+                    "The folder parent identifier should be a valid UUID.");
+        }
+        if (!folderRepository.existsById(folderParentId)) {
+            throw new com.jpassbolt.api.exception.PassboltApiException(
+                    org.springframework.http.HttpStatus.BAD_REQUEST,
+                    "The folder parent does not exist.");
+        }
+        // Group-inclusive UPDATE check on the folder (PHP UserHasPermissionService).
+        if (!permissionRepository.hasAccessIncludingGroups(
+                FolderService.FOLDER_ACO, folderParentId, userId, Permission.UPDATE)) {
+            throw new com.jpassbolt.api.exception.PassboltApiException(
+                    org.springframework.http.HttpStatus.BAD_REQUEST,
+                    "You are not allowed to create content into the parent folder.");
+        }
+    }
+
+    private boolean isUuid(String value) {
+        if (value == null) {
+            return false;
+        }
+        try {
+            java.util.UUID.fromString(value);
+            return true;
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
     }
 
     /**

@@ -2,18 +2,23 @@ package com.jpassbolt.api.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jpassbolt.api.dto.ResourceDto;
+import com.jpassbolt.api.model.Folder;
+import com.jpassbolt.api.model.FoldersRelation;
 import com.jpassbolt.api.model.MetadataKey;
 import com.jpassbolt.api.model.OrganizationSetting;
 import com.jpassbolt.api.model.Permission;
 import com.jpassbolt.api.model.Resource;
 import com.jpassbolt.api.model.Secret;
 import com.jpassbolt.api.model.User;
+import com.jpassbolt.api.repository.FolderRepository;
+import com.jpassbolt.api.repository.FoldersRelationRepository;
 import com.jpassbolt.api.repository.MetadataKeyRepository;
 import com.jpassbolt.api.repository.OrganizationSettingRepository;
 import com.jpassbolt.api.repository.PermissionRepository;
 import com.jpassbolt.api.repository.ResourceRepository;
 import com.jpassbolt.api.repository.SecretRepository;
 import com.jpassbolt.api.repository.UserRepository;
+import com.jpassbolt.api.service.FolderService;
 import org.hamcrest.Matchers;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -61,6 +66,12 @@ class ResourceControllerTest {
         private OrganizationSettingRepository organizationSettingRepository;
 
         @Autowired
+        private FolderRepository folderRepository;
+
+        @Autowired
+        private FoldersRelationRepository foldersRelationRepository;
+
+        @Autowired
         private ObjectMapper objectMapper;
 
         private User testUser;
@@ -72,6 +83,8 @@ class ResourceControllerTest {
         void setUp() {
                 organizationSettingRepository.deleteAll();
                 metadataKeyRepository.deleteAll();
+                foldersRelationRepository.deleteAll();
+                folderRepository.deleteAll();
                 permissionRepository.deleteAll();
                 secretRepository.deleteAll();
                 resourceRepository.deleteAll();
@@ -107,6 +120,25 @@ class ResourceControllerTest {
                 permissionRepository.save(perm);
 
                 return resource;
+        }
+
+        /** Create a folder with the given permission level for the test user (folder_parent_id tests). */
+        private Folder createFolderWithPermission(String name, int permType) {
+                Folder folder = new Folder();
+                folder.setName(name);
+                folder.setCreatedBy(testUser.getId());
+                folder.setModifiedBy(testUser.getId());
+                folderRepository.save(folder);
+
+                Permission perm = new Permission();
+                perm.setAco(FolderService.FOLDER_ACO);
+                perm.setAcoForeignKey(folder.getId());
+                perm.setAro(Permission.USER_ARO);
+                perm.setAroForeignKey(testUser.getId());
+                perm.setType(permType);
+                permissionRepository.save(perm);
+
+                return folder;
         }
 
         @Test
@@ -194,6 +226,85 @@ class ResourceControllerTest {
                 assertThat(resources).hasSize(1);
                 assertThat(permissionRepository.userHasAccess(
                                 resources.get(0).getId(), testUser.getId(), Permission.OWNER)).isTrue();
+        }
+
+        @Test
+        void testCreateResource_InvalidFolderParentId_Returns400() throws Exception {
+                ResourceDto.CreateRequest request = ResourceDto.CreateRequest.builder()
+                                .name("In Folder")
+                                .folderParentId("not-a-uuid")
+                                .secrets(List.of(ResourceDto.CreateRequest.SecretData.builder().data(ARMORED).build()))
+                                .build();
+
+                mockMvc.perform(post("/resources")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsString(request)))
+                                .andExpect(status().isBadRequest())
+                                .andExpect(jsonPath("$.header.message", Matchers.containsString("valid UUID")));
+
+                assertThat(resourceRepository.findByDeletedFalse()).isEmpty();
+        }
+
+        @Test
+        void testCreateResource_NonexistentFolderParent_Returns400() throws Exception {
+                ResourceDto.CreateRequest request = ResourceDto.CreateRequest.builder()
+                                .name("In Folder")
+                                .folderParentId(UUID.randomUUID().toString())
+                                .secrets(List.of(ResourceDto.CreateRequest.SecretData.builder().data(ARMORED).build()))
+                                .build();
+
+                mockMvc.perform(post("/resources")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsString(request)))
+                                .andExpect(status().isBadRequest())
+                                .andExpect(jsonPath("$.header.message", Matchers.containsString("does not exist")));
+
+                assertThat(resourceRepository.findByDeletedFalse()).isEmpty();
+        }
+
+        @Test
+        void testCreateResource_ReadOnlyFolderParent_Returns400() throws Exception {
+                Folder folder = createFolderWithPermission("ReadOnly", Permission.READ);
+                ResourceDto.CreateRequest request = ResourceDto.CreateRequest.builder()
+                                .name("In Folder")
+                                .folderParentId(folder.getId())
+                                .secrets(List.of(ResourceDto.CreateRequest.SecretData.builder().data(ARMORED).build()))
+                                .build();
+
+                mockMvc.perform(post("/resources")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsString(request)))
+                                .andExpect(status().isBadRequest())
+                                .andExpect(jsonPath("$.header.message",
+                                                Matchers.containsString("not allowed to create content")));
+
+                assertThat(resourceRepository.findByDeletedFalse()).isEmpty();
+        }
+
+        @Test
+        void testCreateResource_WritableFolderParent_PlacesResourceInFolder() throws Exception {
+                Folder folder = createFolderWithPermission("Work", Permission.OWNER);
+                ResourceDto.CreateRequest request = ResourceDto.CreateRequest.builder()
+                                .name("In Folder")
+                                .username("u")
+                                .uri("https://x.com")
+                                .folderParentId(folder.getId())
+                                .secrets(List.of(ResourceDto.CreateRequest.SecretData.builder().data(ARMORED).build()))
+                                .build();
+
+                mockMvc.perform(post("/resources")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsString(request)))
+                                .andExpect(status().isCreated())
+                                .andExpect(jsonPath("$.body.name").value("In Folder"));
+
+                List<Resource> resources = resourceRepository.findByDeletedFalse();
+                assertThat(resources).hasSize(1);
+                String resourceId = resources.get(0).getId();
+                assertThat(foldersRelationRepository
+                                .findByUserIdAndFolderParentId(testUser.getId(), folder.getId()))
+                                .anyMatch(r -> FoldersRelation.FOREIGN_MODEL_RESOURCE.equals(r.getForeignModel())
+                                                && resourceId.equals(r.getForeignId()));
         }
 
         @Test
