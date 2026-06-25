@@ -73,10 +73,18 @@ public class SecurityConfig {
         @Bean
         public CorsConfigurationSource corsConfigurationSource() {
                 CorsConfiguration config = new CorsConfiguration();
-                config.setAllowedOrigins(List.of(
-                                "http://localhost:5173",
-                                "http://localhost:5174",
-                                "http://localhost:3000"));
+                // Use allowedOriginPatterns (not allowedOrigins): the Passbolt-compatible
+                // browser extension sends Origin: chrome-extension://<id>, whose id varies
+                // per install, so an exact allow-list cannot match it. A pattern is also
+                // required here because allowCredentials(true) forbids a bare "*" origin.
+                // Without this the CORS filter rejects the extension's GpgAuth request with
+                // 403 before it reaches the controller (the X-GPGAuth-* headers never reach
+                // the client), breaking both this extension and the official Passbolt one.
+                config.setAllowedOriginPatterns(List.of(
+                                "http://localhost:*",
+                                "http://127.0.0.1:*",
+                                "chrome-extension://*",
+                                "moz-extension://*"));
                 config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
                 config.setAllowedHeaders(List.of("*"));
                 config.setExposedHeaders(List.of(
