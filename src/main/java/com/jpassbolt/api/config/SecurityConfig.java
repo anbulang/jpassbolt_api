@@ -73,16 +73,26 @@ public class SecurityConfig {
         @Bean
         public CorsConfigurationSource corsConfigurationSource() {
                 CorsConfiguration config = new CorsConfiguration();
-                // Use allowedOriginPatterns (not allowedOrigins): the Passbolt-compatible
-                // browser extension sends Origin: chrome-extension://<id>, whose id varies
-                // per install, so an exact allow-list cannot match it. A pattern is also
-                // required here because allowCredentials(true) forbids a bare "*" origin.
-                // Without this the CORS filter rejects the extension's GpgAuth request with
-                // 403 before it reaches the controller (the X-GPGAuth-* headers never reach
-                // the client), breaking both this extension and the official Passbolt one.
+                // Exact origins for the first-party web SPA (dev ports only).
+                config.setAllowedOrigins(List.of(
+                                "http://localhost:5173",
+                                "http://localhost:5174",
+                                "http://localhost:3000"));
+                // The Passbolt-compatible browser extension sends Origin:
+                // chrome-extension://<id>. A pattern is needed because an unpacked /
+                // self-built extension gets a per-install id, and allowCredentials(true)
+                // forbids a bare "*". Without this the CORS filter 403s the extension's
+                // GpgAuth request before the controller runs (the X-GPGAuth-* headers never
+                // reach the client), breaking both this extension and the official one.
+                //
+                // Why this wildcard is acceptable here: auth is JWT *Bearer* with NO
+                // cookies, so reflecting a credentialed origin leaks nothing to a foreign
+                // extension (it holds no token); web origins (e.g. https://evil.com) still
+                // do NOT match and stay blocked; and CORS cannot gate a malicious extension
+                // regardless (host-permission SW fetches bypass client-side CORS).
+                // HARDENING TODO before production: ship a fixed manifest `key` for the
+                // extension and pin its published id(s) here instead of the wildcard.
                 config.setAllowedOriginPatterns(List.of(
-                                "http://localhost:*",
-                                "http://127.0.0.1:*",
                                 "chrome-extension://*",
                                 "moz-extension://*"));
                 config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
