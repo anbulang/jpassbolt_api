@@ -210,7 +210,7 @@ public class RecoverService {
 
         log.info("Recovery completed for user {} (fingerprint {})", user.getUsername(),
                 metadata.getFingerprint());
-        mailService.sendRecoverCompleteEmail(user.getUsername());
+        mailService.sendRecoverCompleteEmail(user.getUsername(), user.getId());
         return user;
     }
 

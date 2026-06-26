@@ -1,16 +1,27 @@
 package com.jpassbolt.api.service.email;
 
+import com.jpassbolt.api.service.AccountLocaleService;
 import jakarta.mail.internet.MimeMessage;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.MessageSource;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.stereotype.Service;
 
+import java.util.Locale;
+
 /**
  * Outbound transactional email (account recovery / setup invite / completion).
+ *
+ * <p>Copy is localized <em>per recipient</em>: the language is the recipient's
+ * own account locale (resolved via {@link AccountLocaleService}, falling back to
+ * the organization / default locale), looked up from the {@code messages/email}
+ * resource bundles via the dedicated {@code mailMessageSource} bean
+ * ({@link com.jpassbolt.api.config.MailMessageConfig}). Chinese recipients get
+ * the {@code _zh} bundle; everyone else falls back to English.</p>
  *
  * <p>Designed to be safe in every profile:
  * <ul>
@@ -32,11 +43,30 @@ import org.springframework.stereotype.Service;
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class MailService {
 
     /** Optional: absent in default/test profiles (no spring.mail.host) → we log instead. */
     private final ObjectProvider<JavaMailSender> mailSenderProvider;
+
+    /** Email copy bundles (messages/email_*.properties), UTF-8, dedicated bean. */
+    private final MessageSource messageSource;
+
+    /** Resolves the recipient's locale from their account/org setting. */
+    private final AccountLocaleService accountLocaleService;
+
+    /**
+     * Explicit constructor (not Lombok {@code @RequiredArgsConstructor}) so the
+     * {@link Qualifier} on the parameter is honored: without it, Spring would
+     * inject by type and could pick Boot's auto-configured {@code messageSource}
+     * (which has no email bundles) instead of {@code mailMessageSource}.
+     */
+    public MailService(ObjectProvider<JavaMailSender> mailSenderProvider,
+                       @Qualifier("mailMessageSource") MessageSource messageSource,
+                       AccountLocaleService accountLocaleService) {
+        this.mailSenderProvider = mailSenderProvider;
+        this.messageSource = messageSource;
+        this.accountLocaleService = accountLocaleService;
+    }
 
     @Value("${jpassbolt.email.enabled:false}")
     private boolean enabled;
@@ -50,22 +80,45 @@ public class MailService {
 
     /** Account recovery: link opens the SPA's /recover/{userId}/{token} flow. */
     public void sendRecoverEmail(String toEmail, String userId, String token, String recoveryCase) {
+        Locale locale = localeFor(userId);
         String link = clientUrl("/recover/" + userId + "/" + token);
-        send(toEmail, "Your account recovery, " + toEmail,
-                recoverHtml(link), "recover link: " + link);
+        String subject = msg("email.recover.subject", locale, toEmail);
+        String html = wrap(locale, msg("email.recover.title", locale),
+                "<p>" + msg("email.recover.intro", locale) + "</p>"
+                + "<p>" + msg("email.recover.instruction", locale) + "</p>"
+                + button(locale, link, msg("email.recover.cta", locale))
+                + "<p style=\"color:#888;font-size:12px\">" + msg("email.recover.ignore", locale) + "</p>");
+        send(toEmail, subject, html, "recover link: " + link);
     }
 
     /** Setup invite (a not-yet-active user restarting setup via a register token). */
     public void sendSetupInviteEmail(String toEmail, String userId, String token) {
+        Locale locale = localeFor(userId);
         String link = clientUrl("/setup/" + userId + "/" + token);
-        send(toEmail, "Finish setting up your JPassbolt account",
-                inviteHtml(link), "setup link: " + link);
+        String subject = msg("email.invite.subject", locale);
+        String html = wrap(locale, msg("email.invite.title", locale),
+                "<p>" + msg("email.invite.intro", locale) + "</p>"
+                + button(locale, link, msg("email.invite.cta", locale)));
+        send(toEmail, subject, html, "setup link: " + link);
     }
 
     /** Confirmation after a successful recovery. */
-    public void sendRecoverCompleteEmail(String toEmail) {
-        send(toEmail, "Your JPassbolt account recovery is complete",
-                completeHtml(), "recovery completed for " + toEmail);
+    public void sendRecoverCompleteEmail(String toEmail, String userId) {
+        Locale locale = localeFor(userId);
+        String subject = msg("email.complete.subject", locale);
+        String html = wrap(locale, msg("email.complete.title", locale),
+                "<p>" + msg("email.complete.intro", locale) + "</p>"
+                + "<p style=\"color:#888;font-size:12px\">" + msg("email.complete.warning", locale) + "</p>");
+        send(toEmail, subject, html, "recovery completed for " + toEmail);
+    }
+
+    /** Recipient locale from their account/org setting, mapped to a {@link Locale}. */
+    private Locale localeFor(String userId) {
+        return accountLocaleService.toJavaLocale(accountLocaleService.getUserLocale(userId));
+    }
+
+    private String msg(String key, Locale locale, Object... args) {
+        return messageSource.getMessage(key, args, locale);
     }
 
     private String clientUrl(String path) {
@@ -94,40 +147,21 @@ public class MailService {
         }
     }
 
-    // ---- minimal inline HTML templates (no template engine dependency) ----
+    // ---- minimal inline HTML scaffold (no template engine dependency) ----
+    // Text comes from the messages/email bundles; only structure lives here.
 
-    private String recoverHtml(String link) {
-        return wrap("Account recovery",
-                "<p>You requested to recover access to your JPassbolt vault.</p>"
-                + "<p>Make sure you have your <strong>private key backup</strong> at hand, then continue:</p>"
-                + button(link, "Recover my account")
-                + "<p style=\"color:#888;font-size:12px\">If you didn't request this, you can ignore this email. "
-                + "The link expires and can be used once.</p>");
-    }
-
-    private String inviteHtml(String link) {
-        return wrap("Welcome to JPassbolt",
-                "<p>An account was created for you. Finish setting it up to start using your vault:</p>"
-                + button(link, "Set up my account"));
-    }
-
-    private String completeHtml() {
-        return wrap("Recovery complete",
-                "<p>Your account recovery completed successfully. You now have access to your vault again.</p>"
-                + "<p style=\"color:#888;font-size:12px\">If this wasn't you, contact your administrator immediately.</p>");
-    }
-
-    private String button(String link, String label) {
+    private String button(Locale locale, String link, String label) {
         return "<p style=\"margin:24px 0\"><a href=\"" + link + "\" "
                 + "style=\"background:#2a6df4;color:#fff;text-decoration:none;padding:12px 20px;"
                 + "border-radius:8px;font-weight:600;display:inline-block\">" + label + "</a></p>"
-                + "<p style=\"color:#888;font-size:12px;word-break:break-all\">Or open this link: " + link + "</p>";
+                + "<p style=\"color:#888;font-size:12px;word-break:break-all\">"
+                + msg("email.button.fallback", locale, link) + "</p>";
     }
 
-    private String wrap(String title, String body) {
+    private String wrap(Locale locale, String title, String body) {
         return "<div style=\"font-family:system-ui,Arial,sans-serif;max-width:520px;margin:0 auto;"
                 + "padding:24px;color:#1a1a1a\"><h2 style=\"margin:0 0 12px\">" + title + "</h2>"
                 + body + "<hr style=\"border:none;border-top:1px solid #eee;margin:24px 0\">"
-                + "<p style=\"color:#aaa;font-size:11px\">JPassbolt — end-to-end encrypted password manager</p></div>";
+                + "<p style=\"color:#aaa;font-size:11px\">" + msg("email.footer", locale) + "</p></div>";
     }
 }
