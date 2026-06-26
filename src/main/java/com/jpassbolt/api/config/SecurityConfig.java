@@ -3,11 +3,13 @@ package com.jpassbolt.api.config;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.HttpStatusEntryPoint;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
@@ -60,6 +62,17 @@ public class SecurityConfig {
                                                                 "/.well-known/jwks.json")
                                                 .permitAll()
                                                 .anyRequest().authenticated())
+                                // Unauthenticated access to a protected endpoint must return
+                                // 401 (not Spring's default 403). A 403 is reserved for an
+                                // AUTHENTICATED caller who lacks permission (controller-thrown,
+                                // enveloped). This entry point fires only AFTER authorization
+                                // denies an anonymous request, so permitAll paths (e.g.
+                                // /auth/login.json carrying a stale Bearer) are untouched, and
+                                // the SPA's interceptor cleanly recovers an expired/invalid
+                                // (e.g. ephemeral-key-rotated) token instead of looping on 403.
+                                .exceptionHandling(ex -> ex
+                                                .authenticationEntryPoint(
+                                                                new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)))
                                 .addFilterBefore(jwtAuthenticationFilter,
                                                 UsernamePasswordAuthenticationFilter.class)
                                 // MFA gate runs after the JWT principal is in place

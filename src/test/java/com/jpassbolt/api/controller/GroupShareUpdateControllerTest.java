@@ -517,7 +517,7 @@ class GroupShareUpdateControllerTest {
         // authenticationEntryPoint so the actual status is 403 — asserted
         // as-is (same as ShareUpdateControllerTest).
         performShare(Map.of("permissions", List.of()))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
     }
 
     // ------------------------------------------------------------------

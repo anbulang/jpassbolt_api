@@ -141,8 +141,8 @@ class RoleControllerTest {
                 // Spring Security's default Http403ForbiddenEntryPoint returns 403.
                 // This matches every protected endpoint in the project (see the
                 // isForbidden() convention in ResourceControllerTest); the global
-                // 401 fix is out of scope for this cluster.
+                // unauthenticated requests now return 401 (SecurityConfig authenticationEntryPoint).
                 mockMvc.perform(get("/roles.json"))
-                                .andExpect(status().isForbidden());
+                                .andExpect(status().isUnauthorized());
         }
 }

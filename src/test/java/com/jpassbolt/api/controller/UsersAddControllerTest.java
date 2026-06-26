@@ -188,7 +188,7 @@ class UsersAddControllerTest {
         mockMvc.perform(post("/users.json")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(payload("new.user@example.com")))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
     }
 
     @Test

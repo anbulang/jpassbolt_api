@@ -260,7 +260,7 @@ class ShareSearchControllerTest {
         // authenticationEntryPoint so unauthenticated requests get 403 —
         // existing project-wide behaviour, asserted as-is.
         mockMvc.perform(get("/share/search-aros.json"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
     }
 
     // ------------------------------------------------------------------
