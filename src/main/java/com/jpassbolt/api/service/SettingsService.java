@@ -165,6 +165,9 @@ public class SettingsService {
         options.add(localeOption("sl-SI", "Slovenščina"));
         options.add(localeOption("uk-UA", "Українська"));
         options.add(localeOption("cs-CZ", "Čeština (beta)"));
+        // Project addition on top of the upstream Locale plugin config:
+        // Chinese is selectable here and accepted by AccountLocaleService.
+        options.add(localeOption("zh-CN", "中文"));
 
         Map<String, Object> locale = new LinkedHashMap<>();
         locale.put("options", options);

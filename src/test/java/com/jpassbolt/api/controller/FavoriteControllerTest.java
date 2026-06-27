@@ -309,13 +309,13 @@ class FavoriteControllerTest {
         @Test
         @WithAnonymousUser
         void testUnauthenticated() throws Exception {
-                // The OpenAPI contract specifies 401, but the current global behavior is 403
-                // because SecurityConfig has no authenticationEntryPoint configured.
-                // Asserting the existing behavior; not fixed within this cluster.
+                // The OpenAPI contract specifies 401, which SecurityConfig now returns
+                // via its authenticationEntryPoint (HttpStatusEntryPoint UNAUTHORIZED).
+                // Both the index and per-id endpoint return 401 here.
                 mockMvc.perform(post("/favorites/resource/" + UUID.randomUUID() + ".json"))
-                                .andExpect(status().isForbidden());
+                                .andExpect(status().isUnauthorized());
 
                 mockMvc.perform(delete("/favorites/" + UUID.randomUUID() + ".json"))
-                                .andExpect(status().isForbidden());
+                                .andExpect(status().isUnauthorized());
         }
 }

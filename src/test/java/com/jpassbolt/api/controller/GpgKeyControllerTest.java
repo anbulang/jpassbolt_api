@@ -303,11 +303,11 @@ class GpgKeyControllerTest {
      */
     @Test
     @WithAnonymousUser
-    void testUnauthenticatedReturns403() throws Exception {
+    void testUnauthenticatedReturns401() throws Exception {
         mockMvc.perform(get("/gpgkeys.json"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
 
         mockMvc.perform(get("/gpgkeys/" + UUID.randomUUID() + ".json"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
     }
 }

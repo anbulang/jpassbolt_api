@@ -171,7 +171,7 @@ class HealthCheckControllerTest {
         @WithAnonymousUser
         void testHealthcheckIndexUnauthenticated() throws Exception {
                 mockMvc.perform(get("/healthcheck.json"))
-                                .andExpect(status().isForbidden());
+                                .andExpect(status().isUnauthorized());
         }
 
         /**

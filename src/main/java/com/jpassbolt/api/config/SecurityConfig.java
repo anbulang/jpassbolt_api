@@ -3,11 +3,13 @@ package com.jpassbolt.api.config;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.HttpStatusEntryPoint;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
@@ -60,6 +62,17 @@ public class SecurityConfig {
                                                                 "/.well-known/jwks.json")
                                                 .permitAll()
                                                 .anyRequest().authenticated())
+                                // Unauthenticated access to a protected endpoint must return
+                                // 401 (not Spring's default 403). A 403 is reserved for an
+                                // AUTHENTICATED caller who lacks permission (controller-thrown,
+                                // enveloped). This entry point fires only AFTER authorization
+                                // denies an anonymous request, so permitAll paths (e.g.
+                                // /auth/login.json carrying a stale Bearer) are untouched, and
+                                // the SPA's interceptor cleanly recovers an expired/invalid
+                                // (e.g. ephemeral-key-rotated) token instead of looping on 403.
+                                .exceptionHandling(ex -> ex
+                                                .authenticationEntryPoint(
+                                                                new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)))
                                 .addFilterBefore(jwtAuthenticationFilter,
                                                 UsernamePasswordAuthenticationFilter.class)
                                 // MFA gate runs after the JWT principal is in place
@@ -73,10 +86,28 @@ public class SecurityConfig {
         @Bean
         public CorsConfigurationSource corsConfigurationSource() {
                 CorsConfiguration config = new CorsConfiguration();
+                // Exact origins for the first-party web SPA (dev ports only).
                 config.setAllowedOrigins(List.of(
                                 "http://localhost:5173",
                                 "http://localhost:5174",
                                 "http://localhost:3000"));
+                // The Passbolt-compatible browser extension sends Origin:
+                // chrome-extension://<id>. A pattern is needed because an unpacked /
+                // self-built extension gets a per-install id, and allowCredentials(true)
+                // forbids a bare "*". Without this the CORS filter 403s the extension's
+                // GpgAuth request before the controller runs (the X-GPGAuth-* headers never
+                // reach the client), breaking both this extension and the official one.
+                //
+                // Why this wildcard is acceptable here: auth is JWT *Bearer* with NO
+                // cookies, so reflecting a credentialed origin leaks nothing to a foreign
+                // extension (it holds no token); web origins (e.g. https://evil.com) still
+                // do NOT match and stay blocked; and CORS cannot gate a malicious extension
+                // regardless (host-permission SW fetches bypass client-side CORS).
+                // HARDENING TODO before production: ship a fixed manifest `key` for the
+                // extension and pin its published id(s) here instead of the wildcard.
+                config.setAllowedOriginPatterns(List.of(
+                                "chrome-extension://*",
+                                "moz-extension://*"));
                 config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
                 config.setAllowedHeaders(List.of("*"));
                 config.setExposedHeaders(List.of(

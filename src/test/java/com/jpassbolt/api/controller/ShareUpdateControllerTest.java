@@ -451,7 +451,7 @@ class ShareUpdateControllerTest {
         mockMvc.perform(put("/share/resource/" + resource.getId() + ".json")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(Map.of("permissions", List.of()))))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
     }
 
     // ------------------------------------------------------------------

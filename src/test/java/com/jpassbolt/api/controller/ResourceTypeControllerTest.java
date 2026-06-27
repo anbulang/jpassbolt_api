@@ -260,14 +260,14 @@ class ResourceTypeControllerTest {
                 // default Http403ForbiddenEntryPoint answers. Not fixed in this
                 // cluster (cross-cutting concern).
                 mockMvc.perform(get("/resource-types.json"))
-                                .andExpect(status().isForbidden());
+                                .andExpect(status().isUnauthorized());
         }
 
         @Test
         @WithAnonymousUser
         void testViewUnauthenticated() throws Exception {
-                // Same 401-vs-403 deviation as testIndexUnauthenticated.
+                // Unauthenticated requests return 401 (SecurityConfig authenticationEntryPoint).
                 mockMvc.perform(get("/resource-types/" + UUID.randomUUID() + ".json"))
-                                .andExpect(status().isForbidden());
+                                .andExpect(status().isUnauthorized());
         }
 }
