@@ -4,8 +4,10 @@ import com.jpassbolt.api.dto.CommentDto;
 import com.jpassbolt.api.exception.PassboltApiException;
 import com.jpassbolt.api.model.Comment;
 import com.jpassbolt.api.repository.CommentRepository;
+import com.jpassbolt.api.service.email.event.ResourceCommentedEvent;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -35,6 +37,7 @@ public class CommentService {
     public static final int MAX_CONTENT_LENGTH = 256;
 
     private final CommentRepository commentRepository;
+    private final ApplicationEventPublisher eventPublisher;
 
     /**
      * Get all comments attached to a resource, most recently modified first.
@@ -82,6 +85,12 @@ public class CommentService {
 
         Comment saved = commentRepository.save(comment);
         log.debug("Comment {} added on resource {} by user {}", saved.getId(), resourceId, userId);
+
+        // Notification (CommentAddEmailRedactor): email everyone with access to
+        // the resource (minus the commenter) after commit. Thin snapshot — the
+        // resource name and commenter name are re-resolved in the listener.
+        eventPublisher.publishEvent(
+                new ResourceCommentedEvent(saved.getId(), resourceId, userId, saved.getContent()));
         return saved;
     }
 

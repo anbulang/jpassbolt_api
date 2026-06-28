@@ -84,6 +84,20 @@ public class EmailTemplateService {
         return emailTemplateEngine.process(templateName, context);
     }
 
+    /**
+     * Build an absolute SPA deep link from a path (e.g.
+     * {@code "/app/passwords/view/" + id}). Redactors render after commit, off the
+     * servlet request thread, so there is no request host to derive — links must
+     * use the configured client base URL ({@code jpassbolt.app.base-url}), the same
+     * base {@link MailService} uses for recovery/setup links.
+     *
+     * @param path an absolute path beginning with {@code /}
+     * @return {@code appBaseUrl + path} with the base's trailing slash trimmed
+     */
+    public String link(String path) {
+        return trimTrailingSlash(appBaseUrl) + (path == null ? "" : path);
+    }
+
     private static String trimTrailingSlash(String url) {
         return url == null ? "" : url.replaceAll("/+$", "");
     }

@@ -5,7 +5,9 @@ import com.jpassbolt.api.exception.PassboltApiException;
 import com.jpassbolt.api.exception.ShareValidationException;
 import com.jpassbolt.api.model.FoldersRelation;
 import com.jpassbolt.api.model.Permission;
+import com.jpassbolt.api.model.Resource;
 import com.jpassbolt.api.model.Secret;
+import com.jpassbolt.api.service.email.event.ResourceSharedEvent;
 import com.jpassbolt.api.repository.FavoriteRepository;
 import com.jpassbolt.api.repository.FolderRepository;
 import com.jpassbolt.api.repository.FoldersRelationRepository;
@@ -17,6 +19,7 @@ import com.jpassbolt.api.repository.SecretRepository;
 import com.jpassbolt.api.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -63,6 +66,7 @@ public class PermissionService {
     private final UserRepository userRepository;
     private final FolderRepository folderRepository;
     private final FoldersRelationRepository foldersRelationRepository;
+    private final ApplicationEventPublisher eventPublisher;
 
     /**
      * Get all permissions for a resource.
@@ -334,6 +338,35 @@ public class PermissionService {
         }
         for (String lostUserId : removed) {
             foldersRelationRepository.deleteByUserIdAndForeignId(lostUserId, resourceId);
+        }
+
+        // --- Notification (ShareEmailRedactor): email the users newly granted
+        // access, after the share commits. Snapshot the resource's v4 plaintext
+        // metadata and each added user's ciphertext now — the AFTER_COMMIT
+        // listener runs detached, off this transaction. The sharer is never in
+        // 'added' (they kept their existing access), so no actor exclusion is
+        // needed here. Only published when someone actually gained access. ---
+        if (!added.isEmpty()) {
+            Resource resource = resourceRepository.findById(resourceId).orElse(null);
+            Map<String, String> secretsByUserId = new LinkedHashMap<>();
+            if (secrets != null) {
+                for (ShareDto.SecretAdd secretAdd : secrets) {
+                    if (secretAdd.getUserId() != null && secretAdd.getData() != null
+                            && added.contains(secretAdd.getUserId())) {
+                        secretsByUserId.put(secretAdd.getUserId(), secretAdd.getData());
+                    }
+                }
+            }
+            eventPublisher.publishEvent(new ResourceSharedEvent(
+                    resourceId,
+                    resource == null ? null : resource.getName(),
+                    resource == null ? null : resource.getUsername(),
+                    resource == null ? null : resource.getUri(),
+                    resource == null ? null : resource.getDescription(),
+                    resource != null && resource.getMetadata() != null,
+                    userId,
+                    new LinkedHashSet<>(added),
+                    secretsByUserId));
         }
     }
 

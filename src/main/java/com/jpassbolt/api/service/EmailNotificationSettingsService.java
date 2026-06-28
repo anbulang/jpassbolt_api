@@ -134,6 +134,47 @@ public class EmailNotificationSettingsService {
     }
 
     /**
+     * Should the email gated by this notification setting be sent? This is the
+     * Phase-1 gating seam the redactors call before resolving recipients or
+     * rendering a body, mirroring PHP
+     * {@code EmailSubscriptionDispatcher::isRedactorActive()}:
+     * {@code return is_null($settingPath) || EmailNotificationSettings::get($settingPath);}
+     *
+     * <p>The public contract takes the DOTTED path form a redactor declares
+     * (e.g. {@code "send.password.share"}), matching PHP's
+     * {@code SubscribedEmailRedactorInterface::getNotificationSettingPath()}. The
+     * {@code '.'}→{@code '_'} translation is done here: PHP's
+     * {@code underscoreToDottedFormat} is a naive {@code str_replace} in both
+     * directions, and the two camelCase keys ({@code send_user_recoverComplete},
+     * {@code send_group_manager_requestAddUser}) survive a plain replace
+     * unchanged, so every dotted path maps char-for-char to its stored key.</p>
+     *
+     * <p>A {@code null} path means "always send" — the port of the two PHP
+     * redactors whose {@code getNotificationSettingPath()} returns null
+     * ({@code AdminDeleteEmailRedactor}, {@code UserAdminRoleRevokedEmailRedactor}).
+     * An unknown (typo) path returns {@code false} rather than throwing as PHP
+     * {@code get()} does: a defensive "off" can never spam recipients and never
+     * turns a domain request into a 5xx.</p>
+     *
+     * @param dottedPath the redactor's notification setting path in dotted form,
+     *                   or {@code null} for an always-on email
+     * @return true when the email should be sent
+     */
+    @Transactional(readOnly = true)
+    public boolean isEnabled(String dottedPath) {
+        if (dottedPath == null) {
+            return true; // always-on redactor (no getNotificationSettingPath)
+        }
+        String key = dottedPath.replace('.', '_');
+        Object value = get().get(key);
+        if (value == null) {
+            log.warn("Unknown email notification setting path '{}' — treating as disabled", dottedPath);
+            return false;
+        }
+        return asBoolean(value, false);
+    }
+
+    /**
      * Validate (strip unknown keys + coerce to boolean), merge the payload over
      * the current effective settings, upsert the single organization_settings
      * row, and return the new effective flattened map (PHP post controller:
