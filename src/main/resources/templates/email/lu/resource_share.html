@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<!--
+  Sent to a user who was just granted access to a password (ShareEmailRedactor,
+  next phase). Variables: actorName, resourceName, link (SPA deep link), and the
+  show_uri gate (showUri + resourceUri). The whole <body> is replaced by the
+  shared shell; only the `content` fragment is pulled in.
+-->
+<body th:replace="~{_layout :: shell(#{email.resource.share.title}, ~{::content})}">
+<div th:fragment="content">
+  <p th:text="#{email.resource.share.intro(${actorName},${resourceName})}">
+    Someone shared a password with you.
+  </p>
+  <p style="margin:24px 0;">
+    <a th:href="${link}" th:text="#{email.resource.share.cta}"
+       style="background:#2a6df4;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:600;display:inline-block;">
+      Open in JPassbolt
+    </a>
+  </p>
+  <p th:if="${showUri == true and resourceUri != null and !resourceUri.isEmpty()}"
+     style="color:#555;font-size:13px;word-break:break-all;" th:text="${resourceUri}">
+    https://example.com
+  </p>
+  <p style="color:#888;font-size:12px;word-break:break-all;"
+     th:text="#{email.button.fallback(${link})}">
+    Or open this link: ...
+  </p>
+</div>
+</body>
+</html>

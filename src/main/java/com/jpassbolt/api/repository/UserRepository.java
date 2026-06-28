@@ -56,4 +56,14 @@ public interface UserRepository extends JpaRepository<User, String> {
            "AND (:term IS NULL OR LOWER(u.username) LIKE :term " +
            "     OR LOWER(p.firstName) LIKE :term OR LOWER(p.lastName) LIKE :term)")
     List<User> findIndex(@Param("term") String term, @Param("active") Boolean active, Sort sort);
+
+    /**
+     * Active, non-deleted administrators (PHP UsersFindersTrait::findAdmins) —
+     * recipients for admin-targeted notifications (user setup completed, recovery
+     * abort/complete, account disabled). Joins Role by name rather than a
+     * hard-coded role id so it survives the random role ids seeded at runtime.
+     */
+    @Query("SELECT u FROM User u, Role r WHERE u.roleId = r.id AND r.name = 'admin' " +
+           "AND u.active = true AND u.deleted = false")
+    List<User> findActiveAdmins();
 }

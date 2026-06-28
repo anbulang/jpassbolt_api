@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<body>
+<!--
+  Shared email shell: responsive container + title + injected body + footer.
+  Concrete templates compose it with:
+    th:replace="~{email/_layout :: shell(<title>, ~{::content})}"
+  passing a localized title string and their own `content` fragment. Only the
+  <div th:fragment="shell"> subtree is emitted (the surrounding doctype/html/body
+  are stripped when the fragment is selected).
+-->
+<div th:fragment="shell(title, content)"
+     style="font-family:system-ui,-apple-system,'Segoe UI',Roboto,Arial,sans-serif;max-width:520px;margin:0 auto;padding:24px;color:#1a1a1a;line-height:1.5;">
+  <h2 style="margin:0 0 16px;font-size:20px;" th:text="${title}">Title</h2>
+  <div th:replace="${content}">Body</div>
+  <hr style="border:none;border-top:1px solid #eee;margin:24px 0;">
+  <p style="color:#aaa;font-size:11px;margin:0;" th:text="#{email.footer}">JPassbolt</p>
+</div>
+</body>
+</html>

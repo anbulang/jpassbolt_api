@@ -112,6 +112,20 @@ public class MailService {
         send(toEmail, subject, html, "recovery completed for " + toEmail);
     }
 
+    /**
+     * Send a fully-rendered email produced by the event-driven notification layer
+     * (recipients resolved + body rendered by the redactors, next phase). Reuses
+     * the exact transport + best-effort path as the recovery/setup emails: when
+     * email is disabled or no SMTP is configured it logs instead of sending, and
+     * delivery failures are swallowed so a flaky SMTP never surfaces as an error.
+     * This is the single seam a future {@code email_queue} implementation would
+     * replace, leaving every caller untouched.
+     */
+    public void send(EmailMessage message) {
+        send(message.recipient(), message.subject(), message.html(),
+                "notification: " + message.subject());
+    }
+
     /** Recipient locale from their account/org setting, mapped to a {@link Locale}. */
     private Locale localeFor(String userId) {
         return accountLocaleService.toJavaLocale(accountLocaleService.getUserLocale(userId));
