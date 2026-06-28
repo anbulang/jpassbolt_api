@@ -96,6 +96,17 @@ class RecipientResolverTest {
     }
 
     @Test
+    void resolveUsers_keepsUserWithFutureDatedDisable() {
+        // `disabled` is a timestamp: a future-dated value means the user is still
+        // active now, so they must remain a valid recipient until that moment.
+        User future = saveUser("future@passbolt.com", userRoleId, true, false, LocalDateTime.now().plusDays(1));
+
+        assertThat(resolver.resolveUsers(List.of(future.getId())))
+                .extracting(Recipient::email)
+                .containsExactly("future@passbolt.com");
+    }
+
+    @Test
     void resolveUsers_keepsInactiveUsers() {
         // A not-yet-activated user (setup invite / recovery recipient) must NOT be dropped.
         User inactive = saveUser("pending@passbolt.com", userRoleId, false, false, null);

@@ -54,6 +54,20 @@ class EmailTemplateServiceTest {
     }
 
     @Test
+    void rendersFallbackLocaleViaBaseBundle() {
+        // A supported locale with no dedicated bundle (e.g. German) must fall back
+        // to the base email.properties (English copy) rather than throwing
+        // NoSuchMessageException — the contract MailMessageConfig documents.
+        String html = templateService.render("lu/resource_share", Locale.GERMAN, baseVars());
+        assertThat(html)
+                .contains("A password was shared with you")  // English base-bundle title
+                .contains("Open in JPassbolt")
+                .contains("Ada Lovelace");
+        assertThat(templateService.subject("email.resource.share.subject", Locale.GERMAN, "Ada Lovelace"))
+                .isEqualTo("Ada Lovelace shared a password with you");
+    }
+
+    @Test
     void subjectIsLocalized() {
         assertThat(templateService.subject("email.resource.share.subject", Locale.ENGLISH, "Ada Lovelace"))
                 .isEqualTo("Ada Lovelace shared a password with you");

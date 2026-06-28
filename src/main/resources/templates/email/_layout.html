@@ -3,8 +3,10 @@
 <body>
 <!--
   Shared email shell: responsive container + title + injected body + footer.
-  Concrete templates compose it with:
-    th:replace="~{email/_layout :: shell(<title>, ~{::content})}"
+  Concrete templates compose it with (note: NO `email/` prefix — the resolver
+  already prepends `templates/email/`, so `~{email/_layout}` would wrongly resolve
+  to templates/email/email/_layout.html):
+    th:replace="~{_layout :: shell(<title>, ~{::content})}"
   passing a localized title string and their own `content` fragment. Only the
   <div th:fragment="shell"> subtree is emitted (the surrounding doctype/html/body
   are stripped when the fragment is selected).
