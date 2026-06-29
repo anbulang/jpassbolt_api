@@ -136,15 +136,32 @@ public class MailService {
 
     private void send(String to, String subject, String html, String logFallback) {
         // DB SMTP config (admin settings page) wins over the static spring.mail.*
-        // bean, mirroring PHP's SmtpTransportBeforeSendEventListener. A saved config
-        // also turns delivery on: PHP has no separate enable flag — a configured
-        // transport sends — so a DB row implies enabled, while the default/test
+        // bean, mirroring PHP's SmtpTransportBeforeSendEventListener — resolved in a
+        // single query + decrypt. A saved, usable config also turns delivery on: PHP
+        // has no separate enable flag — a configured transport sends. The default/test
         // profiles (no row, jpassbolt.email.enabled=false) still log instead of send.
-        boolean dbConfigured = smtpSettingsService.isInDb();
-        JavaMailSender sender = smtpSettingsService.activeDbMailSender()
-                .orElseGet(mailSenderProvider::getIfAvailable);
-        String fromAddress = smtpSettingsService.activeDbFrom().orElse(from);
-        if (!(enabled || dbConfigured) || sender == null) {
+        SmtpSettingsService.SmtpTransportResolution db = smtpSettingsService.resolveForSend();
+        JavaMailSender sender;
+        String fromAddress;
+        boolean effectiveEnabled;
+        if (db.sender() != null) {
+            // Usable DB config: send through it with its From.
+            sender = db.sender();
+            fromAddress = db.from();
+            effectiveEnabled = true;
+        } else if (db.rowPresent()) {
+            // Row present but undecryptable (key rotated/corrupt): do NOT silently fall
+            // back to a different transport/From. Skip; the admin sees it via GET 500 /
+            // healthcheck errorMessage.
+            log.error("SMTP settings present but undecryptable — not sending \"{}\" to {}", subject, to);
+            return;
+        } else {
+            // No DB config: fall back to the static spring.mail.* bean + yml From.
+            sender = mailSenderProvider.getIfAvailable();
+            fromAddress = from;
+            effectiveEnabled = enabled;
+        }
+        if (!effectiveEnabled || sender == null) {
             // Stand-in when email is off / unconfigured: log the link (dev/test).
             log.info("[email disabled] to={} subject=\"{}\" — {}", to, subject, logFallback);
             return;

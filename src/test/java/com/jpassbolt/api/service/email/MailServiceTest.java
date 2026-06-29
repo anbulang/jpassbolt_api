@@ -39,9 +39,9 @@ class MailServiceTest {
         // + jpassbolt.email.from, preserving the original behavior under test.
         com.jpassbolt.api.service.SmtpSettingsService smtp =
                 mock(com.jpassbolt.api.service.SmtpSettingsService.class);
-        when(smtp.isInDb()).thenReturn(false);
-        when(smtp.activeDbMailSender()).thenReturn(java.util.Optional.empty());
-        when(smtp.activeDbFrom()).thenReturn(java.util.Optional.empty());
+        when(smtp.resolveForSend()).thenReturn(
+                new com.jpassbolt.api.service.SmtpSettingsService.SmtpTransportResolution(
+                        false, null, null));
         MailService s = new MailService(provider, MESSAGES, locale, smtp);
         ReflectionTestUtils.setField(s, "enabled", enabled);
         ReflectionTestUtils.setField(s, "from", "no-reply@test.local");
@@ -68,6 +68,38 @@ class MailServiceTest {
                 .sendRecoverEmail("ada@passbolt.com", "uid-1", "tok-1", "default");
 
         verify(sender).send(any(MimeMessage.class));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void usesDbConfiguredSenderAndFromEvenWhenEnabledFalse() throws Exception {
+        // The DB SMTP config path (admin settings page): a saved, usable config sends
+        // EVEN WHEN jpassbolt.email.enabled=false, through the DB sender (NOT the
+        // spring.mail.* bean) and with the DB From.
+        JavaMailSender beanSender = mock(JavaMailSender.class);   // yml bean — must NOT be used
+        JavaMailSender dbSender = mock(JavaMailSender.class);
+        when(dbSender.createMimeMessage()).thenReturn(new MimeMessage((Session) null));
+
+        ObjectProvider<JavaMailSender> provider = mock(ObjectProvider.class);
+        when(provider.getIfAvailable()).thenReturn(beanSender);
+        com.jpassbolt.api.service.SmtpSettingsService smtp =
+                mock(com.jpassbolt.api.service.SmtpSettingsService.class);
+        when(smtp.resolveForSend()).thenReturn(
+                new com.jpassbolt.api.service.SmtpSettingsService.SmtpTransportResolution(
+                        true, dbSender, "DB Sender <db@x.test>"));
+
+        MailService s = new MailService(provider, MESSAGES, localeStub("en-UK"), smtp);
+        ReflectionTestUtils.setField(s, "enabled", false); // disabled — a DB config still sends
+        ReflectionTestUtils.setField(s, "from", "no-reply@test.local");
+        ReflectionTestUtils.setField(s, "appBaseUrl", "http://localhost:5173/");
+
+        s.sendRecoverEmail("ada@passbolt.com", "uid-1", "tok-1", "default");
+
+        ArgumentCaptor<MimeMessage> captor = ArgumentCaptor.forClass(MimeMessage.class);
+        verify(dbSender).send(captor.capture());
+        verify(beanSender, never()).send(any(MimeMessage.class));
+        // From is the DB sender address, not jpassbolt.email.from.
+        assertThat(captor.getValue().getFrom()[0].toString()).contains("db@x.test");
     }
 
     @Test

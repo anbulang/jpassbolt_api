@@ -1,11 +1,13 @@
 package com.jpassbolt.api.service;
 
 import com.jpassbolt.api.dto.SmtpSettingsDto;
+import com.jpassbolt.api.exception.PassboltApiException;
 import com.jpassbolt.api.model.OrganizationSetting;
 import com.jpassbolt.api.repository.OrganizationSettingRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.HttpStatus;
 import org.springframework.mail.javamail.JavaMailSenderImpl;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -165,6 +167,51 @@ class SmtpSettingsServiceTest {
         assertThat(service.save(req, adminId).get("client")).isNull();
     }
 
+    @Test
+    void portRejectsFractionalNumberButAcceptsIntegralDouble() {
+        // PHP runs ->integer('port') before ->range(): 1.2 is invalid, not truncated to 1.
+        SmtpSettingsDto.SettingsRequest fractional = fullRequest();
+        fractional.setPort(1.2);
+        assertThat(catchThrowableOfType(() -> service.save(fractional, adminId),
+                SmtpSettingsService.SmtpSettingsValidationException.class)
+                .getErrors()).containsKey("port");
+        // An integral double (587.0, as Jackson may deserialize) is fine → 587.
+        SmtpSettingsDto.SettingsRequest integral = fullRequest();
+        integral.setPort(587.0);
+        assertThat(service.save(integral, adminId).get("port")).isEqualTo(587);
+    }
+
+    @Test
+    void tlsNonOneNumberMapsToNull() {
+        // PHP filter_var(BOOLEAN) treats 2 as false → null (not true).
+        SmtpSettingsDto.SettingsRequest req = fullRequest();
+        req.setTls(2);
+        assertThat(service.save(req, adminId).get("tls")).isNull();
+    }
+
+    @Test
+    void clientRejectsGarbageColonValueButAcceptsRealIpv6() {
+        SmtpSettingsDto.SettingsRequest garbage = fullRequest();
+        garbage.setClient("foo:bar");
+        assertThat(catchThrowableOfType(() -> service.save(garbage, adminId),
+                SmtpSettingsService.SmtpSettingsValidationException.class)
+                .getErrors()).containsKey("client");
+
+        SmtpSettingsDto.SettingsRequest ipv6 = fullRequest();
+        ipv6.setClient("2001:db8::1");
+        assertThat(service.save(ipv6, adminId).get("client")).isEqualTo("2001:db8::1");
+    }
+
+    @Test
+    void clientRejectsIllegalDomainChars() {
+        // underscore is not a legal hostname char (PHP rejects via EmailValidationRule).
+        SmtpSettingsDto.SettingsRequest req = fullRequest();
+        req.setClient("foo_bar.com");
+        assertThat(catchThrowableOfType(() -> service.save(req, adminId),
+                SmtpSettingsService.SmtpSettingsValidationException.class)
+                .getErrors()).containsKey("client");
+    }
+
     // ---- runtime resolvers (PHP SmtpTransportBeforeSendEventListener) ----
 
     @Test
@@ -177,27 +224,59 @@ class SmtpSettingsServiceTest {
     }
 
     @Test
-    void activeDbMailSenderBuildsFromDbRow() {
+    void resolveForSendBuildsSenderAndFromFromDbRow() {
         service.save(fullRequest(), adminId);
-        Optional<org.springframework.mail.javamail.JavaMailSender> sender = service.activeDbMailSender();
-        assertThat(sender).isPresent();
-        JavaMailSenderImpl impl = (JavaMailSenderImpl) sender.get();
+        SmtpSettingsService.SmtpTransportResolution r = service.resolveForSend();
+        assertThat(r.rowPresent()).isTrue();
+        assertThat(r.sender()).isNotNull();
+        JavaMailSenderImpl impl = (JavaMailSenderImpl) r.sender();
         assertThat(impl.getHost()).isEqualTo("smtp.passbolt.com");
         assertThat(impl.getPort()).isEqualTo(587);
         assertThat(impl.getUsername()).isEqualTo("smtp-user");
+        assertThat(r.from()).isEqualTo("JPassbolt <no-reply@passbolt.com>");
     }
 
     @Test
-    void activeDbFromFormatsNameAndEmail() {
-        service.save(fullRequest(), adminId);
-        assertThat(service.activeDbFrom()).contains("JPassbolt <no-reply@passbolt.com>");
-    }
-
-    @Test
-    void runtimeResolversEmptyWhenNoRow() {
-        assertThat(service.activeDbMailSender()).isEmpty();
-        assertThat(service.activeDbFrom()).isEmpty();
+    void resolveForSendAndGetDbSettingsEmptyWhenNoRow() {
+        SmtpSettingsService.SmtpTransportResolution r = service.resolveForSend();
+        assertThat(r.rowPresent()).isFalse();
+        assertThat(r.sender()).isNull();
         assertThat(service.getDbSettings()).isEmpty();
+    }
+
+    // ---- corrupt / undecryptable row ----
+
+    @Test
+    void getThrows500WhenRowPresentButUndecryptable() {
+        storeCorruptRow();
+        PassboltApiException ex = catchThrowableOfType(() -> service.get(), PassboltApiException.class);
+        assertThat(ex).isNotNull();
+        assertThat(ex.getStatus()).isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+
+    @Test
+    void runtimeTreatsCorruptRowAsPresentButUnusable() {
+        storeCorruptRow();
+        // isInDb (raw presence) is true, but the config is not usable: resolveForSend
+        // reports rowPresent with a null sender → MailService skips rather than mailing
+        // via the env transport; getDbSettings is empty.
+        assertThat(service.isInDb()).isTrue();
+        assertThat(service.currentSource()).isEqualTo(SmtpSettingsService.SOURCE_DB);
+        SmtpSettingsService.SmtpTransportResolution r = service.resolveForSend();
+        assertThat(r.rowPresent()).isTrue();
+        assertThat(r.sender()).isNull();
+        assertThat(service.getDbSettings()).isEmpty();
+    }
+
+    /** Persist an smtp org-setting row whose value is NOT a decryptable PGP message. */
+    private void storeCorruptRow() {
+        OrganizationSetting row = new OrganizationSetting();
+        row.setProperty(SmtpSettingsService.ORG_SETTING_PROPERTY);
+        row.setPropertyId(UUID.randomUUID().toString());
+        row.setValue("not-a-pgp-message");
+        row.setCreatedBy(adminId);
+        row.setModifiedBy(adminId);
+        organizationSettingRepository.save(row);
     }
 
     // ---- test email ----

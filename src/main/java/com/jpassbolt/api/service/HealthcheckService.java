@@ -162,12 +162,18 @@ public class HealthcheckService {
         // fallback ("env") or nothing ("undefined").
         boolean pluginEnabled = Boolean.TRUE.equals(
                 settingsProperties.getPlugins().getOrDefault("smtpSettings", false));
+        boolean rowPresent = smtpSettingsService.isInDb();
+        // PHP surfaces the decrypt/validation error as a string here, but the JPassbolt
+        // OpenAPI schema types errorMessage as a BOOLEAN — so signal the failure as a
+        // boolean (true = the stored row exists but cannot be decrypted/parsed),
+        // staying contract-valid while still flagging a broken config. source/isInDb
+        // are kept consistent with each other (both keyed on row presence = "db").
+        boolean errorMessage = rowPresent && smtpSettingsService.getDbSettings().isEmpty();
         Map<String, Object> smtpSettings = new LinkedHashMap<>();
         smtpSettings.put("isEnabled", pluginEnabled);
-        // false means "no validation error" (PHP outputs the error string otherwise).
-        smtpSettings.put("errorMessage", false);
+        smtpSettings.put("errorMessage", errorMessage);
         smtpSettings.put("source", smtpSettingsService.currentSource());
-        smtpSettings.put("isInDb", smtpSettingsService.isInDb());
+        smtpSettings.put("isInDb", rowPresent);
         // No endpoint kill-switch / custom SSL options block in JPassbolt yet.
         smtpSettings.put("areEndpointsDisabled", false);
         smtpSettings.put("customSslOptions", false);

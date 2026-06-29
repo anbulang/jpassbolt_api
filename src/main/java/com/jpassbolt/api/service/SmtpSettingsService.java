@@ -3,12 +3,14 @@ package com.jpassbolt.api.service;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jpassbolt.api.dto.SmtpSettingsDto;
+import com.jpassbolt.api.exception.PassboltApiException;
 import com.jpassbolt.api.model.OrganizationSetting;
 import com.jpassbolt.api.repository.OrganizationSettingRepository;
 import jakarta.mail.internet.MimeMessage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.mail.javamail.JavaMailSenderImpl;
 import org.springframework.mail.javamail.MimeMessageHelper;
@@ -52,10 +54,11 @@ import java.util.regex.Pattern;
  * when nothing is configured. PHP's separate {@code "file"} source has no analogue
  * here (JPassbolt has no {@code passbolt.php}), so file/env collapse to env.</p>
  *
- * <p><b>Runtime injection.</b> {@link #activeDbMailSender()} / {@link #activeDbFrom()}
- * are the JPassbolt equivalent of PHP's {@code SmtpTransportBeforeSendEventListener}:
- * {@code MailService.send()} consults them so a DB-configured SMTP server overrides
- * the {@code spring.mail.*} bean at send time, falling back to it when no row exists.</p>
+ * <p><b>Runtime injection.</b> {@link #resolveForSend()} is the JPassbolt equivalent
+ * of PHP's {@code SmtpTransportBeforeSendEventListener}: {@code MailService.send()}
+ * consults it (one query + one decrypt) so a DB-configured SMTP server overrides the
+ * {@code spring.mail.*} bean at send time, falling back to it when no row exists and
+ * refusing to silently use a different transport when the row is present but unusable.</p>
  *
  * <p>The GET response returns the password in cleartext to the admin caller —
  * faithful to PHP (admin-only; the official admin UI pre-fills the form). The only
@@ -84,9 +87,25 @@ public class SmtpSettingsService {
     /** Single-@ email shape (same as SelfRegistrationService / UserService). */
     private static final Pattern EMAIL_PATTERN = Pattern.compile("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$");
 
-    /** Loose IPv4 recognizer for the optional SMTP client (HELO) value. */
+    /** IPv4 recognizer for the optional SMTP client (HELO) value. */
     private static final Pattern IPV4_PATTERN = Pattern.compile(
             "^(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)$");
+
+    /** IPv6 recognizer (full + :: compressed forms; no zone id) — PHP Validation::ip(). */
+    private static final Pattern IPV6_PATTERN = Pattern.compile(
+            "^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}"
+          + "|([0-9a-fA-F]{1,4}:){1,7}:"
+          + "|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}"
+          + "|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}"
+          + "|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}"
+          + "|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}"
+          + "|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}"
+          + "|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})"
+          + "|:((:[0-9a-fA-F]{1,4}){1,7}|:))$");
+
+    /** Hostname/domain (≥2 labels; letters/digits/hyphen, no leading/trailing hyphen, total ≤253). */
+    private static final Pattern DOMAIN_PATTERN = Pattern.compile(
+            "^(?=.{1,253}$)(?!-)[A-Za-z0-9-]{1,63}(?<!-)(\\.(?!-)[A-Za-z0-9-]{1,63}(?<!-))+$");
 
     /** Fast-fail timeouts so a misconfigured host never hangs a request/test. */
     private static final String SMTP_TIMEOUT_MS = "5000";
@@ -119,9 +138,13 @@ public class SmtpSettingsService {
      * The effective SMTP settings rendered for the API (PHP
      * {@code SmtpSettingsGetService::getSettings}). DB row first (source
      * {@code "db"} + id/timestamps), else the static env config (source
-     * {@code "env"}), else {@code "undefined"}. An unreadable/undecryptable row
-     * logs a warning and falls back to env (more graceful than PHP's 500; the
-     * healthcheck still reports the row exists).
+     * {@code "env"}), else {@code "undefined"}.
+     *
+     * <p>When the {@code smtp} row exists but cannot be decrypted (server key
+     * rotated / wrong passphrase / corrupt ciphertext), this surfaces a 500 with a
+     * PHP-equivalent message rather than silently falling back to a different
+     * transport — the admin must know their saved config is unusable (PHP
+     * {@code SmtpSettingsGetSettingsInDbService} throws InternalErrorException).</p>
      */
     @Transactional(readOnly = true)
     public Map<String, Object> get() {
@@ -129,20 +152,22 @@ public class SmtpSettingsService {
                 .orElse(null);
         if (row != null) {
             Map<String, Object> stored = decryptAndParse(row.getValue());
-            if (stored != null) {
-                Map<String, Object> rendered = new LinkedHashMap<>();
-                for (String field : ALLOWED_FIELDS) {
-                    rendered.put(field, stored.get(field));
-                }
-                rendered.put("source", SOURCE_DB);
-                rendered.put("id", row.getId());
-                rendered.put("created", row.getCreated());
-                rendered.put("modified", row.getModified());
-                rendered.put("created_by", row.getCreatedBy());
-                rendered.put("modified_by", row.getModifiedBy());
-                return rendered;
+            if (stored == null) {
+                throw new PassboltApiException(HttpStatus.INTERNAL_SERVER_ERROR,
+                        "The OpenPGP server key cannot be used to decrypt the SMTP settings stored "
+                        + "in database. To fix this problem, you need to configure the SMTP server again.");
             }
-            log.warn("Unreadable/undecryptable smtp organization setting — falling back to env config.");
+            Map<String, Object> rendered = new LinkedHashMap<>();
+            for (String field : ALLOWED_FIELDS) {
+                rendered.put(field, stored.get(field));
+            }
+            rendered.put("source", SOURCE_DB);
+            rendered.put("id", row.getId());
+            rendered.put("created", row.getCreated());
+            rendered.put("modified", row.getModified());
+            rendered.put("created_by", row.getCreatedBy());
+            rendered.put("modified_by", row.getModifiedBy());
+            return rendered;
         }
         return envSettings();
     }
@@ -211,21 +236,44 @@ public class SmtpSettingsService {
     }
 
     /**
-     * A {@link JavaMailSender} built from the DB SMTP config, or empty when no
-     * (decryptable) row exists — the caller then falls back to the
-     * {@code spring.mail.*} bean. Used by {@code MailService.send()}.
+     * One-shot transport resolution for {@code MailService.send()} — a single
+     * {@code findByProperty} + single GPG decrypt (not the three the separate
+     * isInDb/sender/from resolvers would cost). Distinguishes three states:
+     * <ul>
+     *   <li><b>no row</b> → {@code rowPresent=false}: caller falls back to the
+     *       {@code spring.mail.*} bean;</li>
+     *   <li><b>usable row</b> → {@code sender}/{@code from} non-null: caller sends
+     *       through the DB transport (a saved config implies delivery is on);</li>
+     *   <li><b>row present but undecryptable</b> → {@code rowPresent=true} with a
+     *       null {@code sender}: caller must NOT silently fall back to a different
+     *       transport — it skips the send (surfaced to the admin via GET 500 /
+     *       healthcheck) rather than mailing via env with the wrong From.</li>
+     * </ul>
      */
     @Transactional(readOnly = true)
-    public Optional<JavaMailSender> activeDbMailSender() {
-        return getDbSettings().map(s -> buildSender(
-                str(s.get("host")), intVal(s.get("port")),
-                str(s.get("username")), str(s.get("password")), truthy(s.get("tls"))));
+    public SmtpTransportResolution resolveForSend() {
+        OrganizationSetting row = organizationSettingRepository.findByProperty(ORG_SETTING_PROPERTY)
+                .orElse(null);
+        if (row == null) {
+            return new SmtpTransportResolution(false, null, null);
+        }
+        Map<String, Object> stored = decryptAndParse(row.getValue());
+        if (stored == null) {
+            return new SmtpTransportResolution(true, null, null);
+        }
+        JavaMailSender sender = buildSender(
+                str(stored.get("host")), intVal(stored.get("port")),
+                str(stored.get("username")), str(stored.get("password")), truthy(stored.get("tls")));
+        String from = formatFrom(str(stored.get("sender_email")), str(stored.get("sender_name")));
+        return new SmtpTransportResolution(true, sender, from);
     }
 
-    /** The DB sender address ({@code "Name <email>"}), or empty when no DB row. */
-    @Transactional(readOnly = true)
-    public Optional<String> activeDbFrom() {
-        return getDbSettings().map(s -> formatFrom(str(s.get("sender_email")), str(s.get("sender_name"))));
+    /**
+     * The resolved transport for one send: {@code rowPresent} (a DB config exists,
+     * even if undecryptable), the built {@code sender} (null when no usable config),
+     * and the {@code from} address.
+     */
+    public record SmtpTransportResolution(boolean rowPresent, JavaMailSender sender, String from) {
     }
 
     /** The decrypted stored SMTP fields (the 8 fields, no metadata), or empty. */
@@ -407,9 +455,26 @@ public class SmtpSettingsService {
         return trimmed;
     }
 
-    /** PHP mapTlsToTrueOrNull: filter_var(BOOLEAN) → TRUE, else null. */
+    /**
+     * PHP mapTlsToTrueOrNull: {@code filter_var($tls, FILTER_VALIDATE_BOOLEAN)} →
+     * TRUE, else null. Only true / 1 / "1" / "true" / "yes" / "on" map to TRUE;
+     * everything else (including the integer 2, "0", "false") maps to null. Note
+     * this is STRICTER than the internal {@link #truthy} (which reads already-stored,
+     * already-normalized boolean values), to match filter_var exactly.
+     */
     private Boolean normalizeTls(Object tls) {
-        return truthy(tls) ? Boolean.TRUE : null;
+        if (tls == null) {
+            return null;
+        }
+        if (tls instanceof Boolean b) {
+            return b ? Boolean.TRUE : null;
+        }
+        if (tls instanceof Number n) {
+            return (n.doubleValue() == 1.0) ? Boolean.TRUE : null;
+        }
+        String s = tls.toString().trim().toLowerCase(java.util.Locale.ROOT);
+        return (s.equals("1") || s.equals("true") || s.equals("yes") || s.equals("on"))
+                ? Boolean.TRUE : null;
     }
 
     /** PHP port rule: numeric, range [1,65535]; accepts a number or numeric string. */
@@ -420,6 +485,13 @@ public class SmtpSettingsService {
         }
         long value;
         if (port instanceof Number n) {
+            // PHP runs ->integer('port') BEFORE ->range(): a fractional JSON number
+            // (e.g. 1.2 or 587.0-as-Double) must be rejected, NOT truncated to long.
+            double d = n.doubleValue();
+            if (Double.isNaN(d) || Double.isInfinite(d) || d != Math.rint(d)) {
+                putError(errors, "port", "integer", "The port number should be numeric.");
+                return null;
+            }
             value = n.longValue();
         } else {
             try {
@@ -443,8 +515,8 @@ public class SmtpSettingsService {
         }
         String trimmed = client.trim();
         boolean valid = IPV4_PATTERN.matcher(trimmed).matches()
-                || trimmed.contains(":") // loose IPv6
-                || EMAIL_PATTERN.matcher("noreply@" + trimmed).matches();
+                || IPV6_PATTERN.matcher(trimmed).matches()
+                || DOMAIN_PATTERN.matcher(trimmed).matches();
         if (!valid) {
             putError(errors, "client", "isClientValid", "The client should be a valid IP or a valid domain.");
             return null;
@@ -498,8 +570,12 @@ public class SmtpSettingsService {
         try {
             return objectMapper.writeValueAsString(value);
         } catch (Exception e) {
-            throw new SmtpSettingsValidationException("The smtp settings could not be saved.",
-                    new LinkedHashMap<>());
+            // Server-built primitives/strings/Boolean/Integer only — a failure here is
+            // an internal fault, not invalid client input, so surface it as 500 (with
+            // the cause logged) rather than masquerading as a 400 validation error.
+            log.error("Failed to serialize smtp settings", e);
+            throw new PassboltApiException(HttpStatus.INTERNAL_SERVER_ERROR,
+                    "The smtp settings could not be saved.", e);
         }
     }
 

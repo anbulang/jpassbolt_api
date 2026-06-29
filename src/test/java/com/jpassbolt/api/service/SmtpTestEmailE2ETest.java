@@ -63,9 +63,13 @@ class SmtpTestEmailE2ETest {
         List<String> debug = (List<String>) body.get("debug");
         assertThat(debug).isNotEmpty();
         String joined = String.join("\n", debug);
-        assertThat(joined).contains("EHLO"); // the SMTP dialog was captured
+        assertThat(joined).contains("EHLO");             // the SMTP dialog was captured
+        assertThat(joined).containsIgnoringCase("AUTH"); // credentials were genuinely exchanged
+        // ...yet neither the raw password/username nor their Base64 AUTH forms leak,
+        // so the masking is a non-vacuous proof (the secret WAS on the wire).
+        java.util.Base64.Encoder b64 = java.util.Base64.getEncoder();
         assertThat(joined).doesNotContain(SMTP_PASSWORD);
-        assertThat(joined).doesNotContain(
-                java.util.Base64.getEncoder().encodeToString(SMTP_PASSWORD.getBytes()));
+        assertThat(joined).doesNotContain(b64.encodeToString(SMTP_PASSWORD.getBytes()));
+        assertThat(joined).doesNotContain(b64.encodeToString(SMTP_USER.getBytes()));
     }
 }
