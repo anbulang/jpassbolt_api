@@ -80,12 +80,24 @@ public class UserService {
      * = created + configured days, evaluated at consumption time
      * (SetupService).
      *
+     * <p>Also the backing implementation of guest self-registration
+     * (POST /users/register.json): when {@code selfRegistration} is true the
+     * role is FORCED to the default user role and any {@code role_id} in the
+     * request is ignored — PHP {@code UsersTable::register} hard-sets
+     * {@code role_id = USER} so a guest can never self-assign the admin role
+     * (a privilege-escalation guard). The published {@link UserRegisteredEvent}
+     * also carries the flag so the admin "new account" notice fires only for a
+     * genuine self-registration.</p>
+     *
+     * @param request          the create payload (username + profile; role_id honored only for an admin invite)
+     * @param adminId          the acting admin id for an invite, or {@code null} for a guest self-registration
+     * @param selfRegistration {@code true} for the public self-registration path (forces the user role + flags the event)
      * @return the saved (inactive) user
      * @throws UserValidationException on any validation failure (400, body
      *                                 carries the field error map)
      */
     @Transactional
-    public User createUser(UserDto.CreateRequest request, String adminId) {
+    public User createUser(UserDto.CreateRequest request, String adminId, boolean selfRegistration) {
         Map<String, Object> errors = new LinkedHashMap<>();
 
         // Username: required, email format, <= 255, lowercased.
@@ -119,18 +131,26 @@ public class UserService {
         }
 
         // Role: defaults to user; an explicit role_id must be admin or user
-        // (PHP IsAdminOrUserRoleIdRule — guest is rejected).
+        // (PHP IsAdminOrUserRoleIdRule — guest is rejected). On the public
+        // self-registration path the role is FORCED to user and any requested
+        // role_id is ignored entirely (PHP UsersTable::register hard-sets
+        // role_id = USER): a guest must never be able to self-assign admin.
         Role role = null;
-        String roleId = request != null ? request.getRoleId() : null;
-        if (roleId == null || roleId.isBlank()) {
+        if (selfRegistration) {
             role = roleRepository.findByName(Role.USER)
                     .orElseThrow(() -> new IllegalStateException("Default user role is missing."));
         } else {
-            role = roleRepository.findById(roleId)
-                    .filter(r -> Role.ADMIN.equals(r.getName()) || Role.USER.equals(r.getName()))
-                    .orElse(null);
-            if (role == null) {
-                errors.put("role_id", Map.of("checkAdminOrUser", "The role must be admin or user."));
+            String roleId = request != null ? request.getRoleId() : null;
+            if (roleId == null || roleId.isBlank()) {
+                role = roleRepository.findByName(Role.USER)
+                        .orElseThrow(() -> new IllegalStateException("Default user role is missing."));
+            } else {
+                role = roleRepository.findById(roleId)
+                        .filter(r -> Role.ADMIN.equals(r.getName()) || Role.USER.equals(r.getName()))
+                        .orElse(null);
+                if (role == null) {
+                    errors.put("role_id", Map.of("checkAdminOrUser", "The role must be admin or user."));
+                }
             }
         }
 
@@ -174,7 +194,7 @@ public class UserService {
         eventPublisher.publishEvent(new UserRegisteredEvent(
                 user.getId(), user.getUsername(),
                 profilePayload.getFirstName().trim(), profilePayload.getLastName().trim(),
-                token.getToken(), adminId, disabled));
+                token.getToken(), adminId, disabled, selfRegistration));
         return user;
     }
 

@@ -153,7 +153,7 @@ public class RecoverService {
                     user.getId(), user.getUsername(),
                     profile == null ? null : profile.getFirstName(),
                     profile == null ? null : profile.getLastName(),
-                    token.getToken(), null, disabled));
+                    token.getToken(), null, disabled, false));
         }
         return token;
     }

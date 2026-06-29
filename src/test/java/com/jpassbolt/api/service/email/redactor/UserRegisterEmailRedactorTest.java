@@ -85,7 +85,7 @@ class UserRegisterEmailRedactorTest {
 
     private UserRegisteredEvent adminInvite() {
         return new UserRegisteredEvent(invitedId, "newbie@passbolt.com", "New", "Bie",
-                "tok-12345", adminId, false);
+                "tok-12345", adminId, false, false);
     }
 
     @Test
@@ -113,7 +113,7 @@ class UserRegisterEmailRedactorTest {
     @Test
     void recoverRestartNullAdminUsesNamelessIntro() {
         UserRegisteredEvent selfRestart = new UserRegisteredEvent(invitedId, "newbie@passbolt.com",
-                "New", "Bie", "tok-99999", null, false);
+                "New", "Bie", "tok-99999", null, false, false);
         redactor.onUserRegistered(selfRestart);
 
         ArgumentCaptor<EmailMessage> captor = ArgumentCaptor.forClass(EmailMessage.class);
@@ -128,7 +128,7 @@ class UserRegisterEmailRedactorTest {
     @Test
     void disabledInviteeSkipped() {
         UserRegisteredEvent disabled = new UserRegisteredEvent(invitedId, "newbie@passbolt.com",
-                "New", "Bie", "tok-00000", adminId, true);
+                "New", "Bie", "tok-00000", adminId, true, false);
         redactor.onUserRegistered(disabled);
         verify(mailService, never()).send(org.mockito.ArgumentMatchers.any());
     }

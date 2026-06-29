@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<!--
+  Sent to every administrator when a guest self-registers
+  (SelfRegistrationAdminEmailRedactor). Variables: firstName + username (the new
+  user), link (SPA deep link to the user view). The whole <body> is replaced by
+  the shared shell; only the `content` fragment is pulled in.
+-->
+<body th:replace="~{_layout :: shell(#{email.selfregister.admin.title}, ~{::content})}">
+<div th:fragment="content">
+  <p th:text="#{email.selfregister.admin.intro(${firstName}, ${username})}">
+    A user just created an account.
+  </p>
+  <p style="margin:24px 0;">
+    <a th:href="${link}" th:text="#{email.selfregister.admin.cta}"
+       style="background:#2a6df4;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:600;display:inline-block;">
+      View user in JPassbolt
+    </a>
+  </p>
+  <p style="color:#888;font-size:12px;word-break:break-all;"
+     th:text="#{email.button.fallback(${link})}">
+    Or open this link: ...
+  </p>
+</div>
+</body>
+</html>

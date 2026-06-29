@@ -175,7 +175,7 @@ public class UsersController {
                 }
 
                 try {
-                        User created = userService.createUser(request, adminId);
+                        User created = userService.createUser(request, adminId, false);
                         return ResponseEntity.ok(createResponse("success",
                                         "The user was successfully added. This user now need to complete the setup.",
                                         toUserDetailMap(created), url));

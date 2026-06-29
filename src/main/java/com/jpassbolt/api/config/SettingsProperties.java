@@ -71,6 +71,15 @@ public class SettingsProperties {
         defaults.put("jwtAuthentication", true);
         defaults.put("previewPassword", true);
         defaults.put("multiFactorAuthentication", true);
+        // Guest self-registration (SelfRegistrationController + settings). The
+        // flag advertises that the plugin EXISTS on this server (PHP feature
+        // plugin loaded); whether registration is actually OPEN is a separate
+        // state — it requires an admin to configure allowed domains via
+        // POST /self-registration/settings.json (with no settings row,
+        // isSelfRegistrationOpen() is false and every attempt is rejected).
+        // Override to false under jpassbolt.settings.plugins to hide the
+        // register affordance entirely.
+        defaults.put("selfRegistration", true);
         // Publicly visible flag in CE; feature not implemented yet.
         defaults.put("accountRecoveryRequestHelp", false);
         // Not implemented yet — must stay false until their clusters land.

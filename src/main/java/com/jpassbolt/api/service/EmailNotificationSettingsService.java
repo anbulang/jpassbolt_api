@@ -64,9 +64,11 @@ public class EmailNotificationSettingsService {
 
     /**
      * The authoritative key set + defaults, mirroring PHP
-     * {@code CoreNotificationSettingsDefinition::buildSchema}. 25 boolean keys,
-     * already in the flattened snake_case form the API emits. Iteration order is
-     * the PHP {@code addField} order (LinkedHashMap) for a stable response shape.
+     * {@code CoreNotificationSettingsDefinition::buildSchema} (25 keys) plus the
+     * one key the SelfRegistration feature plugin contributes
+     * ({@code send_admin_user_register_complete}) = 26 boolean keys, already in
+     * the flattened snake_case form the API emits. Iteration order is the PHP
+     * {@code addField} order (LinkedHashMap) for a stable response shape.
      */
     public static final Map<String, Boolean> DEFAULTS = buildDefaults();
 
@@ -88,6 +90,12 @@ public class EmailNotificationSettingsService {
         d.put("send_admin_user_recover_complete", true);
         d.put("send_admin_user_disable_user", true);
         d.put("send_admin_user_disable_admin", true);
+        // Contributed by the SelfRegistration feature plugin (PHP
+        // SelfRegistrationNotificationSettingsDefinition, default true): notify
+        // admins when a guest self-registers. Not part of PHP's 25-key Core
+        // schema — JPassbolt keeps one flat DEFAULTS map, so enabling
+        // self-registration grows the effective settings to 26 keys.
+        d.put("send_admin_user_register_complete", true);
         // comment controls
         d.put("send_comment_add", true);
         // group controls

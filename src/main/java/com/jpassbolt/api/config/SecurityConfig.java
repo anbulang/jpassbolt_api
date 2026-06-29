@@ -59,6 +59,13 @@ public class SecurityConfig {
                                                                 // endpoints are already covered by
                                                                 // /setup/** above.
                                                                 "/users/recover", "/users/recover.json",
+                                                                // Guest-only self-registration: the dry-run pre-check and the
+                                                                // actual sign-up. The admin settings endpoints
+                                                                // (/self-registration/settings*) are deliberately NOT here —
+                                                                // they stay behind anyRequest().authenticated() + an
+                                                                // in-controller admin gate.
+                                                                "/self-registration/dry-run", "/self-registration/dry-run.json",
+                                                                "/users/register", "/users/register.json",
                                                                 "/.well-known/jwks.json")
                                                 .permitAll()
                                                 .anyRequest().authenticated())
