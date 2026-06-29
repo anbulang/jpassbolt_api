@@ -20,6 +20,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.MediaType;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -28,6 +29,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
@@ -149,6 +151,19 @@ class AuditLogIntegrationTest {
         List<SecretAccess> accesses = secretAccessRepository.findBySecretId(secret.getId());
         assertThat(accesses).hasSize(1);
         assertThat(accesses.get(0).getUserId()).isEqualTo(user.getId());
+    }
+
+    @Test
+    void updatingASecretRecordsNoAccess() throws Exception {
+        // A write is not a read: PHP logs SecretAccess only on view actions, never on
+        // secret UPDATE. The owner has UPDATE permission, so the PUT succeeds — but no
+        // secret_accesses row may be created.
+        mockMvc.perform(put("/secrets/resource/" + resource.getId() + ".json")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"data\":\"-----BEGIN PGP MESSAGE-----\\nupdated\\n-----END PGP MESSAGE-----\"}"))
+                .andExpect(status().isOk());
+
+        assertThat(secretAccessRepository.count()).isZero();
     }
 
     // ---------- action_logs ----------

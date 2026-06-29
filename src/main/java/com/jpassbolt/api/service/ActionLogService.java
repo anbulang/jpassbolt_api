@@ -65,7 +65,12 @@ public class ActionLogService {
         try {
             String actionId = Action.idForName(actionName);
             ensureAction(actionId, actionName);
-            int status = httpStatus == 200 ? ActionLog.STATUS_SUCCESS : ActionLog.STATUS_ERROR;
+            // PHP computes status = (int)(code === 200), which is sound there only because
+            // CakePHP's AppController::success() hardcodes HTTP 200 for EVERY success. In
+            // JPassbolt one success path differs — ResourceController.createResource returns
+            // 201 — so map the whole 2xx range to success; otherwise a successful create
+            // would be recorded as a failure (status 0).
+            int status = httpStatus >= 200 && httpStatus < 300 ? ActionLog.STATUS_SUCCESS : ActionLog.STATUS_ERROR;
             actionLogRepository.save(new ActionLog(userId, actionId, sanitizeContext(context), status));
         } catch (Exception e) {
             log.error("Failed to record action log (action={}, status={}): {}",
