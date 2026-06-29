@@ -196,8 +196,9 @@ public class SelfRegistrationService {
      * <ol>
      *   <li>missing/invalid email → 400 (PHP FormValidationException);</li>
      *   <li>self-registration disabled / no provider → 403 (PHP ForbiddenException);</li>
-     *   <li>email domain not in the allow-list → 422 (PHP CustomValidationException;
-     *       no field-error body here, an infra limitation);</li>
+     *   <li>email domain not in the allow-list → 400 with a field-error body
+     *       {@code {email:{checkEmailDomainIsAllowed:...}}} (PHP CustomValidationException,
+     *       whose default code is 400 — verified against the PHP controller test);</li>
      *   <li>email already registered (non-deleted user) → 403 (PHP ForbiddenException).</li>
      * </ol>
      * A soft-deleted account's email is treated as available (PHP isUniqueUsername
@@ -218,8 +219,13 @@ public class SelfRegistrationService {
                     "The self registration is disabled.");
         }
         if (!isDomainAllowed(normalized, allowed)) {
-            throw new PassboltApiException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "The domain is not allowed to self register.");
+            // PHP CustomValidationException → HTTP 400 (its default code) with a
+            // field-error body {email:{checkEmailDomainIsAllowed:...}}. The official
+            // extension keys off the 400 + this body, so both are reproduced.
+            throw new SelfRegistrationValidationException(
+                    "The domain is not supported for self-registration.",
+                    Map.of("email", Map.of("checkEmailDomainIsAllowed",
+                            "The domain is not supported for self-registration.")));
         }
         if (userRepository.existsByUsernameAndDeletedFalse(normalized)) {
             throw new PassboltApiException(HttpStatus.FORBIDDEN,
@@ -359,5 +365,27 @@ public class SelfRegistrationService {
 
     private static String deterministicUuid(String seed) {
         return UUID.nameUUIDFromBytes(seed.getBytes(StandardCharsets.UTF_8)).toString();
+    }
+
+    /**
+     * A guest-gate validation failure carrying a field-error map rendered as the
+     * 400 response body — the port of PHP {@code CustomValidationException} (default
+     * code 400) raised for the domain-not-allowed case. The public controllers catch
+     * this to attach the {@code {email:{checkEmailDomainIsAllowed:...}}} body that the
+     * official extension expects; the simpler 403/400 gate failures stay as
+     * {@link PassboltApiException} (message only).
+     */
+    public static class SelfRegistrationValidationException extends RuntimeException {
+
+        private final transient Map<String, Object> errors;
+
+        public SelfRegistrationValidationException(String message, Map<String, Object> errors) {
+            super(message);
+            this.errors = errors;
+        }
+
+        public Map<String, Object> getErrors() {
+            return errors;
+        }
     }
 }

@@ -116,10 +116,15 @@ class SelfRegistrationEmailRedactorTest {
 
     @Test
     void adminNoticeSkippedForAdminInviteOrRecoverRestart() {
-        // selfRegistration=false -> not a guest self-registration
-        UserRegisteredEvent invite = new UserRegisteredEvent("uid", "newbie@passbolt.com",
-                "New", "Bie", "tok", adaId, false, false);
-        adminRedactor.onUserRegistered(invite);
+        // Admin invite shape: adminId != null, selfRegistration=false.
+        adminRedactor.onUserRegistered(new UserRegisteredEvent("uid", "newbie@passbolt.com",
+                "New", "Bie", "tok", adaId, false, false));
+        // Recover-restart shape: adminId == null, selfRegistration=false. This is the
+        // load-bearing discriminator case — adminId==null alone must NOT trigger the
+        // notice (only event.selfRegistration() does), since recover-restart is also
+        // adminId==null. Both shapes must send nothing.
+        adminRedactor.onUserRegistered(new UserRegisteredEvent("uid", "newbie@passbolt.com",
+                "New", "Bie", "tok", null, false, false));
         verify(mailService, never()).send(any());
     }
 

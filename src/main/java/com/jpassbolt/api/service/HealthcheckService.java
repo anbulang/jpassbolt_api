@@ -1,5 +1,6 @@
 package com.jpassbolt.api.service;
 
+import com.jpassbolt.api.config.SettingsProperties;
 import com.jpassbolt.api.repository.RoleRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -47,6 +48,8 @@ public class HealthcheckService {
     private final DataSource dataSource;
     private final GpgService gpgService;
     private final RoleRepository roleRepository;
+    private final SettingsProperties settingsProperties;
+    private final SelfRegistrationService selfRegistrationService;
 
     @Value("${jpassbolt.version:4.9.0}")
     private String currentVersion;
@@ -232,9 +235,16 @@ public class HealthcheckService {
         application.put("seleniumDisabled", true);
         application.put("robotsIndexDisabled", true);
         // LinkedHashMap (not Map.of): selfRegistrationProvider is a nullable string.
+        // Reflect live state (PHP SelfRegistrationHealthcheckService) instead of a
+        // hardcoded value, so /healthcheck agrees with /settings.json and the real
+        // gate: the plugin flag mirrors what /settings advertises, and the provider
+        // is non-null only once an admin has configured one (isOpen()).
+        boolean pluginEnabled = Boolean.TRUE.equals(
+                settingsProperties.getPlugins().getOrDefault("selfRegistration", false));
         Map<String, Object> registrationClosed = new LinkedHashMap<>();
-        registrationClosed.put("isSelfRegistrationPluginEnabled", false);
-        registrationClosed.put("selfRegistrationProvider", null);
+        registrationClosed.put("isSelfRegistrationPluginEnabled", pluginEnabled);
+        registrationClosed.put("selfRegistrationProvider",
+                selfRegistrationService.isOpen() ? SelfRegistrationService.PROVIDER_EMAIL_DOMAINS : null);
         registrationClosed.put("isRegistrationPublicRemovedFromPassbolt", true);
         application.put("registrationClosed", registrationClosed);
         application.put("hostAvailabilityCheckEnabled", false);

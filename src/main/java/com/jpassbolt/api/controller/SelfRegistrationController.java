@@ -66,11 +66,14 @@ public class SelfRegistrationController {
         String url = "/self-registration/dry-run.json";
 
         if (isAuthenticated()) {
-            return ResponseEntity.status(403).body(ApiResponse.passthrough("error",
-                    "Only guests are allowed to self register.", null, url));
+            return guestOnly(url);
         }
 
-        selfRegistrationService.canGuestSelfRegister(request == null ? null : request.getEmail());
+        try {
+            selfRegistrationService.canGuestSelfRegister(request == null ? null : request.getEmail());
+        } catch (SelfRegistrationService.SelfRegistrationValidationException e) {
+            return ResponseEntity.status(400).body(ApiResponse.error(e.getMessage(), e.getErrors(), url));
+        }
         return ResponseEntity.ok(ApiResponse.nullBody("success",
                 "The operation was successful.", url));
     }
@@ -85,12 +88,11 @@ public class SelfRegistrationController {
         String url = "/users/register.json";
 
         if (isAuthenticated()) {
-            return ResponseEntity.status(403).body(ApiResponse.passthrough("error",
-                    "Only guests are allowed to self register.", null, url));
+            return guestOnly(url);
         }
         if (!selfRegistrationService.isOpen()) {
-            return ResponseEntity.status(404).body(ApiResponse.passthrough("error",
-                    "Registration is not open.", null, url));
+            return ResponseEntity.status(404).body(ApiResponse.withCode("error",
+                    "Registration is not open.", null, 404, url));
         }
         return ResponseEntity.ok(ApiResponse.nullBody("success",
                 "The operation was successful.", url));
@@ -109,14 +111,19 @@ public class SelfRegistrationController {
         String url = "/users/register.json";
 
         if (isAuthenticated()) {
-            return ResponseEntity.status(403).body(ApiResponse.passthrough("error",
-                    "Only guests are allowed to self register.", null, url));
+            return guestOnly(url);
         }
 
         // Gate first (PHP registerPost re-runs canGuestSelfRegister): self-registration
-        // open + email domain allow-listed + not already registered. Failures throw a
-        // PassboltApiException with the faithful status and are rendered globally.
-        selfRegistrationService.canGuestSelfRegister(request == null ? null : request.getUsername());
+        // open + email domain allow-listed + not already registered. The disabled (403),
+        // duplicate (403) and bad-email (400) failures are PassboltApiException and are
+        // rendered by the global handler; the domain-not-allowed case carries a
+        // field-error body (PHP CustomValidationException, 400) and is rendered here.
+        try {
+            selfRegistrationService.canGuestSelfRegister(request == null ? null : request.getUsername());
+        } catch (SelfRegistrationService.SelfRegistrationValidationException e) {
+            return ResponseEntity.status(400).body(ApiResponse.error(e.getMessage(), e.getErrors(), url));
+        }
 
         try {
             User created = userService.createUser(request, null, true);
@@ -150,6 +157,12 @@ public class SelfRegistrationController {
         profile.put("last_name", payload == null ? null : payload.getLastName());
         body.put("profile", profile);
         return body;
+    }
+
+    /** 403 guest-only response with header.code matching the HTTP status (not the passthrough default 400). */
+    private ResponseEntity<Map<String, Object>> guestOnly(String url) {
+        return ResponseEntity.status(403).body(ApiResponse.withCode("error",
+                "Only guests are allowed to self register.", null, 403, url));
     }
 
     /** True when a real principal is present (anonymous does not count). */

@@ -22,6 +22,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 import java.util.regex.Pattern;
 
@@ -109,7 +110,7 @@ public class RecoverService {
         // assertRecoveryCase runs inside recover()).
         assertRecoveryCase(request.getRecoveryCase());
 
-        User user = userRepository.findByUsername(username.trim().toLowerCase())
+        User user = userRepository.findByUsername(username.trim().toLowerCase(Locale.ROOT))
                 .filter(u -> !Boolean.TRUE.equals(u.getDeleted()))
                 .filter(u -> u.getDisabled() == null)
                 .orElse(null);

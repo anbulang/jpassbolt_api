@@ -16,9 +16,9 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.Map;
@@ -76,8 +76,13 @@ public class SelfRegistrationSettingsController {
                 "The operation was successful.", settings, url));
     }
 
-    /** POST /self-registration/settings.json — validate + persist. Admin only. */
-    @PostMapping({ "/settings", "/settings.json" })
+    /**
+     * POST|PUT /self-registration/settings.json — validate + persist. Admin only.
+     * PHP routes.php registers BOTH verbs for setSettings, so accept both
+     * (mirroring UsersController.updateUser).
+     */
+    @RequestMapping(value = { "/settings", "/settings.json" },
+            method = { RequestMethod.POST, RequestMethod.PUT })
     public ResponseEntity<Map<String, Object>> post(
             @RequestBody(required = false) SelfRegistrationDto.SettingsRequest request) {
         String url = "/self-registration/settings.json";

@@ -102,6 +102,7 @@ class SelfRegistrationServiceTest {
                 () -> service.save(request("ldap", List.of("passbolt.com")), adminId),
                 PassboltApiException.class);
         assertThat(ex.getStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(ex.getMessage()).isEqualTo("The self registration provider is not supported.");
     }
 
     @Test
@@ -110,6 +111,7 @@ class SelfRegistrationServiceTest {
                 () -> service.save(request("email_domains", List.of()), adminId),
                 PassboltApiException.class);
         assertThat(ex.getStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(ex.getMessage()).isEqualTo("At least one allowed domain is required.");
     }
 
     @Test
@@ -162,27 +164,33 @@ class SelfRegistrationServiceTest {
 
     @Test
     void gateRejectsWhenDisabledWith403() {
-        // no settings row at all
-        assertThat(catchThrowableOfType(
-                () -> service.canGuestSelfRegister("new@passbolt.com"),
-                PassboltApiException.class).getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+        // no settings row at all. Assert BOTH status and message so this 403 branch
+        // can never be confused with the also-403 already-registered branch.
+        PassboltApiException ex = catchThrowableOfType(
+                () -> service.canGuestSelfRegister("new@passbolt.com"), PassboltApiException.class);
+        assertThat(ex.getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+        assertThat(ex.getMessage()).isEqualTo("The self registration is disabled.");
     }
 
     @Test
-    void gateRejectsDisallowedDomainWith422() {
+    void gateRejectsDisallowedDomainWith400AndFieldErrors() {
+        // PHP CustomValidationException -> HTTP 400 with a {email:{checkEmailDomainIsAllowed}} body.
         openWith("passbolt.com");
-        assertThat(catchThrowableOfType(
+        SelfRegistrationService.SelfRegistrationValidationException ex = catchThrowableOfType(
                 () -> service.canGuestSelfRegister("new@evil.com"),
-                PassboltApiException.class).getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                SelfRegistrationService.SelfRegistrationValidationException.class);
+        assertThat(ex).isNotNull();
+        assertThat(ex.getErrors()).containsKey("email");
     }
 
     @Test
     void gateRejectsAlreadyRegisteredEmailWith403() {
         openWith("passbolt.com");
         saveUser("taken@passbolt.com", false);
-        assertThat(catchThrowableOfType(
-                () -> service.canGuestSelfRegister("taken@passbolt.com"),
-                PassboltApiException.class).getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+        PassboltApiException ex = catchThrowableOfType(
+                () -> service.canGuestSelfRegister("taken@passbolt.com"), PassboltApiException.class);
+        assertThat(ex.getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+        assertThat(ex.getMessage()).isEqualTo("The email is already registered.");
     }
 
     @Test
@@ -194,10 +202,11 @@ class SelfRegistrationServiceTest {
 
     @Test
     void gateRejectsSubdomainNotExplicitlyAllowed() {
+        // exact whole-string match only — mail.passbolt.com is not passbolt.com
         openWith("passbolt.com");
         assertThat(catchThrowableOfType(
                 () -> service.canGuestSelfRegister("x@mail.passbolt.com"),
-                PassboltApiException.class).getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                SelfRegistrationService.SelfRegistrationValidationException.class)).isNotNull();
     }
 
     @Test

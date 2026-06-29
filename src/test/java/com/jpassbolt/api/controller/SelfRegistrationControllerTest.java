@@ -139,12 +139,14 @@ class SelfRegistrationControllerTest {
     }
 
     @Test
-    void dryRun_domainNotAllowed_returns422() throws Exception {
+    void dryRun_domainNotAllowed_returns400WithFieldError() throws Exception {
+        // PHP CustomValidationException -> HTTP 400 + {email:{checkEmailDomainIsAllowed}}
         openWith("\"passbolt.com\"");
         mockMvc.perform(post("/self-registration/dry-run.json")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(Map.of("email", "intruder@evil.com"))))
-                .andExpect(status().isUnprocessableEntity());
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.body.email.checkEmailDomainIsAllowed").exists());
     }
 
     @Test
@@ -227,7 +229,7 @@ class SelfRegistrationControllerTest {
     }
 
     @Test
-    void register_domainNotAllowed_returns422() throws Exception {
+    void register_domainNotAllowed_returns400() throws Exception {
         openWith("\"passbolt.com\"");
         String body = objectMapper.writeValueAsString(Map.of(
                 "username", "intruder@evil.com",
@@ -236,9 +238,39 @@ class SelfRegistrationControllerTest {
         mockMvc.perform(post("/users/register.json")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(body))
-                .andExpect(status().isUnprocessableEntity());
+                .andExpect(status().isBadRequest());
 
         assertThat(userRepository.findByUsername("intruder@evil.com")).isEmpty();
+    }
+
+    @Test
+    void register_closedServer_returns403AndCreatesNothing() throws Exception {
+        // No openWith -> registration closed. The register POST must re-run the gate
+        // (403 disabled) rather than fall through to createUser, which has no
+        // open/closed concept and would otherwise create a valid account.
+        String body = objectMapper.writeValueAsString(Map.of(
+                "username", "newbie@passbolt.com",
+                "profile", Map.of("first_name", "New", "last_name", "Bie")));
+
+        mockMvc.perform(post("/users/register.json")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body))
+                .andExpect(status().isForbidden());
+
+        assertThat(userRepository.findByUsername("newbie@passbolt.com")).isEmpty();
+    }
+
+    @Test
+    void register_invalidEmail_returns400() throws Exception {
+        openWith("\"passbolt.com\"");
+        String body = objectMapper.writeValueAsString(Map.of(
+                "username", "not-an-email",
+                "profile", Map.of("first_name", "No", "last_name", "Mail")));
+
+        mockMvc.perform(post("/users/register.json")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body))
+                .andExpect(status().isBadRequest());
     }
 
     @Test
@@ -267,5 +299,18 @@ class SelfRegistrationControllerTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(body))
                 .andExpect(status().isForbidden());
+    }
+
+    // ---- admin settings boundary (must stay non-public) ----
+
+    @Test
+    void adminSettings_unauthenticated_returns401() throws Exception {
+        // The ADMIN settings endpoint must stay behind anyRequest().authenticated()
+        // and never become public — the guest dry-run/register paths sit adjacent in
+        // the same SecurityConfig matcher list, so this locks the boundary. (Asserted
+        // here, in the no-default-bearer harness, rather than in the contract test
+        // whose base attaches a Bearer to every request.)
+        mockMvc.perform(get("/self-registration/settings.json"))
+                .andExpect(status().isUnauthorized());
     }
 }

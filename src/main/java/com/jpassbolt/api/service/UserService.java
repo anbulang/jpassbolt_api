@@ -22,6 +22,7 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 import java.util.regex.Pattern;
@@ -105,7 +106,11 @@ public class UserService {
         if (request == null || request.getUsername() == null || request.getUsername().isBlank()) {
             errors.put("username", Map.of("_empty", "A username is required."));
         } else {
-            username = request.getUsername().trim().toLowerCase();
+            // Locale.ROOT so the folding is locale-independent (PHP mb_strtolower)
+            // and byte-identical to the self-registration gate's normalization —
+            // otherwise a Turkish-locale ('I'->'ı') server would persist/dedup a
+            // different string than the gate validated.
+            username = request.getUsername().trim().toLowerCase(Locale.ROOT);
             if (username.length() > 255) {
                 errors.put("username", Map.of("maxLength",
                         "The username length should be maximum 255 characters."));
