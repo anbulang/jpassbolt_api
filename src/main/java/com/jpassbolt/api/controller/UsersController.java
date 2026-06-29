@@ -167,7 +167,7 @@ public class UsersController {
         @PostMapping({ "/users", "/users.json" })
         public ResponseEntity<Map<String, Object>> addUser(@RequestBody UserDto.CreateRequest request) {
                 String url = "/users.json";
-                getCurrentUserId(); // 401/404 guard via PassboltApiException
+                String adminId = getCurrentUserId(); // 401/404 guard via PassboltApiException
 
                 if (!isCurrentUserAdmin()) {
                         return ResponseEntity.status(403).body(createResponse("error",
@@ -175,7 +175,7 @@ public class UsersController {
                 }
 
                 try {
-                        User created = userService.createUser(request);
+                        User created = userService.createUser(request, adminId);
                         return ResponseEntity.ok(createResponse("success",
                                         "The user was successfully added. This user now need to complete the setup.",
                                         toUserDetailMap(created), url));

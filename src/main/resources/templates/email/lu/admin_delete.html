@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<!--
+  Sent to all administrators when an administrator account is deleted
+  (AdminDeleteEmailRedactor). Variables: actorName (who deleted); deletedName +
+  deletedUsername (the deleted admin); isSelf (recipient == actor → self-variant);
+  link (SPA users page). The whole <body> is replaced by the shared shell.
+-->
+<body th:replace="~{_layout :: shell(#{email.admin.delete.title}, ~{::content})}">
+<div th:fragment="content">
+  <p th:if="${isSelf}" th:text="#{email.admin.delete.intro.self(${deletedName})}">
+    You deleted an administrator.
+  </p>
+  <p th:unless="${isSelf}" th:text="#{email.admin.delete.intro(${actorName},${deletedName},${deletedUsername})}">
+    An administrator has been deleted.
+  </p>
+  <p style="color:#444;" th:text="#{email.admin.delete.suspicious}">
+    Get in touch with the administrator at the origin of this operation if it looks suspicious.
+  </p>
+  <p style="margin:24px 0;">
+    <a th:href="${link}" th:text="#{email.admin.delete.cta}"
+       style="background:#2a6df4;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:600;display:inline-block;">
+      Log in to JPassbolt
+    </a>
+  </p>
+  <p style="color:#888;font-size:12px;word-break:break-all;"
+     th:text="#{email.button.fallback(${link})}">
+    Or open this link: ...
+  </p>
+</div>
+</body>
+</html>

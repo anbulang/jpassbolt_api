@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<!--
+  Sent to the other current managers of a group after a membership change
+  (GroupUpdateAdminSummaryEmailRedactor). Variables: actorName; groupName;
+  addedUsers / updatedUsers / removedUsers (each a list of {name, manager}); link.
+  The whole <body> is replaced by the shared shell.
+-->
+<body th:replace="~{_layout :: shell(#{email.group.manager.update.title}, ~{::content})}">
+<div th:fragment="content">
+  <p th:text="#{email.group.manager.update.intro(${actorName},${groupName})}">
+    A group you manage was updated.
+  </p>
+
+  <div th:if="${!addedUsers.isEmpty()}">
+    <p style="font-weight:600;margin:16px 0 4px;" th:text="#{email.group.summary.added}">Added:</p>
+    <ul style="margin:0 0 8px;padding-left:20px;">
+      <li th:each="u : ${addedUsers}">
+        <span th:text="${u.name}">Name</span>
+        <span th:if="${u.manager}" style="color:#888;" th:text="#{email.group.summary.manager.marker}">(manager)</span>
+      </li>
+    </ul>
+  </div>
+
+  <div th:if="${!updatedUsers.isEmpty()}">
+    <p style="font-weight:600;margin:16px 0 4px;" th:text="#{email.group.summary.updated}">Updated:</p>
+    <ul style="margin:0 0 8px;padding-left:20px;">
+      <li th:each="u : ${updatedUsers}">
+        <span th:text="${u.name}">Name</span>
+        <span th:if="${u.manager}" style="color:#888;" th:text="#{email.group.summary.manager.marker}">(manager)</span>
+      </li>
+    </ul>
+  </div>
+
+  <div th:if="${!removedUsers.isEmpty()}">
+    <p style="font-weight:600;margin:16px 0 4px;" th:text="#{email.group.summary.removed}">Removed:</p>
+    <ul style="margin:0 0 8px;padding-left:20px;">
+      <li th:each="u : ${removedUsers}">
+        <span th:text="${u.name}">Name</span>
+        <span th:if="${u.manager}" style="color:#888;" th:text="#{email.group.summary.manager.marker}">(manager)</span>
+      </li>
+    </ul>
+  </div>
+
+  <p style="margin:24px 0;">
+    <a th:href="${link}" th:text="#{email.group.cta}"
+       style="background:#2a6df4;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:600;display:inline-block;">
+      View in JPassbolt
+    </a>
+  </p>
+  <p style="color:#888;font-size:12px;word-break:break-all;"
+     th:text="#{email.button.fallback(${link})}">
+    Or open this link: ...
+  </p>
+</div>
+</body>
+</html>

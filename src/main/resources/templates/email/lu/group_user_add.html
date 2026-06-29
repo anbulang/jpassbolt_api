@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<!--
+  Sent to a member added to a group, on create and on update
+  (GroupUserAddEmailRedactor). Variables: actorName; groupName; isManager (extra
+  manager line); link (SPA groups page). The whole <body> is replaced by the shell.
+-->
+<body th:replace="~{_layout :: shell(#{email.group.user.add.title}, ~{::content})}">
+<div th:fragment="content">
+  <p th:text="#{email.group.user.add.intro(${actorName},${groupName})}">
+    You were added to a group.
+  </p>
+  <p th:text="#{email.group.user.add.body}">
+    As a member you now have access to the group's passwords.
+  </p>
+  <p th:if="${isManager}" th:text="#{email.group.user.add.manager}">
+    As a group manager you can also add and remove members.
+  </p>
+  <p style="margin:24px 0;">
+    <a th:href="${link}" th:text="#{email.group.cta}"
+       style="background:#2a6df4;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:600;display:inline-block;">
+      View in JPassbolt
+    </a>
+  </p>
+  <p style="color:#888;font-size:12px;word-break:break-all;"
+     th:text="#{email.button.fallback(${link})}">
+    Or open this link: ...
+  </p>
+</div>
+</body>
+</html>

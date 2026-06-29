@@ -70,6 +70,28 @@ public interface GroupUserRepository extends JpaRepository<GroupUser, String> {
     List<String> findGroupIdsWhereUserOnlyMember(@Param("userId") String userId);
 
     /**
+     * Groups where the user is a member AND at least one OTHER user is also a
+     * member (the complement of {@link #findGroupIdsWhereUserOnlyMember}) — PHP
+     * GroupsUsersTable::findGroupsWhereUserNotOnlyMember. Used to notify the
+     * surviving group managers when the user is deleted (only-member groups are
+     * deleted along with the user and have no managers to notify).
+     */
+    @Query("SELECT DISTINCT gu.groupId FROM GroupUser gu WHERE gu.userId = :userId " +
+            "AND gu.groupId IN (SELECT gu2.groupId FROM GroupUser gu2 WHERE gu2.userId <> :userId)")
+    List<String> findGroupsWhereUserNotOnlyMember(@Param("userId") String userId);
+
+    /**
+     * Distinct user ids of the managers (is_admin) of any of the given groups —
+     * recipients of the user-delete group-manager notification (PHP
+     * UserDeleteEmailRedactor::getRecipientsWithGroups filters
+     * GroupsUsers.is_admin = 1 over the event's groupsIds). Feed into
+     * RecipientResolver, which drops soft-deleted/disabled users.
+     */
+    @Query("SELECT DISTINCT gu.userId FROM GroupUser gu " +
+            "WHERE gu.groupId IN :groupIds AND gu.isAdmin = true")
+    List<String> findManagerUserIdsByGroupIdIn(@Param("groupIds") Collection<String> groupIds);
+
+    /**
      * Member user ids of a group whose user row is not soft-deleted —
      * defensive filter for permission fan-outs (a deleted user must never be
      * required to receive a Secret).

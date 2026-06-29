@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<!--
+  Sent to a newly-created user with their setup link (UserRegisterEmailRedactor).
+  Variables: firstName (greeting, available); adminName + hasAdmin (admin
+  attribution line, absent on the self-driven recover-restart branch); link (SPA
+  setup deep link). The whole <body> is replaced by the shared shell; only the
+  `content` fragment is pulled in.
+-->
+<body th:replace="~{_layout :: shell(#{email.invite.title}, ~{::content})}">
+<div th:fragment="content">
+  <p th:if="${hasAdmin}" th:text="#{email.invite.intro.admin(${adminName})}">
+    An administrator created an account for you.
+  </p>
+  <p th:if="${!hasAdmin}" th:text="#{email.invite.intro}">
+    An account was created for you.
+  </p>
+  <p style="margin:24px 0;">
+    <a th:href="${link}" th:text="#{email.invite.cta}"
+       style="background:#2a6df4;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:600;display:inline-block;">
+      Set up my account
+    </a>
+  </p>
+  <p style="color:#888;font-size:12px;word-break:break-all;"
+     th:text="#{email.button.fallback(${link})}">
+    Or open this link: ...
+  </p>
+</div>
+</body>
+</html>

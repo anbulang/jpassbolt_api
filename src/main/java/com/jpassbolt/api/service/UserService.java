@@ -10,8 +10,10 @@ import com.jpassbolt.api.repository.AuthenticationTokenRepository;
 import com.jpassbolt.api.repository.ProfileRepository;
 import com.jpassbolt.api.repository.RoleRepository;
 import com.jpassbolt.api.repository.UserRepository;
+import com.jpassbolt.api.service.email.event.UserRegisteredEvent;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -41,6 +43,7 @@ public class UserService {
     private final RoleRepository roleRepository;
     private final ProfileRepository profileRepository;
     private final AuthenticationTokenRepository authenticationTokenRepository;
+    private final ApplicationEventPublisher eventPublisher;
 
     /**
      * Get a user by their ID.
@@ -82,7 +85,7 @@ public class UserService {
      *                                 carries the field error map)
      */
     @Transactional
-    public User createUser(UserDto.CreateRequest request) {
+    public User createUser(UserDto.CreateRequest request, String adminId) {
         Map<String, Object> errors = new LinkedHashMap<>();
 
         // Username: required, email format, <= 255, lowercased.
@@ -156,6 +159,16 @@ public class UserService {
         authenticationTokenRepository.save(token);
 
         log.info("User {} created (inactive), register token issued", user.getUsername());
+
+        // Notification (UserRegisterEmailRedactor): email the invited user their
+        // setup link after commit. Scalar snapshot — first/last name come from the
+        // validated payload (the Profile entity detaches on the async listener
+        // thread), the register token value is captured here, and the admin actor
+        // (adminId) is resolved to a display name in the body only (never mailed).
+        eventPublisher.publishEvent(new UserRegisteredEvent(
+                user.getId(), user.getUsername(),
+                profilePayload.getFirstName().trim(), profilePayload.getLastName().trim(),
+                token.getToken(), adminId, user.getDisabled() != null));
         return user;
     }
 
