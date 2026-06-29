@@ -27,7 +27,8 @@ import java.util.stream.Collectors;
  *
  * <p>Fires only {@code AFTER_COMMIT} on the {@code mailExecutor} thread; the gate
  * is checked first. Recipients are the removed members (snapshotted before the
- * delete), resolved through {@link RecipientResolver} and minus the actor.</p>
+ * delete), resolved through {@link RecipientResolver}. PHP's update path does not
+ * filter the operator, so a manager who removes themselves still gets the notice.</p>
  */
 @Component
 @RequiredArgsConstructor
@@ -54,9 +55,7 @@ public class GroupUserDeleteEmailRedactor {
         Set<String> removedIds = event.removed().stream()
                 .map(GroupMemberSnapshot::userId)
                 .collect(Collectors.toCollection(LinkedHashSet::new));
-        Set<Recipient> recipients = recipientResolver.resolveUsers(removedIds).stream()
-                .filter(r -> !r.userId().equals(event.actorId()))
-                .collect(Collectors.toCollection(LinkedHashSet::new));
+        Set<Recipient> recipients = new LinkedHashSet<>(recipientResolver.resolveUsers(removedIds));
         if (recipients.isEmpty()) {
             return;
         }

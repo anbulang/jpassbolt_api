@@ -165,10 +165,16 @@ public class UserService {
         // validated payload (the Profile entity detaches on the async listener
         // thread), the register token value is captured here, and the admin actor
         // (adminId) is resolved to a display name in the body only (never mailed).
+        // PHP User::isDisabled() = `disabled` set AND in the PAST (a future-dated
+        // value still counts as active, matching RecipientResolver). At create the
+        // user is never disabled, but compute it consistently so the guard never
+        // diverges from the rest of the codebase.
+        boolean disabled = user.getDisabled() != null
+                && !user.getDisabled().isAfter(LocalDateTime.now());
         eventPublisher.publishEvent(new UserRegisteredEvent(
                 user.getId(), user.getUsername(),
                 profilePayload.getFirstName().trim(), profilePayload.getLastName().trim(),
-                token.getToken(), adminId, user.getDisabled() != null));
+                token.getToken(), adminId, disabled));
         return user;
     }
 

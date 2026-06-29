@@ -111,20 +111,4 @@ class MailServiceTest {
                 .isNotEqualTo(MESSAGES.getMessage("email.recover.subject",
                         new Object[]{"xiaoming@passbolt.com"}, Locale.ENGLISH));
     }
-
-    @Test
-    void localizesRecoverCompleteByRecipientLocale() throws Exception {
-        JavaMailSender sender = mock(JavaMailSender.class);
-        when(sender.createMimeMessage()).thenReturn(new MimeMessage((Session) null));
-
-        // sendRecoverCompleteEmail now takes a userId so it can localize.
-        service(sender, true, localeStub("zh-CN"))
-                .sendRecoverCompleteEmail("xiaoming@passbolt.com", "uid-zh");
-
-        ArgumentCaptor<MimeMessage> captor = ArgumentCaptor.forClass(MimeMessage.class);
-        verify(sender).send(captor.capture());
-        assertThat(captor.getValue().getSubject())
-                .isEqualTo(MESSAGES.getMessage("email.complete.subject", null,
-                        Locale.SIMPLIFIED_CHINESE));
-    }
 }

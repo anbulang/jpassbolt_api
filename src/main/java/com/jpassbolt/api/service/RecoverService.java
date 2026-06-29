@@ -143,11 +143,17 @@ public class RecoverService {
             // gated by send.user.create. adminId is null here — this branch is
             // self-driven (no admin actor), so the body omits the admin line.
             Profile profile = profileRepository.findByUserId(user.getId()).orElse(null);
+            // PHP User::isDisabled() is true only when `disabled` is set AND in the
+            // PAST; a future-dated value still counts as active (same now()-check the
+            // RecipientResolver applies). A plain != null would wrongly suppress the
+            // restart invite for a future-dated disable.
+            boolean disabled = user.getDisabled() != null
+                    && !user.getDisabled().isAfter(LocalDateTime.now());
             eventPublisher.publishEvent(new UserRegisteredEvent(
                     user.getId(), user.getUsername(),
                     profile == null ? null : profile.getFirstName(),
                     profile == null ? null : profile.getLastName(),
-                    token.getToken(), null, user.getDisabled() != null));
+                    token.getToken(), null, disabled));
         }
         return token;
     }

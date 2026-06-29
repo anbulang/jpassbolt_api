@@ -31,9 +31,11 @@ import java.util.stream.Collectors;
  *
  * <p>Fires only {@code AFTER_COMMIT} on the {@code mailExecutor} thread; the gate
  * is checked first. Recipients are the added members, resolved through
- * {@link RecipientResolver} and minus the actor (on create, the actor is the
- * creator, whom PHP also skips). The per-recipient {@code isManager} flag (their
- * new role) selects the extra "you are a group manager" line.</p>
+ * {@link RecipientResolver}. On CREATE the creator is excluded (PHP skips
+ * {@code group->created_by}); on UPDATE no one is excluded — PHP's update path does
+ * not filter the operator, so a manager who adds themselves is still notified. The
+ * per-recipient {@code isManager} flag (their new role) selects the extra "you are
+ * a group manager" line.</p>
  */
 @Component
 @RequiredArgsConstructor
@@ -50,16 +52,19 @@ public class GroupUserAddEmailRedactor {
     @Async("mailExecutor")
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void onGroupCreated(GroupCreatedEvent event) {
-        emailAddedMembers(event.groupName(), event.actorId(), event.members());
+        // CREATE excludes the creator (PHP skips group->created_by).
+        emailAddedMembers(event.groupName(), event.actorId(), event.members(), true);
     }
 
     @Async("mailExecutor")
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void onGroupMembershipChanged(GroupMembershipChangedEvent event) {
-        emailAddedMembers(event.groupName(), event.actorId(), event.added());
+        // UPDATE does not exclude the operator (PHP parity).
+        emailAddedMembers(event.groupName(), event.actorId(), event.added(), false);
     }
 
-    private void emailAddedMembers(String groupName, String actorId, List<GroupMemberSnapshot> added) {
+    private void emailAddedMembers(String groupName, String actorId, List<GroupMemberSnapshot> added,
+            boolean excludeActor) {
         if (!settings.isEnabled(SETTING_PATH)) {
             return;
         }
@@ -71,7 +76,7 @@ public class GroupUserAddEmailRedactor {
                 GroupMemberSnapshot::userId, GroupMemberSnapshot::isAdmin, (a, b) -> a, LinkedHashMap::new));
 
         Set<Recipient> recipients = recipientResolver.resolveUsers(isManagerByUserId.keySet()).stream()
-                .filter(r -> !r.userId().equals(actorId))
+                .filter(r -> !excludeActor || !r.userId().equals(actorId))
                 .collect(Collectors.toCollection(LinkedHashSet::new));
         if (recipients.isEmpty()) {
             return;

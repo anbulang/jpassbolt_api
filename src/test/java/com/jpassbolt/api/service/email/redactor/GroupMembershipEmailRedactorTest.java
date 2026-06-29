@@ -168,6 +168,17 @@ class GroupMembershipEmailRedactorTest {
     }
 
     @Test
+    void deleteRedactorNotifiesActorWhoRemovedSelfOnUpdate() {
+        // PHP parity: the update path does NOT exclude the operator, so a manager
+        // who removes themselves still receives the "removed from group" notice.
+        GroupMembershipChangedEvent selfRemoval = new GroupMembershipChangedEvent(groupGId,
+                "Engineering", adaId, List.of(),
+                List.of(new GroupMemberSnapshot(adaId, true)), List.of());
+        deleteRedactor.onGroupMembershipChanged(selfRemoval);
+        assertThat(singleSent().recipient()).isEqualTo("ada@passbolt.com");
+    }
+
+    @Test
     void updateRedactorNotifiesRoleChangedMemberWithPromotedCopy() {
         updateRedactor.onGroupMembershipChanged(updateEvent());
         EmailMessage message = singleSent();

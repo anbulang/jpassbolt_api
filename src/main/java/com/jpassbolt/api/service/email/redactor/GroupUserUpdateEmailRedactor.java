@@ -27,7 +27,8 @@ import java.util.stream.Collectors;
  *
  * <p>Fires only {@code AFTER_COMMIT} on the {@code mailExecutor} thread; the gate
  * is checked first. Recipients are the role-changed members, resolved through
- * {@link RecipientResolver} and minus the actor. The per-recipient
+ * {@link RecipientResolver}. PHP's update path does not filter the operator, so a
+ * manager who changes their own role still gets the notice. The per-recipient
  * {@code isManager} flag (their new role) selects the promoted/demoted copy.</p>
  */
 @Component
@@ -55,9 +56,8 @@ public class GroupUserUpdateEmailRedactor {
         Map<String, Boolean> isManagerByUserId = event.updated().stream().collect(Collectors.toMap(
                 GroupMemberSnapshot::userId, GroupMemberSnapshot::isAdmin, (a, b) -> a, LinkedHashMap::new));
 
-        Set<Recipient> recipients = recipientResolver.resolveUsers(isManagerByUserId.keySet()).stream()
-                .filter(r -> !r.userId().equals(event.actorId()))
-                .collect(Collectors.toCollection(LinkedHashSet::new));
+        Set<Recipient> recipients =
+                new LinkedHashSet<>(recipientResolver.resolveUsers(isManagerByUserId.keySet()));
         if (recipients.isEmpty()) {
             return;
         }

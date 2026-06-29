@@ -91,26 +91,11 @@ public class MailService {
         send(toEmail, subject, html, "recover link: " + link);
     }
 
-    /** Setup invite (a not-yet-active user restarting setup via a register token). */
-    public void sendSetupInviteEmail(String toEmail, String userId, String token) {
-        Locale locale = localeFor(userId);
-        String link = clientUrl("/setup/" + userId + "/" + token);
-        String subject = msg("email.invite.subject", locale);
-        String html = wrap(locale, msg("email.invite.title", locale),
-                "<p>" + msg("email.invite.intro", locale) + "</p>"
-                + button(locale, link, msg("email.invite.cta", locale)));
-        send(toEmail, subject, html, "setup link: " + link);
-    }
-
-    /** Confirmation after a successful recovery. */
-    public void sendRecoverCompleteEmail(String toEmail, String userId) {
-        Locale locale = localeFor(userId);
-        String subject = msg("email.complete.subject", locale);
-        String html = wrap(locale, msg("email.complete.title", locale),
-                "<p>" + msg("email.complete.intro", locale) + "</p>"
-                + "<p style=\"color:#888;font-size:12px\">" + msg("email.complete.warning", locale) + "</p>");
-        send(toEmail, subject, html, "recovery completed for " + toEmail);
-    }
+    // NOTE: the setup-invite and recovery-complete emails are no longer sent from
+    // here — they were migrated to the event-driven notification layer in Phase 1
+    // (UserRegisterEmailRedactor and RecoverComplete{User,Admin}EmailRedactor). Only
+    // the account-recovery request email (sendRecoverEmail, used by the recover()
+    // active-user branch) is still a direct send.
 
     /**
      * Send a fully-rendered email produced by the event-driven notification layer
