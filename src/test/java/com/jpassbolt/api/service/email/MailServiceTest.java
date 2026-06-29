@@ -35,7 +35,14 @@ class MailServiceTest {
     private MailService service(JavaMailSender sender, boolean enabled, AccountLocaleService locale) {
         ObjectProvider<JavaMailSender> provider = mock(ObjectProvider.class);
         when(provider.getIfAvailable()).thenReturn(sender);
-        MailService s = new MailService(provider, MESSAGES, locale);
+        // No DB SMTP config in these unit tests → fall back to the yml-backed sender
+        // + jpassbolt.email.from, preserving the original behavior under test.
+        com.jpassbolt.api.service.SmtpSettingsService smtp =
+                mock(com.jpassbolt.api.service.SmtpSettingsService.class);
+        when(smtp.isInDb()).thenReturn(false);
+        when(smtp.activeDbMailSender()).thenReturn(java.util.Optional.empty());
+        when(smtp.activeDbFrom()).thenReturn(java.util.Optional.empty());
+        MailService s = new MailService(provider, MESSAGES, locale, smtp);
         ReflectionTestUtils.setField(s, "enabled", enabled);
         ReflectionTestUtils.setField(s, "from", "no-reply@test.local");
         ReflectionTestUtils.setField(s, "appBaseUrl", "http://localhost:5173/");

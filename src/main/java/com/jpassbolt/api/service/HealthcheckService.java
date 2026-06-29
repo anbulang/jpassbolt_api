@@ -50,6 +50,7 @@ public class HealthcheckService {
     private final RoleRepository roleRepository;
     private final SettingsProperties settingsProperties;
     private final SelfRegistrationService selfRegistrationService;
+    private final SmtpSettingsService smtpSettingsService;
 
     @Value("${jpassbolt.version:4.9.0}")
     private String currentVersion;
@@ -155,13 +156,19 @@ public class HealthcheckService {
     }
 
     private Map<String, Object> checkSmtpSettings() {
+        // Live state (PHP SmtpSettingsHealthcheckService): the plugin flag mirrors
+        // what /settings advertises; source/isInDb reflect whether an admin has
+        // saved an SMTP config (source "db") versus the static spring.mail.* env
+        // fallback ("env") or nothing ("undefined").
+        boolean pluginEnabled = Boolean.TRUE.equals(
+                settingsProperties.getPlugins().getOrDefault("smtpSettings", false));
         Map<String, Object> smtpSettings = new LinkedHashMap<>();
-        // SMTP is not implemented in JPassbolt yet.
-        smtpSettings.put("isEnabled", false);
+        smtpSettings.put("isEnabled", pluginEnabled);
         // false means "no validation error" (PHP outputs the error string otherwise).
         smtpSettings.put("errorMessage", false);
-        smtpSettings.put("source", "undefined");
-        smtpSettings.put("isInDb", false);
+        smtpSettings.put("source", smtpSettingsService.currentSource());
+        smtpSettings.put("isInDb", smtpSettingsService.isInDb());
+        // No endpoint kill-switch / custom SSL options block in JPassbolt yet.
         smtpSettings.put("areEndpointsDisabled", false);
         smtpSettings.put("customSslOptions", false);
         return smtpSettings;

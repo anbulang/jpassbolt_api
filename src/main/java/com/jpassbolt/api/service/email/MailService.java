@@ -1,6 +1,7 @@
 package com.jpassbolt.api.service.email;
 
 import com.jpassbolt.api.service.AccountLocaleService;
+import com.jpassbolt.api.service.SmtpSettingsService;
 import jakarta.mail.internet.MimeMessage;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
@@ -55,6 +56,13 @@ public class MailService {
     private final AccountLocaleService accountLocaleService;
 
     /**
+     * DB-stored SMTP config (admin SMTP settings page). When an admin has saved a
+     * config, it overrides the {@code spring.mail.*} bean at send time — the
+     * JPassbolt equivalent of PHP's {@code SmtpTransportBeforeSendEventListener}.
+     */
+    private final SmtpSettingsService smtpSettingsService;
+
+    /**
      * Explicit constructor (not Lombok {@code @RequiredArgsConstructor}) so the
      * {@link Qualifier} on the parameter is honored: without it, Spring would
      * inject by type and could pick Boot's auto-configured {@code messageSource}
@@ -62,10 +70,12 @@ public class MailService {
      */
     public MailService(ObjectProvider<JavaMailSender> mailSenderProvider,
                        @Qualifier("mailMessageSource") MessageSource messageSource,
-                       AccountLocaleService accountLocaleService) {
+                       AccountLocaleService accountLocaleService,
+                       SmtpSettingsService smtpSettingsService) {
         this.mailSenderProvider = mailSenderProvider;
         this.messageSource = messageSource;
         this.accountLocaleService = accountLocaleService;
+        this.smtpSettingsService = smtpSettingsService;
     }
 
     @Value("${jpassbolt.email.enabled:false}")
@@ -125,8 +135,16 @@ public class MailService {
     }
 
     private void send(String to, String subject, String html, String logFallback) {
-        JavaMailSender sender = mailSenderProvider.getIfAvailable();
-        if (!enabled || sender == null) {
+        // DB SMTP config (admin settings page) wins over the static spring.mail.*
+        // bean, mirroring PHP's SmtpTransportBeforeSendEventListener. A saved config
+        // also turns delivery on: PHP has no separate enable flag — a configured
+        // transport sends — so a DB row implies enabled, while the default/test
+        // profiles (no row, jpassbolt.email.enabled=false) still log instead of send.
+        boolean dbConfigured = smtpSettingsService.isInDb();
+        JavaMailSender sender = smtpSettingsService.activeDbMailSender()
+                .orElseGet(mailSenderProvider::getIfAvailable);
+        String fromAddress = smtpSettingsService.activeDbFrom().orElse(from);
+        if (!(enabled || dbConfigured) || sender == null) {
             // Stand-in when email is off / unconfigured: log the link (dev/test).
             log.info("[email disabled] to={} subject=\"{}\" — {}", to, subject, logFallback);
             return;
@@ -134,7 +152,7 @@ public class MailService {
         try {
             MimeMessage message = sender.createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(message, false, "UTF-8");
-            helper.setFrom(from);
+            helper.setFrom(fromAddress);
             helper.setTo(to);
             helper.setSubject(subject);
             helper.setText(html, true);

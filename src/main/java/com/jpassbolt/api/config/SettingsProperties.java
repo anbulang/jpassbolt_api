@@ -80,6 +80,12 @@ public class SettingsProperties {
         // Override to false under jpassbolt.settings.plugins to hide the
         // register affordance entirely.
         defaults.put("selfRegistration", true);
+        // Admin SMTP settings page (SmtpSettingsController + service). Advertises
+        // that the /smtp/* endpoints exist on this server (PHP feature plugin
+        // loaded); the actual config is a separate state — source "db" only once
+        // an admin saves it via POST /smtp/settings.json, else it falls back to the
+        // static spring.mail.* (source "env") or "undefined".
+        defaults.put("smtpSettings", true);
         // Publicly visible flag in CE; feature not implemented yet.
         defaults.put("accountRecoveryRequestHelp", false);
         // Not implemented yet — must stay false until their clusters land.
