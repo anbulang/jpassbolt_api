@@ -13,8 +13,10 @@ import com.jpassbolt.api.model.OrganizationSetting;
 import com.jpassbolt.api.repository.AccountSettingRepository;
 import com.jpassbolt.api.repository.AuthenticationTokenRepository;
 import com.jpassbolt.api.repository.OrganizationSettingRepository;
+import com.jpassbolt.api.service.email.event.MfaUserSettingsResetEvent;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -98,6 +100,7 @@ public class MfaService {
     private final TotpService totpService;
     private final ObjectMapper objectMapper;
     private final SettingsProperties settingsProperties;
+    private final ApplicationEventPublisher eventPublisher;
 
     /** Per-user consecutive MFA failure state (in-memory, per node). */
     private final java.util.concurrent.ConcurrentHashMap<String, FailureState> mfaFailures = new java.util.concurrent.ConcurrentHashMap<>();
@@ -467,6 +470,48 @@ public class MfaService {
             setting.setValue(root.toString());
             accountSettingRepository.save(setting);
         }
+        return true;
+    }
+
+    /**
+     * Reset (wipe) ALL of a user's MFA account settings — the port of PHP
+     * {@code MfaUserSettingsDeleteService::disableUserSettings}, used by the admin /
+     * self reset endpoint {@code DELETE /mfa/setup/{userId}.json}. Unlike
+     * {@link #disableTotpProvider(String)} (a per-provider toggle keyed off the
+     * provider list), this removes the whole {@code account_settings(property='mfa')}
+     * row regardless of which providers it carries and deactivates every mfa token of
+     * the user, then fires {@link MfaUserSettingsResetEvent} so the affected user is
+     * notified.
+     *
+     * <p>Presence is decided at the <em>account</em> level
+     * ({@link #hasAccountMfaSettings(String)}), NOT the org-intersected
+     * {@link #getEnabledProviders(String)}: a stale row must still be resettable after
+     * the organization later disabled the provider. Mirroring PHP (which dispatches the
+     * delete event only after {@code MfaAccountSettings::get} found a row), the event —
+     * and therefore the email — is published ONLY when a row existed; a reset against a
+     * user with no MFA settings is a no-op that returns {@code false}.</p>
+     *
+     * <p>Published inside this {@code @Transactional} method so the redactor's
+     * {@code @TransactionalEventListener(AFTER_COMMIT)} fires after the wipe commits
+     * (an event published outside a transaction would be dropped by that listener).</p>
+     *
+     * @param userId  the user whose MFA settings are wiped
+     * @param actorId the acting user (admin or the user themselves); carried on the
+     *                event so the redactor can pick the admin-vs-self variant
+     * @return true when a settings row existed and was deleted (drives the
+     *         "settings were deleted" message + email), false when there was nothing
+     *         to reset ("no settings defined", no email)
+     */
+    @Transactional
+    public boolean resetUserMfaSettings(String userId, String actorId) {
+        Optional<AccountSetting> existing = accountSettingRepository
+                .findFirstByUserIdAndProperty(userId, MFA_PROPERTY);
+        if (existing.isEmpty()) {
+            return false; // no MFA settings → nothing reset, no notification
+        }
+        accountSettingRepository.delete(existing.get());
+        invalidateAllMfaTokens(userId);
+        eventPublisher.publishEvent(new MfaUserSettingsResetEvent(userId, actorId));
         return true;
     }
 

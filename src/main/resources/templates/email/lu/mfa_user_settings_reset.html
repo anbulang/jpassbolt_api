@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<!--
+  Sent to a user whose multi-factor authentication settings were reset
+  (MfaUserSettingsResetEmailRedactor, always-on security notice). Variables:
+  selfReset (attribution), adminName (the administrator who reset it, admin
+  variant only), link (SPA root / login). The whole <body> is replaced by the
+  shared shell. Ported from PHP LU/mfa_user_settings_reset_self|admin.
+-->
+<body th:replace="~{_layout :: shell(#{email.mfa.reset.title}, ~{::content})}">
+<div th:fragment="content">
+  <p th:if="${selfReset}" th:text="#{email.mfa.reset.intro.self}">
+    Your multi-factor authentication settings were reset.
+  </p>
+  <p th:unless="${selfReset}" th:text="#{email.mfa.reset.intro.admin(${adminName})}">
+    An administrator reset the multi-factor authentication settings for your account.
+  </p>
+
+  <p th:text="#{email.mfa.reset.notice}">
+    Please contact your administrator if you didn't request this action.
+  </p>
+
+  <p style="margin:24px 0;">
+    <a th:href="${link}" th:text="#{email.mfa.reset.cta}"
+       style="background:#2a6df4;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:600;display:inline-block;">
+      Log in to JPassbolt
+    </a>
+  </p>
+  <p style="color:#888;font-size:12px;word-break:break-all;"
+     th:text="#{email.button.fallback(${link})}">
+    Or open this link: ...
+  </p>
+</div>
+</body>
+</html>
