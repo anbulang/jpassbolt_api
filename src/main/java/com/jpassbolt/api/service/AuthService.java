@@ -97,19 +97,27 @@ public class AuthService {
     @Transactional
     public String loginStage1(String keyId) {
         // Find the GPG key by fingerprint or key_id
+        // PHP GpgAuthenticator uses the same vague message and the same failure
+        // path for every lookup failure (unknown key, missing user,
+        // inactive/deleted/disabled account) to avoid leaking account state, so
+        // the status code must not diverge either.
         GpgKey gpgKey = findGpgKeyByIdentifier(keyId)
-                .orElseThrow(() -> new PassboltApiException(HttpStatus.NOT_FOUND, "GPG key not found for: " + keyId));
+                .orElseThrow(() -> new PassboltApiException(HttpStatus.NOT_FOUND,
+                        "There is no user associated with this key."));
 
         // Verify the user is active and not deleted
         User user = userRepository.findById(gpgKey.getUserId())
-                .orElseThrow(() -> new PassboltApiException(HttpStatus.NOT_FOUND, "User not found for GPG key"));
+                .orElseThrow(() -> new PassboltApiException(HttpStatus.NOT_FOUND,
+                        "There is no user associated with this key."));
 
         if (!user.getActive() || user.getDeleted()) {
-            throw new PassboltApiException(HttpStatus.FORBIDDEN, "User is not active or has been deleted");
+            throw new PassboltApiException(HttpStatus.NOT_FOUND,
+                    "There is no user associated with this key.");
         }
 
         if (user.getDisabled() != null) {
-            throw new PassboltApiException(HttpStatus.FORBIDDEN, "User account is disabled");
+            throw new PassboltApiException(HttpStatus.NOT_FOUND,
+                    "There is no user associated with this key.");
         }
 
         // Generate authentication token in Passbolt format
@@ -186,13 +194,18 @@ public class AuthService {
     /**
      * Find user by GPG key fingerprint (40 chars) or key_id (up to 16 chars).
      *
+     * Mirrors PHP GpgAuthenticator::_identifyUserWithFingerprint: inactive,
+     * deleted or disabled accounts resolve to empty, so every lookup failure
+     * is indistinguishable from an unknown key.
+     *
      * @param keyId the fingerprint or key_id
-     * @return an Optional containing the user if found
+     * @return an Optional containing the user if found and able to authenticate
      */
     @Transactional(readOnly = true)
     public Optional<User> findUserByKeyIdentifier(String keyId) {
         return findGpgKeyByIdentifier(keyId)
-                .flatMap(gpgKey -> userRepository.findById(gpgKey.getUserId()));
+                .flatMap(gpgKey -> userRepository.findById(gpgKey.getUserId()))
+                .filter(user -> user.getActive() && !user.getDeleted() && user.getDisabled() == null);
     }
 
     /**

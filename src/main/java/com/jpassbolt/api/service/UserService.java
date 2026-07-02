@@ -10,6 +10,7 @@ import com.jpassbolt.api.repository.AuthenticationTokenRepository;
 import com.jpassbolt.api.repository.ProfileRepository;
 import com.jpassbolt.api.repository.RoleRepository;
 import com.jpassbolt.api.repository.UserRepository;
+import com.jpassbolt.api.service.email.event.UserDisabledEvent;
 import com.jpassbolt.api.service.email.event.UserRegisteredEvent;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -237,9 +238,9 @@ public class UserService {
 
         boolean applyDisabled = false;
         LocalDateTime disabledValue = null;
-        if (actorIsAdmin && !actorId.equals(targetId) && request.getDisabled() != null) {
+        if (actorIsAdmin && !actorId.equals(targetId) && request.isDisabledPresent()) {
             applyDisabled = true;
-            if (!request.getDisabled().isBlank()) {
+            if (request.getDisabled() != null && !request.getDisabled().isBlank()) {
                 disabledValue = parseDateTime(request.getDisabled());
                 if (disabledValue == null) {
                     applyDisabled = false;
@@ -247,7 +248,8 @@ public class UserService {
                             "The disabled date should be a valid date."));
                 }
             }
-            // blank string -> clear the disabled timestamp
+            // explicit null / blank string -> clear the disabled timestamp
+            // (re-enable; PHP allowEmptyDateTime on an array_key_exists key)
         }
 
         Profile profile = null;
@@ -300,6 +302,12 @@ public class UserService {
 
         // --- apply phase ---
 
+        // PHP $isBeingDisabled: disabled transitions null -> non-null in this
+        // edit (a future-dated value still counts — it is the transition that
+        // triggers the notification, not the moment the account locks).
+        boolean isBeingDisabled = applyDisabled && user.getDisabled() == null
+                && disabledValue != null;
+
         if (newRole != null) {
             user.setRoleId(newRole.getId());
         }
@@ -309,7 +317,26 @@ public class UserService {
         if (profile != null) {
             profileRepository.save(profile);
         }
-        return userRepository.save(user);
+        User saved = userRepository.save(user);
+
+        if (isBeingDisabled) {
+            // Notification (UserDisable/AdminDisable redactors): the port of
+            // PHP UsersEditController::sendEmailOnUserDisable. Scalar snapshot
+            // — name from the (possibly just-updated) profile and admin-ness
+            // from the effective (possibly just-changed) role, matching PHP's
+            // post-save re-read of the user. PHP's other disable side effect
+            // (expiring the user's secrets) is intentionally not ported here.
+            Profile targetProfile = profile != null ? profile
+                    : profileRepository.findByUserId(targetId).orElse(null);
+            boolean targetIsAdmin = roleRepository.findById(saved.getRoleId())
+                    .map(r -> Role.ADMIN.equals(r.getName())).orElse(false);
+            eventPublisher.publishEvent(new UserDisabledEvent(
+                    saved.getId(), saved.getUsername(),
+                    targetProfile == null ? null : targetProfile.getFirstName(),
+                    targetProfile == null ? null : targetProfile.getLastName(),
+                    targetIsAdmin, actorId));
+        }
+        return saved;
     }
 
     private void validateName(String value, String fieldKey, String label, Map<String, Object> errors) {

@@ -75,6 +75,14 @@ jpassbolt:
   version: 4.9.0
   healthcheck:
     index-endpoint-enabled: true
+  # GET /user-key-policies/settings.json — preferred user key generation
+  # parameters. Defaults mirror the official UserKeyPoliciesSettingsDto
+  # constants (ECC). For RSA set preferred-key-type: rsa,
+  # preferred-key-size: 3072|4096 and preferred-key-curve: "" instead.
+  user-key-policies:
+    preferred-key-type: curve
+    preferred-key-size: ""
+    preferred-key-curve: curve25519_legacy+ed25519_legacy
   settings:
     full-base-url: http://localhost:8080
     edition: ce
@@ -85,11 +93,39 @@ jpassbolt:
     version-name: "Gnossienne No. 1"
     privacy-policy-url: ""
     terms-url: https://www.passbolt.com/terms
+    # Capability switchboard rendered as passbolt.plugins.<name>.enabled by
+    # GET /settings.json. Entries here merge over the code defaults in
+    # SettingsProperties.defaultPlugins() (same values listed for
+    # documentation). Only advertise endpoint clusters that really exist —
+    # the official extension calls whatever is advertised.
     plugins:
       jwtAuthentication: true
       previewPassword: true
       multiFactorAuthentication: true
+      selfRegistration: true
+      smtpSettings: true
+      folders: true
+      resourceTypes: true
+      totpResourceTypes: true
+      metadata: true
+      passwordPolicies: true
+      passwordGenerator: true
+      emailNotificationSettings: true
+      accountSettings: true
+      locale: true
+      disableUser: true
+      userKeyPolicies: true
+      healthcheck: true
+      healthcheckUi: true
+      log: true
+      inFormIntegration: true
+      accountRecoveryRequestHelp: false
       export: false
       import: false
       mobile: false
       desktop: false
+      rbacs: false
+      passwordExpiry: false
+      secretRevisions: false
+      emailDigest: false
+      reports: false

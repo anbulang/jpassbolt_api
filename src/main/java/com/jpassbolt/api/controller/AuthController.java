@@ -113,7 +113,7 @@ public class AuthController {
             Optional<User> userOpt = authService.findUserByKeyIdentifier(keyId);
             if (userOpt.isEmpty()) {
                 headers.add("X-GPGAuth-Debug", "There is no user associated with this key.");
-                return createErrorResponse(headers, "User not found for key: " + keyId);
+                return createErrorResponse(headers, "There is no user associated with this key.");
             }
 
             // Stage 2: Complete authentication

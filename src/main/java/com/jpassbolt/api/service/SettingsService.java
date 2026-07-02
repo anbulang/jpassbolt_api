@@ -26,7 +26,8 @@ import java.util.TimeZone;
  * <ul>
  * <li><b>guest</b> (anonymous): base settings (app.url, app.locale,
  * passbolt.legal, passbolt.edition) plus the public plugin whitelist (CE:
- * accountRecoveryRequestHelp.enabled, locale.options, rememberMe.options)</li>
+ * the {@link #PUBLIC_ENABLED_FLAGS} enabled flags, locale.options,
+ * rememberMe.options)</li>
  * <li><b>authenticated</b> (user and admin alike — no admin privilege here):
  * additionally app.version, app.debug, app.server_timezone,
  * app.session_timeout, app.image_storage and the full plugin whitelist</li>
@@ -42,6 +43,30 @@ public class SettingsService {
 
     /** PHP LocaleService::SETTING_PROPERTY. */
     private static final String LOCALE_PROPERTY = "locale";
+
+    /**
+     * Plugins whose {@code enabled} flag is publicly visible (guest view) —
+     * the settingsVisibility.whiteListPublic entries of the reference
+     * configs.
+     */
+    private static final List<String> PUBLIC_ENABLED_FLAGS = List.of(
+            "jwtAuthentication",
+            "accountRecoveryRequestHelp",
+            "inFormIntegration",
+            "selfRegistration",
+            "userKeyPolicies");
+
+    /**
+     * Plugins loaded unconditionally by the reference
+     * BaseSolutionBootstrapper (plain addPlugin, no
+     * addFeaturePluginIfEnabled) whose configs define no {@code enabled}
+     * key — Configure::check gates the alwaysWhiteListed pair, so the
+     * reference never outputs {@code enabled} for them.
+     */
+    private static final List<String> NO_ENABLED_KEY = List.of(
+            "locale",
+            "passwordGenerator",
+            "accountSettings");
 
     private final OrganizationSettingRepository organizationSettingRepository;
     private final SettingsProperties settingsProperties;
@@ -75,6 +100,17 @@ public class SettingsService {
         passbolt.put("legal", legal);
         passbolt.put("edition", settingsProperties.getEdition());
 
+        // passbolt.email.validate.regex — like PHP (is_string check on
+        // EmailValidationRule::REGEX_CHECK_KEY), the key is only present when
+        // a custom regex is configured; CE default omits it entirely.
+        if (settingsProperties.getEmailValidateRegex() != null) {
+            Map<String, Object> validate = new LinkedHashMap<>();
+            validate.put("regex", settingsProperties.getEmailValidateRegex());
+            Map<String, Object> email = new LinkedHashMap<>();
+            email.put("validate", validate);
+            passbolt.put("email", email);
+        }
+
         if (authenticated) {
             // --- authenticated-only app details ---
             Map<String, Object> version = new LinkedHashMap<>();
@@ -103,34 +139,64 @@ public class SettingsService {
 
     /**
      * Full plugin whitelist for authenticated users: every configured
-     * capability switch as {@code <plugin>.enabled}, plus the locale and
-     * rememberMe options.
+     * capability switch as {@code <plugin>.version} (enabled plugins with a
+     * known reference version only — PHP never loads a disabled feature
+     * plugin, so its config.php version never reaches Configure) and
+     * {@code <plugin>.enabled} (the alwaysWhiteListed pair), plus the locale
+     * and rememberMe options.
      */
     private Map<String, Object> buildAuthenticatedPlugins() {
         Map<String, Object> plugins = new LinkedHashMap<>();
         for (Map.Entry<String, Boolean> entry : settingsProperties.getPlugins().entrySet()) {
+            boolean enabled = Boolean.TRUE.equals(entry.getValue());
             Map<String, Object> pluginConfig = new LinkedHashMap<>();
-            pluginConfig.put("enabled", Boolean.TRUE.equals(entry.getValue()));
+            String version = SettingsProperties.pluginVersion(entry.getKey());
+            if (enabled && version != null) {
+                pluginConfig.put("version", version);
+            }
+            if (!NO_ENABLED_KEY.contains(entry.getKey())) {
+                pluginConfig.put("enabled", enabled);
+            }
             plugins.put(entry.getKey(), pluginConfig);
+        }
+        // locale carries its whitelisted options next to version/enabled;
+        // rememberMe has no enabled key at all in the reference (neither
+        // default.php nor its config.php define one), only version + options.
+        mergeIntoPlugin(plugins, "locale", localePlugin());
+        Map<String, Object> rememberMe = new LinkedHashMap<>();
+        rememberMe.put("version", SettingsProperties.pluginVersion("rememberMe"));
+        rememberMe.putAll(rememberMePlugin());
+        plugins.put("rememberMe", rememberMe);
+        return plugins;
+    }
+
+    /**
+     * Public (guest) plugin whitelist — the whiteListPublic entries of the
+     * reference configs: {@code <plugin>.enabled} for
+     * accountRecoveryRequestHelp (config/default.php), jwtAuthentication,
+     * inFormIntegration, selfRegistration and userKeyPolicies (their
+     * config.php), plus locale.options and rememberMe.options. No version
+     * key leaks to guests.
+     */
+    private Map<String, Object> buildPublicPlugins() {
+        Map<String, Object> plugins = new LinkedHashMap<>();
+        for (String name : PUBLIC_ENABLED_FLAGS) {
+            Map<String, Object> pluginConfig = new LinkedHashMap<>();
+            pluginConfig.put("enabled", Boolean.TRUE.equals(
+                    settingsProperties.getPlugins().getOrDefault(name, false)));
+            plugins.put(name, pluginConfig);
         }
         plugins.put("locale", localePlugin());
         plugins.put("rememberMe", rememberMePlugin());
         return plugins;
     }
 
-    /**
-     * Public (guest) plugin whitelist — CE default:
-     * accountRecoveryRequestHelp.enabled, locale.options, rememberMe.options.
-     */
-    private Map<String, Object> buildPublicPlugins() {
-        Map<String, Object> plugins = new LinkedHashMap<>();
-        Map<String, Object> accountRecoveryRequestHelp = new LinkedHashMap<>();
-        accountRecoveryRequestHelp.put("enabled", Boolean.TRUE.equals(
-                settingsProperties.getPlugins().getOrDefault("accountRecoveryRequestHelp", false)));
-        plugins.put("accountRecoveryRequestHelp", accountRecoveryRequestHelp);
-        plugins.put("locale", localePlugin());
-        plugins.put("rememberMe", rememberMePlugin());
-        return plugins;
+    /** Merge additional whitelisted keys into an already-built plugin entry. */
+    private void mergeIntoPlugin(Map<String, Object> plugins, String name, Map<String, Object> extraConfig) {
+        @SuppressWarnings("unchecked")
+        Map<String, Object> pluginConfig = (Map<String, Object>) plugins
+                .computeIfAbsent(name, k -> new LinkedHashMap<String, Object>());
+        pluginConfig.putAll(extraConfig);
     }
 
     /**

@@ -21,6 +21,7 @@ import org.springframework.http.MediaType;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.web.servlet.MockMvc;
 
+import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -153,6 +154,83 @@ class UsersEditControllerTest {
 
         assertThat(userRepository.findById(plainUser.getId()).orElseThrow().getDisabled())
                 .isNotNull();
+    }
+
+    @Test
+    void testAdminReEnablesUser_ExplicitNull_Cleared() throws Exception {
+        // Official plugin re-enable semantics: {"disabled": null} clears the
+        // timestamp (PHP array_key_exists passthrough + allowEmptyDateTime).
+        plainUser.setDisabled(LocalDateTime.now().minusDays(1));
+        userRepository.save(plainUser);
+
+        mockMvc.perform(put("/users/" + plainUser.getId() + ".json")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"disabled\":null}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.header.message").value("The user has been updated successfully."));
+
+        assertThat(userRepository.findById(plainUser.getId()).orElseThrow().getDisabled())
+                .isNull();
+    }
+
+    @Test
+    void testAdminReEnablesUser_BlankString_Cleared() throws Exception {
+        plainUser.setDisabled(LocalDateTime.now().minusDays(1));
+        userRepository.save(plainUser);
+
+        String body = objectMapper.writeValueAsString(Map.of("disabled", ""));
+
+        mockMvc.perform(put("/users/" + plainUser.getId() + ".json")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body))
+                .andExpect(status().isOk());
+
+        assertThat(userRepository.findById(plainUser.getId()).orElseThrow().getDisabled())
+                .isNull();
+    }
+
+    @Test
+    void testLoneDisabledNullOnAlreadyEnabledUser_NoOp() throws Exception {
+        // A single-key {"disabled": null} payload must count as "data provided"
+        // (previously rejected with "Some user data should be provided.").
+        mockMvc.perform(put("/users/" + plainUser.getId() + ".json")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"disabled\":null}"))
+                .andExpect(status().isOk());
+
+        assertThat(userRepository.findById(plainUser.getId()).orElseThrow().getDisabled())
+                .isNull();
+    }
+
+    @Test
+    @WithMockUser(username = "plain@example.com", roles = { "USER" })
+    void testNonAdminSendingDisabledNull_SilentlyIgnored() throws Exception {
+        // Non-admin: the disabled key is dropped without error (PHP parity),
+        // so a disabled timestamp survives a self-edit that carries it.
+        plainUser.setDisabled(LocalDateTime.now().plusDays(1));
+        userRepository.save(plainUser);
+
+        mockMvc.perform(put("/users/" + plainUser.getId() + ".json")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"disabled\":null,\"profile\":{\"first_name\":\"Still\",\"last_name\":\"Here\"}}"))
+                .andExpect(status().isOk());
+
+        assertThat(userRepository.findById(plainUser.getId()).orElseThrow().getDisabled())
+                .isNotNull();
+    }
+
+    @Test
+    void testInvalidDisabledDate_BadRequest() throws Exception {
+        String body = objectMapper.writeValueAsString(Map.of("disabled", "not-a-date"));
+
+        mockMvc.perform(put("/users/" + plainUser.getId() + ".json")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.header.message").value("Could not validate user data."));
+
+        assertThat(userRepository.findById(plainUser.getId()).orElseThrow().getDisabled())
+                .isNull();
     }
 
     @Test

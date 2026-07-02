@@ -175,6 +175,57 @@ class AuthControllerTest {
     }
 
     @Test
+    void testLoginStage1_UnknownKeyAndDisabledAccount_AreIndistinguishable() throws Exception {
+        // Unknown key: well-formed fingerprint not present in the database
+        AuthDto.LoginRequest unknownRequest = new AuthDto.LoginRequest();
+        AuthDto.DataWrapper unknownData = new AuthDto.DataWrapper();
+        AuthDto.GpgAuth unknownGpgAuth = new AuthDto.GpgAuth();
+        String unknownFingerprint = "0123456789ABCDEF0123456789ABCDEF01234567";
+        unknownGpgAuth.setKeyid(unknownFingerprint);
+        unknownData.setGpgAuth(unknownGpgAuth);
+        unknownRequest.setData(unknownData);
+
+        MvcResult unknownResult = mockMvc.perform(post("/auth/login.json")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(unknownRequest)))
+                .andExpect(header().string("X-GPGAuth-Error", "true"))
+                .andExpect(header().string("X-GPGAuth-Debug", "There is no user associated with this key."))
+                .andExpect(jsonPath("$.header.status").value("error"))
+                .andExpect(jsonPath("$.header.message").value("There is no user associated with this key."))
+                .andReturn();
+
+        // Disabled account: registered key, but the user is disabled
+        testUser.setDisabled(java.time.LocalDateTime.now());
+        userRepository.save(testUser);
+
+        AuthDto.LoginRequest disabledRequest = new AuthDto.LoginRequest();
+        AuthDto.DataWrapper disabledData = new AuthDto.DataWrapper();
+        AuthDto.GpgAuth disabledGpgAuth = new AuthDto.GpgAuth();
+        disabledGpgAuth.setKeyid(testFingerprint);
+        disabledData.setGpgAuth(disabledGpgAuth);
+        disabledRequest.setData(disabledData);
+
+        MvcResult disabledResult = mockMvc.perform(post("/auth/login.json")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(disabledRequest)))
+                .andExpect(header().string("X-GPGAuth-Error", "true"))
+                .andExpect(header().string("X-GPGAuth-Debug", "There is no user associated with this key."))
+                .andExpect(jsonPath("$.header.status").value("error"))
+                .andExpect(jsonPath("$.header.message").value("There is no user associated with this key."))
+                .andReturn();
+
+        // PHP GpgAuthenticator answers every lookup failure through the same
+        // path: an attacker must not be able to tell an unknown key from an
+        // existing but disabled/inactive account via status code or body.
+        assertThat(disabledResult.getResponse().getStatus())
+                .isEqualTo(unknownResult.getResponse().getStatus());
+        assertThat(unknownResult.getResponse().getContentAsString())
+                .doesNotContain(unknownFingerprint);
+        assertThat(disabledResult.getResponse().getContentAsString())
+                .doesNotContain(testFingerprint);
+    }
+
+    @Test
     void testLoginWithInvalidKeyId_ReturnsError() throws Exception {
         AuthDto.LoginRequest request = new AuthDto.LoginRequest();
         AuthDto.DataWrapper data = new AuthDto.DataWrapper();

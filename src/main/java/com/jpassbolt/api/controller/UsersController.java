@@ -212,8 +212,10 @@ public class UsersController {
                         return ResponseEntity.status(400).body(createResponse("error",
                                         "The user identifier should be a valid UUID.", null, url));
                 }
-                // (3) empty payload
-                if (request == null || (request.getRoleId() == null && request.getDisabled() == null
+                // (3) empty payload — key presence, not value: a lone
+                // {"disabled": null} is a valid re-enable request (PHP
+                // array_key_exists semantics)
+                if (request == null || (request.getRoleId() == null && !request.isDisabledPresent()
                                 && request.getProfile() == null && request.getGpgkey() == null
                                 && request.getGroupsUser() == null && request.getRole() == null)) {
                         return ResponseEntity.status(400).body(createResponse("error",
