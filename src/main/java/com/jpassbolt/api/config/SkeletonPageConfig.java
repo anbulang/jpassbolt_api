@@ -13,7 +13,6 @@ import org.springframework.context.annotation.Configuration;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
-import java.nio.file.Files;
 import java.util.Objects;
 
 /**
@@ -53,13 +52,17 @@ public class SkeletonPageConfig {
         };
     }
 
-    /** Tomcat requires a docBase directory even for a purely programmatic context. */
+    /**
+     * Tomcat requires a docBase directory for the context, but the skeleton
+     * context never reads a file from it (the page is served by a manually
+     * registered servlet from a classpath resource). Point it at the existing
+     * system temp directory rather than creating a fresh one per startup —
+     * {@code Files.createTempDirectory} left a new empty dir behind on every
+     * restart / test run (never cleaned up). Tomcat only requires the directory
+     * to exist, not to be writable or exclusive.
+     */
     private static String docBase() {
-        try {
-            return Files.createTempDirectory("jpassbolt-skeleton").toString();
-        } catch (IOException e) {
-            throw new UncheckedIOException(e);
-        }
+        return System.getProperty("java.io.tmpdir");
     }
 
     static final class SkeletonPageServlet extends HttpServlet {
