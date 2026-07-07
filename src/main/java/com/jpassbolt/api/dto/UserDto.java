@@ -1,5 +1,6 @@
 package com.jpassbolt.api.dto;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -71,7 +72,10 @@ public class UserDto {
      * <p>
      * Note: {@code disabled} is declared boolean in the OpenAPI spec but the
      * DB column is a datetime and PHP validates it with dateTime — we accept
-     * an ISO-8601 datetime string. {@code gpgkey} / {@code groups_user} /
+     * an ISO-8601 datetime string. An explicit {@code "disabled": null} means
+     * re-enable (PHP array_key_exists passthrough + allowEmptyDateTime), so
+     * key presence is tracked separately from the value via
+     * {@link #setDisabled(String)}. {@code gpgkey} / {@code groups_user} /
      * {@code role} are only declared so the controller can detect and reject
      * them; all other unknown keys (username, active, ...) are silently
      * dropped by Jackson, mirroring PHP's accessibleFields whitelist.
@@ -87,6 +91,22 @@ public class UserDto {
         private String roleId;
 
         private String disabled;
+
+        /**
+         * True when the JSON payload contained the {@code disabled} key at
+         * all, even as an explicit null — Jackson only calls the setter for
+         * present keys, which is how the "re-enable" ({@code disabled: null})
+         * request is told apart from a payload without the field.
+         */
+        @JsonIgnore
+        private boolean disabledPresent;
+
+        /** Hand-written so Lombok skips it; records key presence (see above). */
+        @JsonProperty("disabled")
+        public void setDisabled(String disabled) {
+            this.disabled = disabled;
+            this.disabledPresent = true;
+        }
 
         private ProfilePayload profile;
 

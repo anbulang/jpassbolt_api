@@ -35,6 +35,15 @@ public interface AccountSettingRepository extends JpaRepository<AccountSetting, 
     List<AccountSetting> findByUserIdAndPropertyIn(String userId, Collection<String> properties);
 
     /**
+     * Batch lookup of a single property across many users in one query — used by
+     * {@link com.jpassbolt.api.service.email.RecipientResolver} to resolve every
+     * recipient's {@code locale} without an N+1 storm. Looked up by the
+     * {@code (user_id, property)} pair, consistent with the other finders here;
+     * not a schema change — a plain derived query over existing columns.
+     */
+    List<AccountSetting> findByUserIdInAndProperty(Collection<String> userIds, String property);
+
+    /**
      * Derived delete — the caller must run inside a transaction
      * (e.g. an {@code @Transactional} service method).
      */

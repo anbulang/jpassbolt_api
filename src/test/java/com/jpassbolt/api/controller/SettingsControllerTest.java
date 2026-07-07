@@ -119,7 +119,43 @@ class SettingsControllerTest {
                                 .andExpect(jsonPath("$.body.passbolt.edition").value("ce"))
                                 .andExpect(jsonPath("$.body.passbolt.legal.terms.url").exists())
                                 .andExpect(jsonPath("$.body.passbolt.plugins.jwtAuthentication.enabled").value(true))
+                                // Enabled plugins advertise the reference plugin version
+                                // next to enabled (alwaysWhiteListed = version, enabled).
+                                .andExpect(jsonPath("$.body.passbolt.plugins.jwtAuthentication.version")
+                                                .value("3.3.0"))
+                                .andExpect(jsonPath("$.body.passbolt.plugins.folders.enabled").value(true))
+                                .andExpect(jsonPath("$.body.passbolt.plugins.folders.version").value("2.0.0"))
+                                .andExpect(jsonPath("$.body.passbolt.plugins.metadata.enabled").value(true))
+                                .andExpect(jsonPath("$.body.passbolt.plugins.totpResourceTypes.enabled")
+                                                .value(true))
+                                .andExpect(jsonPath("$.body.passbolt.plugins.passwordPolicies.enabled")
+                                                .value(true))
+                                .andExpect(jsonPath("$.body.passbolt.plugins.disableUser.enabled").value(true))
+                                .andExpect(jsonPath("$.body.passbolt.plugins.userKeyPolicies.enabled")
+                                                .value(true))
+                                .andExpect(jsonPath("$.body.passbolt.plugins.healthcheck.enabled").value(true))
+                                // Disabled plugins keep enabled=false and never carry a
+                                // version (PHP does not load disabled feature plugins).
+                                .andExpect(jsonPath("$.body.passbolt.plugins.rbacs.enabled").value(false))
+                                .andExpect(jsonPath("$.body.passbolt.plugins.rbacs.version").doesNotExist())
+                                .andExpect(jsonPath("$.body.passbolt.plugins.export.enabled").value(false))
+                                // Tags is an EE plugin — not advertised at all on a CE server.
+                                .andExpect(jsonPath("$.body.passbolt.plugins.tags").doesNotExist())
+                                // locale/passwordGenerator/accountSettings are loaded
+                                // unconditionally in the reference and their configs define
+                                // no 'enabled' key, so it is never output for them.
+                                .andExpect(jsonPath("$.body.passbolt.plugins.locale.enabled").doesNotExist())
+                                .andExpect(jsonPath("$.body.passbolt.plugins.locale.version").exists())
                                 .andExpect(jsonPath("$.body.passbolt.plugins.locale.options").isArray())
+                                .andExpect(jsonPath("$.body.passbolt.plugins.passwordGenerator.enabled")
+                                                .doesNotExist())
+                                .andExpect(jsonPath("$.body.passbolt.plugins.passwordGenerator.version")
+                                                .exists())
+                                .andExpect(jsonPath("$.body.passbolt.plugins.accountSettings.enabled")
+                                                .doesNotExist())
+                                .andExpect(jsonPath("$.body.passbolt.plugins.accountSettings.version")
+                                                .exists())
+                                .andExpect(jsonPath("$.body.passbolt.plugins.rememberMe.version").value("2.0.0"))
                                 .andExpect(jsonPath("$.body.passbolt.plugins.rememberMe.options['300']").exists());
         }
 
@@ -139,11 +175,22 @@ class SettingsControllerTest {
                                 .andExpect(jsonPath("$.body.passbolt.legal.terms.url").exists())
                                 .andExpect(jsonPath("$.body.passbolt.plugins.locale.options").isArray())
                                 .andExpect(jsonPath("$.body.passbolt.plugins.rememberMe.options['300']").exists())
+                                // whiteListPublic flags (reference configs): enabled only,
+                                // no version leak.
+                                .andExpect(jsonPath("$.body.passbolt.plugins.jwtAuthentication.enabled")
+                                                .value(true))
+                                .andExpect(jsonPath("$.body.passbolt.plugins.jwtAuthentication.version")
+                                                .doesNotExist())
+                                .andExpect(jsonPath("$.body.passbolt.plugins.selfRegistration.enabled")
+                                                .value(true))
+                                .andExpect(jsonPath("$.body.passbolt.plugins.userKeyPolicies.enabled")
+                                                .value(true))
                                 // Authenticated-only keys must NOT leak to guests.
                                 .andExpect(jsonPath("$.body.app.version").doesNotExist())
                                 .andExpect(jsonPath("$.body.app.server_timezone").doesNotExist())
                                 .andExpect(jsonPath("$.body.app.session_timeout").doesNotExist())
-                                .andExpect(jsonPath("$.body.passbolt.plugins.jwtAuthentication").doesNotExist());
+                                .andExpect(jsonPath("$.body.passbolt.plugins.folders").doesNotExist())
+                                .andExpect(jsonPath("$.body.passbolt.plugins.smtpSettings").doesNotExist());
         }
 
         @Test
@@ -169,7 +216,7 @@ class SettingsControllerTest {
                                 .andExpect(jsonPath("$.header.status").value("success"))
                                 .andExpect(jsonPath("$.body.app.url").exists())
                                 .andExpect(jsonPath("$.body.app.version").doesNotExist())
-                                .andExpect(jsonPath("$.body.passbolt.plugins.jwtAuthentication").doesNotExist());
+                                .andExpect(jsonPath("$.body.passbolt.plugins.folders").doesNotExist());
         }
 
         /**

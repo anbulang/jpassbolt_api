@@ -7,6 +7,7 @@ import com.jpassbolt.api.model.User;
 import com.jpassbolt.api.repository.PermissionRepository;
 import com.jpassbolt.api.repository.SecretRepository;
 import com.jpassbolt.api.repository.UserRepository;
+import com.jpassbolt.api.service.SecretAccessService;
 import com.jpassbolt.api.util.ApiResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -33,6 +34,7 @@ public class SecretController {
         private final SecretRepository secretRepository;
         private final UserRepository userRepository;
         private final PermissionRepository permissionRepository;
+        private final SecretAccessService secretAccessService;
 
         /**
          * GET /secrets/resource/{resourceId}.json
@@ -58,6 +60,10 @@ public class SecretController {
                 }
 
                 Secret secret = secretOpt.get();
+
+                // Audit: the caller has received their decryptable secret ciphertext.
+                // Mirrors PHP SecretsViewController::_logSecretAccesses. Best-effort.
+                secretAccessService.logAccess(userId, secret);
 
                 Map<String, Object> secretData = new LinkedHashMap<>();
                 secretData.put("id", secret.getId());

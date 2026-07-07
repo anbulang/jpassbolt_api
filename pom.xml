@@ -34,6 +34,14 @@
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-mail</artifactId>
 		</dependency>
+		<!-- Thymeleaf: used ONLY to render outbound email HTML (templates/email/*).
+		     This is a REST + SPA backend with no server-side web views, so the
+		     dedicated SpringTemplateEngine bean for email never competes with web
+		     view resolution. -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-thymeleaf</artifactId>
+		</dependency>
 
 		<dependency>
 			<groupId>org.postgresql</groupId>
@@ -107,6 +115,14 @@
 			<groupId>com.atlassian.oai</groupId>
 			<artifactId>swagger-request-validator-mockmvc</artifactId>
 			<version>2.39.0</version>
+			<scope>test</scope>
+		</dependency>
+		<!-- In-memory SMTP for end-to-end email-notification integration tests
+		     (asserts the redactors actually deliver, with the right recipients). -->
+		<dependency>
+			<groupId>com.icegreen</groupId>
+			<artifactId>greenmail-junit5</artifactId>
+			<version>2.1.9</version>
 			<scope>test</scope>
 		</dependency>
 	</dependencies>

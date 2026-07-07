@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<!--
+  Sent to all administrators when a user account is suspended
+  (UserDisableEmailRedactor, PHP AD/user_disable). Variables: userName +
+  userUsername (the suspended user); link (SPA user view page). The whole
+  <body> is replaced by the shared shell.
+-->
+<body th:replace="~{_layout :: shell(#{email.user.disable.title}, ~{::content})}">
+<div th:fragment="content">
+  <p th:text="#{email.user.disable.intro(${userName},${userUsername})}">
+    A user has been suspended.
+  </p>
+  <p style="color:#444;" th:text="#{email.user.disable.effect}">
+    This user will not be able to sign in and receive email notifications.
+  </p>
+  <p style="color:#444;" th:text="#{email.user.disable.share}">
+    Other users can still share resources and add this user to a group.
+  </p>
+  <p style="margin:24px 0;">
+    <a th:href="${link}" th:text="#{email.user.disable.cta}"
+       style="background:#2a6df4;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:600;display:inline-block;">
+      Check user suspension
+    </a>
+  </p>
+  <p style="color:#888;font-size:12px;word-break:break-all;"
+     th:text="#{email.button.fallback(${link})}">
+    Or open this link: ...
+  </p>
+</div>
+</body>
+</html>

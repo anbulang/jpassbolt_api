@@ -2,23 +2,49 @@ package com.jpassbolt.api.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jpassbolt.api.dto.MetadataSettingsDto;
+import com.jpassbolt.api.model.AccountSetting;
 import com.jpassbolt.api.model.AuthenticationToken;
+import com.jpassbolt.api.model.Comment;
+import com.jpassbolt.api.model.Favorite;
+import com.jpassbolt.api.model.Folder;
+import com.jpassbolt.api.model.FoldersRelation;
 import com.jpassbolt.api.model.GpgKey;
+import com.jpassbolt.api.model.Group;
+import com.jpassbolt.api.model.GroupUser;
 import com.jpassbolt.api.model.MetadataKey;
 import com.jpassbolt.api.model.MetadataPrivateKey;
+import com.jpassbolt.api.model.OrganizationSetting;
+import com.jpassbolt.api.model.Permission;
+import com.jpassbolt.api.model.Resource;
 import com.jpassbolt.api.model.ResourceType;
 import com.jpassbolt.api.model.Role;
+import com.jpassbolt.api.model.Secret;
 import com.jpassbolt.api.model.User;
+import com.jpassbolt.api.repository.AccountSettingRepository;
 import com.jpassbolt.api.repository.AuthenticationTokenRepository;
+import com.jpassbolt.api.repository.CommentRepository;
+import com.jpassbolt.api.repository.FavoriteRepository;
+import com.jpassbolt.api.repository.FolderRepository;
+import com.jpassbolt.api.repository.FoldersRelationRepository;
 import com.jpassbolt.api.repository.GpgKeyRepository;
+import com.jpassbolt.api.repository.GroupRepository;
+import com.jpassbolt.api.repository.GroupUserRepository;
 import com.jpassbolt.api.repository.MetadataKeyRepository;
 import com.jpassbolt.api.repository.MetadataPrivateKeyRepository;
+import com.jpassbolt.api.repository.OrganizationSettingRepository;
+import com.jpassbolt.api.repository.PermissionRepository;
 import com.jpassbolt.api.repository.ProfileRepository;
+import com.jpassbolt.api.repository.ResourceRepository;
 import com.jpassbolt.api.repository.ResourceTypeRepository;
 import com.jpassbolt.api.repository.RoleRepository;
+import com.jpassbolt.api.repository.SecretRepository;
 import com.jpassbolt.api.repository.UserRepository;
+import com.jpassbolt.api.service.FolderService;
+import com.jpassbolt.api.service.GpgKeyParserService;
 import com.jpassbolt.api.service.GpgService;
 import com.jpassbolt.api.service.MetadataTypesSettingsService;
+import com.jpassbolt.api.service.MfaService;
+import com.jpassbolt.api.service.SelfRegistrationService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.CommandLineRunner;
@@ -28,8 +54,12 @@ import org.springframework.stereotype.Component;
 
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 /**
  * Seed test data into H2 when running with the "local" profile.
@@ -76,9 +106,37 @@ public class DataInitializer implements CommandLineRunner {
     private final MetadataTypesSettingsService metadataTypesSettingsService;
     private final ObjectMapper objectMapper;
     private final ResourceLoader resourceLoader;
+    private final GpgKeyParserService gpgKeyParserService;
+    private final GroupRepository groupRepository;
+    private final GroupUserRepository groupUserRepository;
+    private final FolderRepository folderRepository;
+    private final FoldersRelationRepository foldersRelationRepository;
+    private final ResourceRepository resourceRepository;
+    private final PermissionRepository permissionRepository;
+    private final SecretRepository secretRepository;
+    private final CommentRepository commentRepository;
+    private final FavoriteRepository favoriteRepository;
+    private final OrganizationSettingRepository organizationSettingRepository;
+    private final AccountSettingRepository accountSettingRepository;
 
     /** Canonical Passbolt test key for betty@passbolt.com (40-hex fingerprint). */
     private static final String BETTY_FINGERPRINT = "A754860C3ADE5AB04599025ED3F1FE4BE61D7009";
+
+    /**
+     * Flip to true to also seed an MFA (TOTP) demo for dame@passbolt.com.
+     * OFF by default on purpose: with it on, every dame login would require a
+     * TOTP code, which gets in the way of day-to-day local debugging.
+     */
+    private static final boolean SEED_MFA_DEMO = false;
+
+    /**
+     * Fixed TOTP shared secret for the (opt-in) MFA demo — base32 of
+     * "Hello!\xDE\xAD\xBE\xEF", the classic otplib/GoogleAuth test vector.
+     */
+    private static final String MFA_DEMO_TOTP_SECRET = "JBSWY3DPEHPK3PXP";
+
+    /** Fixed register token for the ruth@passbolt.com inactive-user demo. */
+    private static final String RUTH_REGISTER_TOKEN = "8b6c9678-2222-4d5b-89c6-4d3f0a6d90aa";
 
     @Override
     public void run(String... args) {
@@ -227,6 +285,347 @@ public class DataInitializer implements CommandLineRunner {
         log.info("Setup URL: /setup/start/{}/d4c0c497-be4f-47c5-8f50-cb618a4a1d32.json", pending.getId());
         log.info("v5 metadata: enabled (default_resource_types=v5); shared key seeded for ada + betty");
         log.info("==============================");
+
+        seedFeatureCoverageDemo();
+    }
+
+    /**
+     * Seed extra demo data covering the features the base seed leaves empty:
+     * user lifecycle states (active/inactive/soft-deleted/disabled), a group,
+     * folders, v4 resources shared directly and through a group, a comment, a
+     * favorite, and the self-registration organization setting.
+     *
+     * <p>
+     * Third loginable account: <b>dame@passbolt.com</b> holds the official
+     * Passbolt fixture keypair. Private keys are NOT committed — fetch them
+     * from {@code passbolt_api_ref/plugins/PassboltDev/TestData/config/gpg/}
+     * ({@code dame_private.key}, {@code edith_private.key}); the fixture
+     * passphrase convention is the user's email address (e.g.
+     * {@code dame@passbolt.com}). Only the public halves are bundled under
+     * {@code src/main/resources/gpg/fixtures/} (as {@code .asc} — the
+     * repository .gitignore blocks {@code *.key} on purpose, and only public
+     * keys may be committed). The server key is NOT reused
+     * for any of these users (a duplicated fingerprint once broke the GPGAuth
+     * stage-1 lookup — see the admin@passbolt.com note above).
+     * </p>
+     *
+     * <p>
+     * Idempotent: each block checks for its own marker row (username, group
+     * name, resource name, setting property) and skips when present, so the
+     * method is safe against a database that already carries the demo data.
+     * All secrets are encrypted at startup via {@link GpgService#encrypt}
+     * (Bouncy Castle) — the server only ever stores ciphertext.
+     * </p>
+     */
+    private void seedFeatureCoverageDemo() {
+        Role userRole = roleRepository.findByName("user").orElseThrow();
+        User ada = userRepository.findByUsername("ada@passbolt.com").orElseThrow();
+        User betty = userRepository.findByUsername("betty@passbolt.com").orElseThrow();
+        String adaId = ada.getId();
+
+        // ① dame — second loginable regular user with a DISTINCT real keypair
+        // (fingerprint parsed from the bundled fixture public key).
+        User dame = userRepository.findByUsername("dame@passbolt.com").orElse(null);
+        if (dame == null) {
+            dame = createUserWithProfile("dame@passbolt.com", userRole.getId(), true,
+                    "Dame Steve", "Shirley");
+            seedGpgKeyFromClasspath(dame.getId(), "classpath:gpg/fixtures/dame_public.asc");
+            log.info("[demo] dame@passbolt.com seeded (user, loginable) — verify: cross-user share to a non-admin third account");
+        }
+
+        // ② ruth — inactive (setup not finished) + register token: verify the
+        // inactive-login rejection and the "finish setup" guidance.
+        if (userRepository.findByUsername("ruth@passbolt.com").isEmpty()) {
+            User ruth = createUserWithProfile("ruth@passbolt.com", userRole.getId(), false,
+                    "Ruth", "Teitelbaum");
+            AuthenticationToken ruthToken = new AuthenticationToken();
+            ruthToken.setUserId(ruth.getId());
+            ruthToken.setToken(RUTH_REGISTER_TOKEN);
+            ruthToken.setType("register");
+            ruthToken.setActive(true);
+            authenticationTokenRepository.save(ruthToken);
+            log.info("[demo] ruth@passbolt.com seeded (inactive + register token) — verify: inactive login rejection; setup URL: /setup/start/{}/{}.json",
+                    ruth.getId(), RUTH_REGISTER_TOKEN);
+        }
+
+        // ③ sofia — soft-deleted: verify deleted users are filtered everywhere.
+        if (userRepository.findByUsername("sofia@passbolt.com").isEmpty()) {
+            User sofia = createUserWithProfile("sofia@passbolt.com", userRole.getId(), true,
+                    "Sofia", "Kovalevskaya");
+            sofia.setDeleted(true);
+            userRepository.save(sofia);
+            log.info("[demo] sofia@passbolt.com seeded (soft-deleted) — verify: deleted-user filtering in /users.json and shares");
+        }
+
+        // ④ edith — active but disabled (timestamped): verify the Users page
+        // disabled chip and the re-enable action (disabled:null round-trip).
+        if (userRepository.findByUsername("edith@passbolt.com").isEmpty()) {
+            User edith = createUserWithProfile("edith@passbolt.com", userRole.getId(), true,
+                    "Edith", "Clarke");
+            edith.setDisabled(LocalDateTime.now(ZoneOffset.UTC));
+            userRepository.save(edith);
+            seedGpgKeyFromClasspath(edith.getId(), "classpath:gpg/fixtures/edith_public.asc");
+            log.info("[demo] edith@passbolt.com seeded (disabled) — verify: disabled chip + re-enable in the Users page");
+        }
+
+        // ⑤ group "Board": ada is group manager, betty + dame are members.
+        Group board = groupRepository.findByDeletedFalse().stream()
+                .filter(g -> "Board".equals(g.getName()))
+                .findFirst()
+                .orElse(null);
+        if (board == null) {
+            board = new Group();
+            board.setName("Board");
+            board.setDeleted(false);
+            board.setCreatedBy(adaId);
+            board.setModifiedBy(adaId);
+            groupRepository.save(board);
+            saveGroupUser(board.getId(), adaId, true);
+            saveGroupUser(board.getId(), betty.getId(), false);
+            saveGroupUser(board.getId(), dame.getId(), false);
+            log.info("[demo] group 'Board' seeded (manager: ada; members: betty, dame) — verify: group CRUD + membership rendering");
+        }
+
+        // ⑥ two-level folder tree for ada: "Ops" > "Servers" (folder rows +
+        // OWNER permissions + ada's folders_relations, same shape as
+        // FolderService.createFolder).
+        Folder ops = folderRepository.findAll().stream()
+                .filter(f -> "Ops".equals(f.getName()))
+                .findFirst()
+                .orElse(null);
+        Folder servers;
+        if (ops == null) {
+            ops = saveFolder("Ops", adaId, null);
+            servers = saveFolder("Servers", adaId, ops.getId());
+            log.info("[demo] folders 'Ops' > 'Servers' seeded for ada — verify: folder tree + move endpoints");
+        } else {
+            servers = folderRepository.findAll().stream()
+                    .filter(f -> "Servers".equals(f.getName()))
+                    .findFirst()
+                    .orElse(ops);
+        }
+
+        // ⑦ v4 resources with per-user secrets (encrypted at startup; RSA-4096
+        // encryption can take seconds, hence the timing log).
+        if (resourceRepository.findByDeletedFalse().stream()
+                .noneMatch(r -> "Demo Shared Login".equals(r.getName()))) {
+            long start = System.currentTimeMillis();
+            String typeId = resourceTypeRepository.findBySlug(ResourceType.SLUG_PASSWORD_AND_DESCRIPTION)
+                    .orElseThrow()
+                    .getId();
+            String adaPublicKey = gpgService.getServerPublicKey();
+            String bettyPublicKey = readClasspath("classpath:gpg/betty_public.asc");
+            String damePublicKey = readClasspath("classpath:gpg/fixtures/dame_public.asc");
+
+            // resource 1: ada OWNER, shared READ with betty directly.
+            Resource shared = saveResource("Demo Shared Login", "demo",
+                    "https://shared.demo.jpassbolt.local", typeId, adaId);
+            savePermission(Permission.RESOURCE_ACO, shared.getId(), Permission.USER_ARO, adaId, Permission.OWNER);
+            savePermission(Permission.RESOURCE_ACO, shared.getId(), Permission.USER_ARO, betty.getId(),
+                    Permission.READ);
+            String sharedCleartext = secretCleartext("demo-shared-password", "Shared ada -> betty (READ)");
+            saveSecret(shared.getId(), adaId, gpgService.encrypt(sharedCleartext, adaPublicKey));
+            saveSecret(shared.getId(), betty.getId(), gpgService.encrypt(sharedCleartext, bettyPublicKey));
+
+            // resource 2: ada OWNER, shared UPDATE with the Board group — every
+            // member (ada, betty, dame) gets their own encrypted secret copy.
+            Resource wiki = saveResource("Board Wiki", "board",
+                    "https://wiki.board.jpassbolt.local", typeId, adaId);
+            savePermission(Permission.RESOURCE_ACO, wiki.getId(), Permission.USER_ARO, adaId, Permission.OWNER);
+            savePermission(Permission.RESOURCE_ACO, wiki.getId(), Permission.GROUP_ARO, board.getId(),
+                    Permission.UPDATE);
+            String wikiCleartext = secretCleartext("board-wiki-password", "Shared through group Board");
+            saveSecret(wiki.getId(), adaId, gpgService.encrypt(wikiCleartext, adaPublicKey));
+            saveSecret(wiki.getId(), betty.getId(), gpgService.encrypt(wikiCleartext, bettyPublicKey));
+            saveSecret(wiki.getId(), dame.getId(), gpgService.encrypt(wikiCleartext, damePublicKey));
+
+            // resource 3: ada-only, filed under Ops > Servers in ada's tree.
+            Resource rootPwd = saveResource("Server Root", "root",
+                    "ssh://root.demo.jpassbolt.local", typeId, adaId);
+            savePermission(Permission.RESOURCE_ACO, rootPwd.getId(), Permission.USER_ARO, adaId, Permission.OWNER);
+            saveSecret(rootPwd.getId(), adaId,
+                    gpgService.encrypt(secretCleartext("server-root-password", "Personal, inside a folder"), adaPublicKey));
+            saveFoldersRelation(FoldersRelation.FOREIGN_MODEL_RESOURCE, rootPwd.getId(), adaId, servers.getId());
+
+            // ⑧ a comment and a favorite on resource 1, both by ada.
+            Comment comment = new Comment();
+            comment.setForeignKey(shared.getId());
+            comment.setForeignModel(Comment.RESOURCE_FOREIGN_MODEL);
+            comment.setContent("Demo comment: rotated after the last audit.");
+            comment.setUserId(adaId);
+            comment.setCreatedBy(adaId);
+            comment.setModifiedBy(adaId);
+            commentRepository.save(comment);
+            favoriteRepository.save(new Favorite(adaId, shared.getId(), Favorite.FOREIGN_MODEL_RESOURCE));
+
+            log.info("[demo] 3 v4 resources + {} secrets seeded in {} ms — verify: direct share, group share, foldered resource, comment, favorite",
+                    6, System.currentTimeMillis() - start);
+        }
+
+        // ⑨ self-registration policy (organization_settings row, same stored
+        // shape as SelfRegistrationService.save: the service reads by property).
+        if (organizationSettingRepository.findByProperty(SelfRegistrationService.ORG_SETTING_PROPERTY).isEmpty()) {
+            Map<String, Object> selfRegValue = new LinkedHashMap<>();
+            selfRegValue.put("provider", SelfRegistrationService.PROVIDER_EMAIL_DOMAINS);
+            selfRegValue.put("data", Map.of("allowed_domains", List.of("passbolt.com")));
+            saveOrganizationSetting(SelfRegistrationService.ORG_SETTING_PROPERTY,
+                    "organization.setting.selfRegistration", writeJson(selfRegValue), adaId);
+            log.info("[demo] selfRegistration setting seeded (allowed domain: passbolt.com) — verify: /self-registration/* + guest register gate");
+        }
+
+        // ⑩ opt-in MFA (TOTP) demo for dame — see SEED_MFA_DEMO.
+        if (SEED_MFA_DEMO && accountSettingRepository
+                .findByUserIdInAndProperty(List.of(dame.getId()), MfaService.MFA_PROPERTY).isEmpty()) {
+            Map<String, Object> orgMfa = Map.of("providers", List.of(MfaService.PROVIDER_TOTP));
+            saveOrganizationSetting(MfaService.MFA_PROPERTY, "organization.setting.mfa",
+                    writeJson(orgMfa), adaId);
+
+            String provisioningUri = "otpauth://totp/localhost8080:dame%40passbolt.com"
+                    + "?issuer=localhost8080&secret=" + MFA_DEMO_TOTP_SECRET;
+            Map<String, Object> accountMfa = new LinkedHashMap<>();
+            accountMfa.put("providers", List.of(MfaService.PROVIDER_TOTP));
+            accountMfa.put("totp", Map.of(
+                    "otpProvisioningUri", provisioningUri,
+                    "verified", LocalDateTime.now(ZoneOffset.UTC).toString()));
+            AccountSetting mfaSetting = new AccountSetting();
+            mfaSetting.setUserId(dame.getId());
+            mfaSetting.setProperty(MfaService.MFA_PROPERTY);
+            mfaSetting.setPropertyId(deterministicUuid("account.setting.mfa"));
+            mfaSetting.setValue(writeJson(accountMfa));
+            accountSettingRepository.save(mfaSetting);
+            log.info("[demo] MFA TOTP seeded for dame (secret: {}) — verify: MFA challenge on dame login", MFA_DEMO_TOTP_SECRET);
+        }
+
+        log.info("[demo] feature-coverage demo data ready (dame login: dame_private.key from passbolt_api_ref TestData, passphrase: dame@passbolt.com)");
+    }
+
+    private User createUserWithProfile(String username, String roleId, boolean active,
+            String firstName, String lastName) {
+        User user = new User();
+        user.setUsername(username);
+        user.setRoleId(roleId);
+        user.setActive(active);
+        user.setDeleted(false);
+        userRepository.save(user);
+
+        com.jpassbolt.api.model.Profile profile = new com.jpassbolt.api.model.Profile();
+        profile.setUserId(user.getId());
+        profile.setFirstName(firstName);
+        profile.setLastName(lastName);
+        profileRepository.save(profile);
+        return user;
+    }
+
+    /**
+     * Seed a gpgkeys row from a bundled fixture public key; fingerprint/uid/
+     * bits/type are parsed from the armored key itself (never hardcoded, and
+     * never the server key — see the fingerprint-ambiguity note above).
+     */
+    private void seedGpgKeyFromClasspath(String userId, String location) {
+        String armoredKey = readClasspath(location);
+        GpgKeyParserService.GpgKeyMetadata metadata = gpgKeyParserService.parse(armoredKey);
+        GpgKey key = new GpgKey();
+        key.setUserId(userId);
+        key.setArmoredKey(armoredKey);
+        key.setFingerprint(metadata.getFingerprint());
+        key.setKeyId(metadata.getKeyId());
+        key.setUid(metadata.getUid());
+        key.setType(metadata.getType());
+        key.setBits(metadata.getBits());
+        key.setKeyCreated(metadata.getKeyCreated());
+        key.setExpires(metadata.getExpires());
+        key.setDeleted(false);
+        gpgKeyRepository.save(key);
+    }
+
+    private void saveGroupUser(String groupId, String userId, boolean isAdmin) {
+        GroupUser membership = new GroupUser();
+        membership.setGroupId(groupId);
+        membership.setUserId(userId);
+        membership.setIsAdmin(isAdmin);
+        groupUserRepository.save(membership);
+    }
+
+    /** Folder row + OWNER permission + the owner's relation (FolderService shape). */
+    private Folder saveFolder(String name, String ownerId, String parentFolderId) {
+        Folder folder = new Folder();
+        folder.setName(name);
+        folder.setCreatedBy(ownerId);
+        folder.setModifiedBy(ownerId);
+        folderRepository.save(folder);
+        savePermission(FolderService.FOLDER_ACO, folder.getId(), Permission.USER_ARO, ownerId, Permission.OWNER);
+        saveFoldersRelation(FoldersRelation.FOREIGN_MODEL_FOLDER, folder.getId(), ownerId, parentFolderId);
+        return folder;
+    }
+
+    private void saveFoldersRelation(String foreignModel, String foreignId, String userId, String parentFolderId) {
+        FoldersRelation relation = new FoldersRelation();
+        relation.setForeignModel(foreignModel);
+        relation.setForeignId(foreignId);
+        relation.setUserId(userId);
+        relation.setFolderParentId(parentFolderId);
+        foldersRelationRepository.save(relation);
+    }
+
+    private Resource saveResource(String name, String username, String uri, String resourceTypeId, String creatorId) {
+        Resource resource = new Resource();
+        resource.setName(name);
+        resource.setUsername(username);
+        resource.setUri(uri);
+        resource.setResourceTypeId(resourceTypeId);
+        resource.setDeleted(false);
+        resource.setCreatedBy(creatorId);
+        resource.setModifiedBy(creatorId);
+        return resourceRepository.save(resource);
+    }
+
+    private void savePermission(String aco, String acoForeignKey, String aro, String aroForeignKey, int type) {
+        Permission permission = new Permission();
+        permission.setAco(aco);
+        permission.setAcoForeignKey(acoForeignKey);
+        permission.setAro(aro);
+        permission.setAroForeignKey(aroForeignKey);
+        permission.setType(type);
+        permissionRepository.save(permission);
+    }
+
+    private void saveSecret(String resourceId, String userId, String encryptedData) {
+        Secret secret = new Secret();
+        secret.setResourceId(resourceId);
+        secret.setUserId(userId);
+        secret.setData(encryptedData);
+        secretRepository.save(secret);
+    }
+
+    /** Cleartext for the password-and-description resource type (encrypted before storage). */
+    private String secretCleartext(String password, String description) {
+        Map<String, Object> cleartext = new LinkedHashMap<>();
+        cleartext.put("password", password);
+        cleartext.put("description", description);
+        return writeJson(cleartext);
+    }
+
+    private void saveOrganizationSetting(String property, String propertyIdSeed, String value, String userId) {
+        OrganizationSetting setting = new OrganizationSetting();
+        setting.setProperty(property);
+        setting.setPropertyId(deterministicUuid(propertyIdSeed));
+        setting.setValue(value);
+        setting.setCreatedBy(userId);
+        setting.setModifiedBy(userId);
+        organizationSettingRepository.save(setting);
+    }
+
+    private String writeJson(Map<String, Object> value) {
+        try {
+            return objectMapper.writeValueAsString(value);
+        } catch (Exception e) {
+            throw new IllegalStateException("Could not serialize demo seed JSON", e);
+        }
+    }
+
+    /** Same derivation the settings services use (they query by property, never by property_id). */
+    private static String deterministicUuid(String seed) {
+        return UUID.nameUUIDFromBytes(seed.getBytes(StandardCharsets.UTF_8)).toString();
     }
 
     /**

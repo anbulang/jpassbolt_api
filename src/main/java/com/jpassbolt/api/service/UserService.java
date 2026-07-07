@@ -10,8 +10,11 @@ import com.jpassbolt.api.repository.AuthenticationTokenRepository;
 import com.jpassbolt.api.repository.ProfileRepository;
 import com.jpassbolt.api.repository.RoleRepository;
 import com.jpassbolt.api.repository.UserRepository;
+import com.jpassbolt.api.service.email.event.UserDisabledEvent;
+import com.jpassbolt.api.service.email.event.UserRegisteredEvent;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -20,6 +23,7 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 import java.util.regex.Pattern;
@@ -41,6 +45,7 @@ public class UserService {
     private final RoleRepository roleRepository;
     private final ProfileRepository profileRepository;
     private final AuthenticationTokenRepository authenticationTokenRepository;
+    private final ApplicationEventPublisher eventPublisher;
 
     /**
      * Get a user by their ID.
@@ -77,12 +82,24 @@ public class UserService {
      * = created + configured days, evaluated at consumption time
      * (SetupService).
      *
+     * <p>Also the backing implementation of guest self-registration
+     * (POST /users/register.json): when {@code selfRegistration} is true the
+     * role is FORCED to the default user role and any {@code role_id} in the
+     * request is ignored — PHP {@code UsersTable::register} hard-sets
+     * {@code role_id = USER} so a guest can never self-assign the admin role
+     * (a privilege-escalation guard). The published {@link UserRegisteredEvent}
+     * also carries the flag so the admin "new account" notice fires only for a
+     * genuine self-registration.</p>
+     *
+     * @param request          the create payload (username + profile; role_id honored only for an admin invite)
+     * @param adminId          the acting admin id for an invite, or {@code null} for a guest self-registration
+     * @param selfRegistration {@code true} for the public self-registration path (forces the user role + flags the event)
      * @return the saved (inactive) user
      * @throws UserValidationException on any validation failure (400, body
      *                                 carries the field error map)
      */
     @Transactional
-    public User createUser(UserDto.CreateRequest request) {
+    public User createUser(UserDto.CreateRequest request, String adminId, boolean selfRegistration) {
         Map<String, Object> errors = new LinkedHashMap<>();
 
         // Username: required, email format, <= 255, lowercased.
@@ -90,7 +107,11 @@ public class UserService {
         if (request == null || request.getUsername() == null || request.getUsername().isBlank()) {
             errors.put("username", Map.of("_empty", "A username is required."));
         } else {
-            username = request.getUsername().trim().toLowerCase();
+            // Locale.ROOT so the folding is locale-independent (PHP mb_strtolower)
+            // and byte-identical to the self-registration gate's normalization —
+            // otherwise a Turkish-locale ('I'->'ı') server would persist/dedup a
+            // different string than the gate validated.
+            username = request.getUsername().trim().toLowerCase(Locale.ROOT);
             if (username.length() > 255) {
                 errors.put("username", Map.of("maxLength",
                         "The username length should be maximum 255 characters."));
@@ -116,18 +137,26 @@ public class UserService {
         }
 
         // Role: defaults to user; an explicit role_id must be admin or user
-        // (PHP IsAdminOrUserRoleIdRule — guest is rejected).
+        // (PHP IsAdminOrUserRoleIdRule — guest is rejected). On the public
+        // self-registration path the role is FORCED to user and any requested
+        // role_id is ignored entirely (PHP UsersTable::register hard-sets
+        // role_id = USER): a guest must never be able to self-assign admin.
         Role role = null;
-        String roleId = request != null ? request.getRoleId() : null;
-        if (roleId == null || roleId.isBlank()) {
+        if (selfRegistration) {
             role = roleRepository.findByName(Role.USER)
                     .orElseThrow(() -> new IllegalStateException("Default user role is missing."));
         } else {
-            role = roleRepository.findById(roleId)
-                    .filter(r -> Role.ADMIN.equals(r.getName()) || Role.USER.equals(r.getName()))
-                    .orElse(null);
-            if (role == null) {
-                errors.put("role_id", Map.of("checkAdminOrUser", "The role must be admin or user."));
+            String roleId = request != null ? request.getRoleId() : null;
+            if (roleId == null || roleId.isBlank()) {
+                role = roleRepository.findByName(Role.USER)
+                        .orElseThrow(() -> new IllegalStateException("Default user role is missing."));
+            } else {
+                role = roleRepository.findById(roleId)
+                        .filter(r -> Role.ADMIN.equals(r.getName()) || Role.USER.equals(r.getName()))
+                        .orElse(null);
+                if (role == null) {
+                    errors.put("role_id", Map.of("checkAdminOrUser", "The role must be admin or user."));
+                }
             }
         }
 
@@ -156,6 +185,22 @@ public class UserService {
         authenticationTokenRepository.save(token);
 
         log.info("User {} created (inactive), register token issued", user.getUsername());
+
+        // Notification (UserRegisterEmailRedactor): email the invited user their
+        // setup link after commit. Scalar snapshot — first/last name come from the
+        // validated payload (the Profile entity detaches on the async listener
+        // thread), the register token value is captured here, and the admin actor
+        // (adminId) is resolved to a display name in the body only (never mailed).
+        // PHP User::isDisabled() = `disabled` set AND in the PAST (a future-dated
+        // value still counts as active, matching RecipientResolver). At create the
+        // user is never disabled, but compute it consistently so the guard never
+        // diverges from the rest of the codebase.
+        boolean disabled = user.getDisabled() != null
+                && !user.getDisabled().isAfter(LocalDateTime.now());
+        eventPublisher.publishEvent(new UserRegisteredEvent(
+                user.getId(), user.getUsername(),
+                profilePayload.getFirstName().trim(), profilePayload.getLastName().trim(),
+                token.getToken(), adminId, disabled, selfRegistration));
         return user;
     }
 
@@ -193,9 +238,9 @@ public class UserService {
 
         boolean applyDisabled = false;
         LocalDateTime disabledValue = null;
-        if (actorIsAdmin && !actorId.equals(targetId) && request.getDisabled() != null) {
+        if (actorIsAdmin && !actorId.equals(targetId) && request.isDisabledPresent()) {
             applyDisabled = true;
-            if (!request.getDisabled().isBlank()) {
+            if (request.getDisabled() != null && !request.getDisabled().isBlank()) {
                 disabledValue = parseDateTime(request.getDisabled());
                 if (disabledValue == null) {
                     applyDisabled = false;
@@ -203,7 +248,8 @@ public class UserService {
                             "The disabled date should be a valid date."));
                 }
             }
-            // blank string -> clear the disabled timestamp
+            // explicit null / blank string -> clear the disabled timestamp
+            // (re-enable; PHP allowEmptyDateTime on an array_key_exists key)
         }
 
         Profile profile = null;
@@ -256,6 +302,12 @@ public class UserService {
 
         // --- apply phase ---
 
+        // PHP $isBeingDisabled: disabled transitions null -> non-null in this
+        // edit (a future-dated value still counts — it is the transition that
+        // triggers the notification, not the moment the account locks).
+        boolean isBeingDisabled = applyDisabled && user.getDisabled() == null
+                && disabledValue != null;
+
         if (newRole != null) {
             user.setRoleId(newRole.getId());
         }
@@ -265,7 +317,26 @@ public class UserService {
         if (profile != null) {
             profileRepository.save(profile);
         }
-        return userRepository.save(user);
+        User saved = userRepository.save(user);
+
+        if (isBeingDisabled) {
+            // Notification (UserDisable/AdminDisable redactors): the port of
+            // PHP UsersEditController::sendEmailOnUserDisable. Scalar snapshot
+            // — name from the (possibly just-updated) profile and admin-ness
+            // from the effective (possibly just-changed) role, matching PHP's
+            // post-save re-read of the user. PHP's other disable side effect
+            // (expiring the user's secrets) is intentionally not ported here.
+            Profile targetProfile = profile != null ? profile
+                    : profileRepository.findByUserId(targetId).orElse(null);
+            boolean targetIsAdmin = roleRepository.findById(saved.getRoleId())
+                    .map(r -> Role.ADMIN.equals(r.getName())).orElse(false);
+            eventPublisher.publishEvent(new UserDisabledEvent(
+                    saved.getId(), saved.getUsername(),
+                    targetProfile == null ? null : targetProfile.getFirstName(),
+                    targetProfile == null ? null : targetProfile.getLastName(),
+                    targetIsAdmin, actorId));
+        }
+        return saved;
     }
 
     private void validateName(String value, String fieldKey, String label, Map<String, Object> errors) {

@@ -7,6 +7,7 @@ import com.jpassbolt.api.model.GroupUser;
 import com.jpassbolt.api.model.Permission;
 import com.jpassbolt.api.model.Profile;
 import com.jpassbolt.api.model.Resource;
+import com.jpassbolt.api.model.Role;
 import com.jpassbolt.api.model.User;
 import com.jpassbolt.api.repository.FavoriteRepository;
 import com.jpassbolt.api.repository.GpgKeyRepository;
@@ -15,10 +16,13 @@ import com.jpassbolt.api.repository.GroupUserRepository;
 import com.jpassbolt.api.repository.PermissionRepository;
 import com.jpassbolt.api.repository.ProfileRepository;
 import com.jpassbolt.api.repository.ResourceRepository;
+import com.jpassbolt.api.repository.RoleRepository;
 import com.jpassbolt.api.repository.SecretRepository;
 import com.jpassbolt.api.repository.UserRepository;
+import com.jpassbolt.api.service.email.event.UserDeletedEvent;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -62,6 +66,8 @@ public class UserDeleteService {
     private final GroupUserRepository groupUserRepository;
     private final FavoriteRepository favoriteRepository;
     private final SettingsProperties settingsProperties;
+    private final RoleRepository roleRepository;
+    private final ApplicationEventPublisher eventPublisher;
 
     /**
      * Deletion conflicts check shared by DELETE and dry-run (PHP
@@ -117,6 +123,20 @@ public class UserDeleteService {
                 .filter(u -> !Boolean.TRUE.equals(u.getDeleted()))
                 .orElseThrow(() -> new IllegalArgumentException(
                         "The user does not exist or has been already deleted."));
+
+        // Snapshot everything the AFTER_COMMIT notification needs BEFORE the
+        // destructive cascade: the user is about to be soft-deleted and all its
+        // groups_users rows hard-deleted, so the identity/role/membership would be
+        // gone by the time the async listener runs (PHP computes
+        // groupIdsNotOnlyMember before the transactional delete closure).
+        String deletedUsername = user.getUsername();
+        Profile deletedProfile = profileRepository.findByUserId(targetUserId).orElse(null);
+        String deletedFirstName = deletedProfile == null ? null : deletedProfile.getFirstName();
+        String deletedLastName = deletedProfile == null ? null : deletedProfile.getLastName();
+        boolean deletedUserIsAdmin = roleRepository.findById(user.getRoleId())
+                .map(r -> Role.ADMIN.equals(r.getName())).orElse(false);
+        List<String> notOnlyMemberGroupIds =
+                groupUserRepository.findGroupsWhereUserNotOnlyMember(targetUserId);
 
         // PHP order: _transferGroupsManagers → _transferContentOwners →
         // _validateDelete.
@@ -181,6 +201,12 @@ public class UserDeleteService {
 
         log.info("User {} deleted by {} ({} private resources soft-deleted, {} groups soft-deleted)",
                 targetUserId, actorId, privateResourceIds.size(), onlyMemberGroupIds.size());
+
+        // Notification (UserDeleteEmailRedactor → group managers;
+        // AdminDeleteEmailRedactor → admins when the deleted user was an admin),
+        // fired AFTER_COMMIT from the pre-cascade snapshot captured above.
+        eventPublisher.publishEvent(new UserDeletedEvent(targetUserId, deletedUsername,
+                deletedFirstName, deletedLastName, deletedUserIsAdmin, actorId, notOnlyMemberGroupIds));
     }
 
     /**

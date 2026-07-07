@@ -112,7 +112,7 @@ public class EmailNotificationSettingsControllerContractTest extends OpenApiComp
                 .andExpect(jsonPath("$.header.servertime").exists())
                 .andExpect(jsonPath("$.header.url").value(URL))
                 .andExpect(jsonPath("$.body.purify_subject").value(false))
-                .andExpect(jsonPath("$.body.length()").value(25));
+                .andExpect(jsonPath("$.body.length()").value(26));
     }
 
     @Test
@@ -130,6 +130,6 @@ public class EmailNotificationSettingsControllerContractTest extends OpenApiComp
                 .andExpect(jsonPath("$.header.message")
                         .value("The notification settings for the organization were updated."))
                 .andExpect(jsonPath("$.body.send_password_create").value(true))
-                .andExpect(jsonPath("$.body.length()").value(25));
+                .andExpect(jsonPath("$.body.length()").value(26));
     }
 }

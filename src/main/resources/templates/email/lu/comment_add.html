@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<!--
+  Sent to every user with access to a resource when someone comments on it
+  (CommentAddEmailRedactor). Variables: actorName; resourceName (null for v5 →
+  generic intro); link (SPA deep link); showComment gate + comment text. The whole
+  <body> is replaced by the shared shell; only the `content` fragment is pulled in.
+-->
+<body th:replace="~{_layout :: shell(#{email.comment.add.title}, ~{::content})}">
+<div th:fragment="content">
+  <p th:if="${resourceName != null and !resourceName.isEmpty()}"
+     th:text="#{email.comment.add.intro(${actorName},${resourceName})}">
+    Someone commented on a password.
+  </p>
+  <p th:if="${resourceName == null or resourceName.isEmpty()}"
+     th:text="#{email.comment.add.intro.noname(${actorName})}">
+    Someone commented on a password.
+  </p>
+  <!-- comment body only when show_comment is enabled (default off) -->
+  <blockquote th:if="${showComment == true and comment != null and !comment.isEmpty()}"
+     style="border-left:3px solid #ddd;margin:16px 0;padding:4px 12px;color:#444;font-style:italic;"
+     th:text="${comment}">A comment.</blockquote>
+  <p style="margin:24px 0;">
+    <a th:href="${link}" th:text="#{email.comment.add.cta}"
+       style="background:#2a6df4;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:600;display:inline-block;">
+      View in JPassbolt
+    </a>
+  </p>
+  <p style="color:#888;font-size:12px;word-break:break-all;"
+     th:text="#{email.button.fallback(${link})}">
+    Or open this link: ...
+  </p>
+</div>
+</body>
+</html>

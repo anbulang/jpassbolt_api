@@ -1,6 +1,7 @@
 package com.jpassbolt.api.service.email;
 
 import com.jpassbolt.api.service.AccountLocaleService;
+import com.jpassbolt.api.service.SmtpSettingsService;
 import jakarta.mail.internet.MimeMessage;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
@@ -55,6 +56,13 @@ public class MailService {
     private final AccountLocaleService accountLocaleService;
 
     /**
+     * DB-stored SMTP config (admin SMTP settings page). When an admin has saved a
+     * config, it overrides the {@code spring.mail.*} bean at send time — the
+     * JPassbolt equivalent of PHP's {@code SmtpTransportBeforeSendEventListener}.
+     */
+    private final SmtpSettingsService smtpSettingsService;
+
+    /**
      * Explicit constructor (not Lombok {@code @RequiredArgsConstructor}) so the
      * {@link Qualifier} on the parameter is honored: without it, Spring would
      * inject by type and could pick Boot's auto-configured {@code messageSource}
@@ -62,10 +70,12 @@ public class MailService {
      */
     public MailService(ObjectProvider<JavaMailSender> mailSenderProvider,
                        @Qualifier("mailMessageSource") MessageSource messageSource,
-                       AccountLocaleService accountLocaleService) {
+                       AccountLocaleService accountLocaleService,
+                       SmtpSettingsService smtpSettingsService) {
         this.mailSenderProvider = mailSenderProvider;
         this.messageSource = messageSource;
         this.accountLocaleService = accountLocaleService;
+        this.smtpSettingsService = smtpSettingsService;
     }
 
     @Value("${jpassbolt.email.enabled:false}")
@@ -91,25 +101,24 @@ public class MailService {
         send(toEmail, subject, html, "recover link: " + link);
     }
 
-    /** Setup invite (a not-yet-active user restarting setup via a register token). */
-    public void sendSetupInviteEmail(String toEmail, String userId, String token) {
-        Locale locale = localeFor(userId);
-        String link = clientUrl("/setup/" + userId + "/" + token);
-        String subject = msg("email.invite.subject", locale);
-        String html = wrap(locale, msg("email.invite.title", locale),
-                "<p>" + msg("email.invite.intro", locale) + "</p>"
-                + button(locale, link, msg("email.invite.cta", locale)));
-        send(toEmail, subject, html, "setup link: " + link);
-    }
+    // NOTE: the setup-invite and recovery-complete emails are no longer sent from
+    // here — they were migrated to the event-driven notification layer in Phase 1
+    // (UserRegisterEmailRedactor and RecoverComplete{User,Admin}EmailRedactor). Only
+    // the account-recovery request email (sendRecoverEmail, used by the recover()
+    // active-user branch) is still a direct send.
 
-    /** Confirmation after a successful recovery. */
-    public void sendRecoverCompleteEmail(String toEmail, String userId) {
-        Locale locale = localeFor(userId);
-        String subject = msg("email.complete.subject", locale);
-        String html = wrap(locale, msg("email.complete.title", locale),
-                "<p>" + msg("email.complete.intro", locale) + "</p>"
-                + "<p style=\"color:#888;font-size:12px\">" + msg("email.complete.warning", locale) + "</p>");
-        send(toEmail, subject, html, "recovery completed for " + toEmail);
+    /**
+     * Send a fully-rendered email produced by the event-driven notification layer
+     * (recipients resolved + body rendered by the redactors, next phase). Reuses
+     * the exact transport + best-effort path as the recovery/setup emails: when
+     * email is disabled or no SMTP is configured it logs instead of sending, and
+     * delivery failures are swallowed so a flaky SMTP never surfaces as an error.
+     * This is the single seam a future {@code email_queue} implementation would
+     * replace, leaving every caller untouched.
+     */
+    public void send(EmailMessage message) {
+        send(message.recipient(), message.subject(), message.html(),
+                "notification: " + message.subject());
     }
 
     /** Recipient locale from their account/org setting, mapped to a {@link Locale}. */
@@ -126,8 +135,33 @@ public class MailService {
     }
 
     private void send(String to, String subject, String html, String logFallback) {
-        JavaMailSender sender = mailSenderProvider.getIfAvailable();
-        if (!enabled || sender == null) {
+        // DB SMTP config (admin settings page) wins over the static spring.mail.*
+        // bean, mirroring PHP's SmtpTransportBeforeSendEventListener — resolved in a
+        // single query + decrypt. A saved, usable config also turns delivery on: PHP
+        // has no separate enable flag — a configured transport sends. The default/test
+        // profiles (no row, jpassbolt.email.enabled=false) still log instead of send.
+        SmtpSettingsService.SmtpTransportResolution db = smtpSettingsService.resolveForSend();
+        JavaMailSender sender;
+        String fromAddress;
+        boolean effectiveEnabled;
+        if (db.sender() != null) {
+            // Usable DB config: send through it with its From.
+            sender = db.sender();
+            fromAddress = db.from();
+            effectiveEnabled = true;
+        } else if (db.rowPresent()) {
+            // Row present but undecryptable (key rotated/corrupt): do NOT silently fall
+            // back to a different transport/From. Skip; the admin sees it via GET 500 /
+            // healthcheck errorMessage.
+            log.error("SMTP settings present but undecryptable — not sending \"{}\" to {}", subject, to);
+            return;
+        } else {
+            // No DB config: fall back to the static spring.mail.* bean + yml From.
+            sender = mailSenderProvider.getIfAvailable();
+            fromAddress = from;
+            effectiveEnabled = enabled;
+        }
+        if (!effectiveEnabled || sender == null) {
             // Stand-in when email is off / unconfigured: log the link (dev/test).
             log.info("[email disabled] to={} subject=\"{}\" — {}", to, subject, logFallback);
             return;
@@ -135,7 +169,7 @@ public class MailService {
         try {
             MimeMessage message = sender.createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(message, false, "UTF-8");
-            helper.setFrom(from);
+            helper.setFrom(fromAddress);
             helper.setTo(to);
             helper.setSubject(subject);
             helper.setText(html, true);

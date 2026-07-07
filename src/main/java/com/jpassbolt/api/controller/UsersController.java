@@ -167,7 +167,7 @@ public class UsersController {
         @PostMapping({ "/users", "/users.json" })
         public ResponseEntity<Map<String, Object>> addUser(@RequestBody UserDto.CreateRequest request) {
                 String url = "/users.json";
-                getCurrentUserId(); // 401/404 guard via PassboltApiException
+                String adminId = getCurrentUserId(); // 401/404 guard via PassboltApiException
 
                 if (!isCurrentUserAdmin()) {
                         return ResponseEntity.status(403).body(createResponse("error",
@@ -175,7 +175,7 @@ public class UsersController {
                 }
 
                 try {
-                        User created = userService.createUser(request);
+                        User created = userService.createUser(request, adminId, false);
                         return ResponseEntity.ok(createResponse("success",
                                         "The user was successfully added. This user now need to complete the setup.",
                                         toUserDetailMap(created), url));
@@ -212,8 +212,10 @@ public class UsersController {
                         return ResponseEntity.status(400).body(createResponse("error",
                                         "The user identifier should be a valid UUID.", null, url));
                 }
-                // (3) empty payload
-                if (request == null || (request.getRoleId() == null && request.getDisabled() == null
+                // (3) empty payload — key presence, not value: a lone
+                // {"disabled": null} is a valid re-enable request (PHP
+                // array_key_exists semantics)
+                if (request == null || (request.getRoleId() == null && !request.isDisabledPresent()
                                 && request.getProfile() == null && request.getGpgkey() == null
                                 && request.getGroupsUser() == null && request.getRole() == null)) {
                         return ResponseEntity.status(400).body(createResponse("error",

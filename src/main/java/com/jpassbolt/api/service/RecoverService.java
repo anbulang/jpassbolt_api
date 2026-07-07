@@ -3,20 +3,26 @@ package com.jpassbolt.api.service;
 import com.jpassbolt.api.dto.RecoverDto;
 import com.jpassbolt.api.exception.PassboltApiException;
 import com.jpassbolt.api.model.AuthenticationToken;
+import com.jpassbolt.api.model.Profile;
 import com.jpassbolt.api.model.User;
 import com.jpassbolt.api.repository.AuthenticationTokenRepository;
 import com.jpassbolt.api.repository.GpgKeyRepository;
+import com.jpassbolt.api.repository.ProfileRepository;
 import com.jpassbolt.api.repository.UserRepository;
 import com.jpassbolt.api.service.email.MailService;
+import com.jpassbolt.api.service.email.event.RecoverCompletedEvent;
+import com.jpassbolt.api.service.email.event.UserRegisteredEvent;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 import java.util.regex.Pattern;
 
@@ -62,7 +68,9 @@ public class RecoverService {
     private final AuthenticationTokenRepository authenticationTokenRepository;
     private final GpgKeyRepository gpgKeyRepository;
     private final GpgKeyParserService gpgKeyParserService;
+    private final ProfileRepository profileRepository;
     private final MailService mailService;
+    private final ApplicationEventPublisher eventPublisher;
 
     /**
      * Recover token lifetime in days. The authentication_tokens table has no
@@ -102,7 +110,7 @@ public class RecoverService {
         // assertRecoveryCase runs inside recover()).
         assertRecoveryCase(request.getRecoveryCase());
 
-        User user = userRepository.findByUsername(username.trim().toLowerCase())
+        User user = userRepository.findByUsername(username.trim().toLowerCase(Locale.ROOT))
                 .filter(u -> !Boolean.TRUE.equals(u.getDeleted()))
                 .filter(u -> u.getDisabled() == null)
                 .orElse(null);
@@ -131,7 +139,22 @@ public class RecoverService {
             mailService.sendRecoverEmail(user.getUsername(), user.getId(), token.getToken(),
                     request.getRecoveryCase());
         } else {
-            mailService.sendSetupInviteEmail(user.getUsername(), user.getId(), token.getToken());
+            // Not-yet-active user restarting setup (register token): emit the same
+            // invite notification as admin-create (UserRegisterEmailRedactor),
+            // gated by send.user.create. adminId is null here — this branch is
+            // self-driven (no admin actor), so the body omits the admin line.
+            Profile profile = profileRepository.findByUserId(user.getId()).orElse(null);
+            // PHP User::isDisabled() is true only when `disabled` is set AND in the
+            // PAST; a future-dated value still counts as active (same now()-check the
+            // RecipientResolver applies). A plain != null would wrongly suppress the
+            // restart invite for a future-dated disable.
+            boolean disabled = user.getDisabled() != null
+                    && !user.getDisabled().isAfter(LocalDateTime.now());
+            eventPublisher.publishEvent(new UserRegisteredEvent(
+                    user.getId(), user.getUsername(),
+                    profile == null ? null : profile.getFirstName(),
+                    profile == null ? null : profile.getLastName(),
+                    token.getToken(), null, disabled, false));
         }
         return token;
     }
@@ -165,7 +188,8 @@ public class RecoverService {
      * "Unlike setup completion we do not update anything").
      */
     @Transactional
-    public User completeRecover(String userId, RecoverDto.CompleteRequest request) {
+    public User completeRecover(String userId, RecoverDto.CompleteRequest request,
+            String clientIp, String userAgent) {
         if (!isUuid(userId)) {
             throw new PassboltApiException(HttpStatus.BAD_REQUEST,
                     "The user identifier should be a valid UUID.");
@@ -210,7 +234,15 @@ public class RecoverService {
 
         log.info("Recovery completed for user {} (fingerprint {})", user.getUsername(),
                 metadata.getFingerprint());
-        mailService.sendRecoverCompleteEmail(user.getUsername(), user.getId());
+
+        // Notification (RecoverComplete{User,Admin}EmailRedactor): confirmation to
+        // the recovering user + security notice to all other active admins, after
+        // commit. clientIp/userAgent are request-scoped and captured in the
+        // controller; the first name is snapshotted here while in-transaction.
+        String firstName = profileRepository.findByUserId(user.getId())
+                .map(Profile::getFirstName).orElse(null);
+        eventPublisher.publishEvent(new RecoverCompletedEvent(user.getId(), user.getUsername(),
+                firstName, clientIp, userAgent));
         return user;
     }
 

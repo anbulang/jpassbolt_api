@@ -16,8 +16,12 @@ import com.jpassbolt.api.repository.ResourceRepository;
 import com.jpassbolt.api.repository.RoleRepository;
 import com.jpassbolt.api.repository.SecretRepository;
 import com.jpassbolt.api.repository.UserRepository;
+import com.jpassbolt.api.service.email.event.GroupCreatedEvent;
+import com.jpassbolt.api.service.email.event.GroupMemberSnapshot;
+import com.jpassbolt.api.service.email.event.GroupMembershipChangedEvent;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -68,6 +72,7 @@ public class GroupService {
     private final SecretRepository secretRepository;
     private final ResourceRepository resourceRepository;
     private final FavoriteRepository favoriteRepository;
+    private final ApplicationEventPublisher eventPublisher;
 
     // ------------------------------------------------------------------
     // Read operations
@@ -207,6 +212,13 @@ public class GroupService {
         }
 
         log.info("Group '{}' ({}) created by {}", name, group.getId(), operatorId);
+
+        // Notification (GroupUserAddEmailRedactor): email each initial member
+        // (except the creator) after commit.
+        List<GroupMemberSnapshot> createdMembers = groupsUsers.stream()
+                .map(d -> new GroupMemberSnapshot(d.getUserId(), Boolean.TRUE.equals(d.getIsAdmin())))
+                .collect(Collectors.toList());
+        eventPublisher.publishEvent(new GroupCreatedEvent(group.getId(), name, operatorId, createdMembers));
         return group;
     }
 
@@ -292,6 +304,14 @@ public class GroupService {
                                     + " and the user " + pair.get("user_id") + "."));
         }
 
+        // Snapshot the three change buckets BEFORE the destructive writes — the
+        // removed rows are about to be deleted and all entities detach on the
+        // AFTER_COMMIT async listener thread (the role flips above are already
+        // applied in-memory on toUpdate, so their is_admin is the NEW role).
+        List<GroupMemberSnapshot> addedSnapshot = toMemberSnapshots(toAdd);
+        List<GroupMemberSnapshot> removedSnapshot = toMemberSnapshots(toDelete);
+        List<GroupMemberSnapshot> updatedSnapshot = toMemberSnapshots(toUpdate);
+
         // Apply the membership changes.
         groupUserRepository.deleteAll(toDelete);
         groupUserRepository.saveAll(toUpdate);
@@ -340,7 +360,14 @@ public class GroupService {
         }
 
         group.setModifiedBy(operatorId);
-        return groupRepository.save(group);
+        Group saved = groupRepository.save(group);
+
+        // Notification: one event fanned out to all four group-update redactors
+        // (add / delete / update / admin-summary) after commit. groupName is the
+        // POST-rename value; removed members come from the pre-delete snapshot.
+        eventPublisher.publishEvent(new GroupMembershipChangedEvent(groupId, saved.getName(),
+                operatorId, addedSnapshot, removedSnapshot, updatedSnapshot));
+        return saved;
     }
 
     /**
@@ -694,6 +721,13 @@ public class GroupService {
         } catch (IllegalArgumentException e) {
             return false;
         }
+    }
+
+    /** Scalar snapshots of a change bucket for the AFTER_COMMIT notification. */
+    private static List<GroupMemberSnapshot> toMemberSnapshots(List<GroupUser> members) {
+        return members.stream()
+                .map(gu -> new GroupMemberSnapshot(gu.getUserId(), Boolean.TRUE.equals(gu.getIsAdmin())))
+                .collect(Collectors.toList());
     }
 
     /**

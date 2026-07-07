@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<!--
+  Sent to a member whose group role changed on update (GroupUserUpdateEmailRedactor).
+  Variables: actorName; groupName; isManager (new role → promoted/demoted copy);
+  link (SPA groups page). The whole <body> is replaced by the shared shell.
+-->
+<body th:replace="~{_layout :: shell(#{email.group.user.update.title}, ~{::content})}">
+<div th:fragment="content">
+  <p th:text="#{email.group.user.update.intro(${actorName},${groupName})}">
+    Your group membership changed.
+  </p>
+  <p th:if="${isManager}" th:text="#{email.group.user.update.promoted}">
+    You are now a group manager.
+  </p>
+  <p th:unless="${isManager}" th:text="#{email.group.user.update.member}">
+    You are now a regular member.
+  </p>
+  <p style="margin:24px 0;">
+    <a th:href="${link}" th:text="#{email.group.cta}"
+       style="background:#2a6df4;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:600;display:inline-block;">
+      View in JPassbolt
+    </a>
+  </p>
+  <p style="color:#888;font-size:12px;word-break:break-all;"
+     th:text="#{email.button.fallback(${link})}">
+    Or open this link: ...
+  </p>
+</div>
+</body>
+</html>

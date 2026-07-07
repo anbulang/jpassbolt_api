@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<!--
+  Sent to every administrator when the self-registration policy changes
+  (SelfRegistrationSettingsAdminEmailRedactor, always-on). Variables: actorName +
+  isSelf (attribution), enabled (provider present), allowedDomains (list, shown
+  when enabled), link (SPA deep link to the admin self-registration page). The
+  whole <body> is replaced by the shared shell.
+-->
+<body th:replace="~{_layout :: shell(#{email.selfregister.settings.title}, ~{::content})}">
+<div th:fragment="content">
+  <p th:if="${isSelf}" th:text="#{email.selfregister.settings.intro.self}">
+    You edited the self registration settings.
+  </p>
+  <p th:unless="${isSelf}" th:text="#{email.selfregister.settings.intro(${actorName})}">
+    An administrator edited the self registration settings.
+  </p>
+
+  <p>
+    <strong th:text="#{email.selfregister.settings.status}">Status</strong>:
+    <span th:if="${enabled}" th:text="#{email.selfregister.settings.status.enabled}">Enabled</span>
+    <span th:unless="${enabled}" th:text="#{email.selfregister.settings.status.disabled}">Disabled</span>
+  </p>
+
+  <div th:if="${enabled and allowedDomains != null and !allowedDomains.isEmpty()}">
+    <p style="margin-bottom:4px;" th:text="#{email.selfregister.settings.domains}">Allowed domains:</p>
+    <ul style="margin-top:0;">
+      <li th:each="domain : ${allowedDomains}" th:text="${domain}">example.com</li>
+    </ul>
+  </div>
+
+  <p style="margin:24px 0;">
+    <a th:href="${link}" th:text="#{email.selfregister.settings.cta}"
+       style="background:#2a6df4;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:600;display:inline-block;">
+      Manage self registration
+    </a>
+  </p>
+  <p style="color:#888;font-size:12px;word-break:break-all;"
+     th:text="#{email.button.fallback(${link})}">
+    Or open this link: ...
+  </p>
+</div>
+</body>
+</html>

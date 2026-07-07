@@ -1,5 +1,6 @@
 package com.jpassbolt.api.service;
 
+import com.jpassbolt.api.config.SettingsProperties;
 import com.jpassbolt.api.repository.RoleRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -47,6 +48,9 @@ public class HealthcheckService {
     private final DataSource dataSource;
     private final GpgService gpgService;
     private final RoleRepository roleRepository;
+    private final SettingsProperties settingsProperties;
+    private final SelfRegistrationService selfRegistrationService;
+    private final SmtpSettingsService smtpSettingsService;
 
     @Value("${jpassbolt.version:4.9.0}")
     private String currentVersion;
@@ -152,13 +156,25 @@ public class HealthcheckService {
     }
 
     private Map<String, Object> checkSmtpSettings() {
+        // Live state (PHP SmtpSettingsHealthcheckService): the plugin flag mirrors
+        // what /settings advertises; source/isInDb reflect whether an admin has
+        // saved an SMTP config (source "db") versus the static spring.mail.* env
+        // fallback ("env") or nothing ("undefined").
+        boolean pluginEnabled = Boolean.TRUE.equals(
+                settingsProperties.getPlugins().getOrDefault("smtpSettings", false));
+        boolean rowPresent = smtpSettingsService.isInDb();
+        // PHP surfaces the decrypt/validation error as a string here, but the JPassbolt
+        // OpenAPI schema types errorMessage as a BOOLEAN — so signal the failure as a
+        // boolean (true = the stored row exists but cannot be decrypted/parsed),
+        // staying contract-valid while still flagging a broken config. source/isInDb
+        // are kept consistent with each other (both keyed on row presence = "db").
+        boolean errorMessage = rowPresent && smtpSettingsService.getDbSettings().isEmpty();
         Map<String, Object> smtpSettings = new LinkedHashMap<>();
-        // SMTP is not implemented in JPassbolt yet.
-        smtpSettings.put("isEnabled", false);
-        // false means "no validation error" (PHP outputs the error string otherwise).
-        smtpSettings.put("errorMessage", false);
-        smtpSettings.put("source", "undefined");
-        smtpSettings.put("isInDb", false);
+        smtpSettings.put("isEnabled", pluginEnabled);
+        smtpSettings.put("errorMessage", errorMessage);
+        smtpSettings.put("source", smtpSettingsService.currentSource());
+        smtpSettings.put("isInDb", rowPresent);
+        // No endpoint kill-switch / custom SSL options block in JPassbolt yet.
         smtpSettings.put("areEndpointsDisabled", false);
         smtpSettings.put("customSslOptions", false);
         return smtpSettings;
@@ -232,9 +248,16 @@ public class HealthcheckService {
         application.put("seleniumDisabled", true);
         application.put("robotsIndexDisabled", true);
         // LinkedHashMap (not Map.of): selfRegistrationProvider is a nullable string.
+        // Reflect live state (PHP SelfRegistrationHealthcheckService) instead of a
+        // hardcoded value, so /healthcheck agrees with /settings.json and the real
+        // gate: the plugin flag mirrors what /settings advertises, and the provider
+        // is non-null only once an admin has configured one (isOpen()).
+        boolean pluginEnabled = Boolean.TRUE.equals(
+                settingsProperties.getPlugins().getOrDefault("selfRegistration", false));
         Map<String, Object> registrationClosed = new LinkedHashMap<>();
-        registrationClosed.put("isSelfRegistrationPluginEnabled", false);
-        registrationClosed.put("selfRegistrationProvider", null);
+        registrationClosed.put("isSelfRegistrationPluginEnabled", pluginEnabled);
+        registrationClosed.put("selfRegistrationProvider",
+                selfRegistrationService.isOpen() ? SelfRegistrationService.PROVIDER_EMAIL_DOMAINS : null);
         registrationClosed.put("isRegistrationPublicRemovedFromPassbolt", true);
         application.put("registrationClosed", registrationClosed);
         application.put("hostAvailabilityCheckEnabled", false);

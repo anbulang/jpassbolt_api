@@ -35,6 +35,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.regex.Pattern;
 
 /**
  * MFA endpoints (port of the PHP MultiFactorAuthentication plugin
@@ -75,6 +76,10 @@ public class MfaController {
 
     /** PHP MfaVerifiedCookie::MFA_COOKIE_ALIAS. */
     public static final String MFA_COOKIE = "passbolt_mfa";
+
+    /** Strict UUID shape (PHP {@code Validation::uuid}, same as CommentController). */
+    private static final Pattern UUID_PATTERN = Pattern.compile(
+            "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$");
 
     private final MfaService mfaService;
     private final TotpService totpService;
@@ -312,6 +317,50 @@ public class MfaController {
         String message = existed
                 ? "The configuration was deleted."
                 : "No configuration found for this provider. Nothing to delete.";
+        return ResponseEntity.ok(createNullBodyResponse("success", message, url));
+    }
+
+    /**
+     * DELETE /mfa/setup/{userId}.json — reset (wipe) a user's MFA configuration.
+     * Port of PHP {@code MfaUserSettingsDeleteController}: an administrator may reset
+     * any user (the locked-out-device recovery flow), and any user may reset their own.
+     *
+     * <p>Checks run in the PHP order so the responses match exactly: the
+     * admin-or-self gate first ({@code beforeFilter}'s {@code ForbiddenException} →
+     * 403), then UUID validation and existence, both answered with the SAME
+     * "The user id is not valid." 400 (PHP does not distinguish malformed from
+     * unknown). A successful reset wipes the {@code account_settings} row, deactivates
+     * the user's mfa tokens and emails them (admin-reset vs self-reset variant); when
+     * the user had no MFA settings the call is a no-op with a distinct message and no
+     * email. {@code body} is always JSON null (PHP {@code success($message)}).</p>
+     *
+     * <p>This endpoint is deliberately NOT whitelisted in {@code MfaEnforcementFilter}
+     * (same as {@code /mfa/setup/totp}): the acting user must have cleared their own
+     * MFA gate first. The primary use case — an admin without pending MFA resetting a
+     * locked-out user — is unaffected; route specificity keeps the literal
+     * {@code /setup/totp} mapping ahead of this {@code {userId}} template.</p>
+     */
+    @DeleteMapping({ "/setup/{userId}", "/setup/{userId}.json" })
+    public ResponseEntity<Map<String, Object>> deleteUserMfaSettings(@PathVariable String userId) {
+        String url = "/mfa/setup/" + userId + ".json";
+        String actorId = getCurrentUserId();
+
+        // Admin-or-self gate first (PHP beforeFilter ForbiddenException).
+        if (!userService.isAdmin(actorId) && !actorId.equals(userId)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(createResponse("error",
+                    "You are not allowed to access this location.", null, url));
+        }
+        // UUID validation, then existence — both 400 with the same message (PHP parity).
+        if (userId == null || !UUID_PATTERN.matcher(userId).matches()
+                || userRepository.findByIdAndDeletedFalse(userId).isEmpty()) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(createResponse("error",
+                    "The user id is not valid.", null, url));
+        }
+
+        boolean existed = mfaService.resetUserMfaSettings(userId, actorId);
+        String message = existed
+                ? "The multi-factor authentication settings for the user were deleted."
+                : "No multi-factor authentication settings defined for the user.";
         return ResponseEntity.ok(createNullBodyResponse("success", message, url));
     }
 

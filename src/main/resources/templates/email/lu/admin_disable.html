@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<!--
+  Sent to a suspended administrator about their own account
+  (AdminDisableEmailRedactor, PHP AD/admin_disable). Variables: operatorEmail
+  (the admin who performed the suspension); link (mailto: to that admin). The
+  whole <body> is replaced by the shared shell.
+-->
+<body th:replace="~{_layout :: shell(#{email.admin.disable.title}, ~{::content})}">
+<div th:fragment="content">
+  <p th:text="#{email.admin.disable.intro}">
+    Your account has been suspended.
+  </p>
+  <p style="color:#444;" th:text="#{email.admin.disable.effect}">
+    You are not able to sign in and receive email notifications.
+  </p>
+  <p style="color:#444;" th:text="#{email.admin.disable.share}">
+    Other users can still share resources with you and add you to a group.
+  </p>
+  <p style="margin:24px 0;">
+    <a th:href="${link}" th:text="#{email.admin.disable.cta}"
+       style="background:#2a6df4;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:600;display:inline-block;">
+      Contact your admin
+    </a>
+  </p>
+  <p style="color:#888;font-size:12px;word-break:break-all;"
+     th:text="#{email.admin.disable.contact(${operatorEmail})}">
+    Get in touch with your administrator: ...
+  </p>
+</div>
+</body>
+</html>

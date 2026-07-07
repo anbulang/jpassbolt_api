@@ -52,6 +52,9 @@ public class AccountLocaleService {
     /** Seed for the deterministic property_id (mirrors MfaService pattern). */
     private static final String ACCOUNT_PROPERTY_ID_SEED = "account.setting.locale";
 
+    /** Seed for the organization_settings row property_id (same pattern). */
+    private static final String ORG_PROPERTY_ID_SEED = "organization.setting.locale";
+
     /**
      * Supported locale codes — the PHP Locale plugin config.php list plus the
      * project-added {@code zh-CN}. Order is the PHP order with Chinese
@@ -118,6 +121,37 @@ public class AccountLocaleService {
                 });
         setting.setValue(locale);
         return accountSettingRepository.save(setting);
+    }
+
+    /**
+     * Validate and upsert the ORGANIZATION default locale (PHP
+     * {@code SetOrgLocaleService::save} →
+     * {@code OrganizationSettingsTable::createOrUpdateSetting}). Writes the
+     * same organization_settings(property='locale') row read back by
+     * {@link #getOrganizationLocale()} and {@code SettingsService}
+     * (GET /settings.json app.locale), closing the read/write loop.
+     *
+     * @param adminId the acting admin's user UUID (created_by/modified_by)
+     * @param value   the requested locale code
+     * @return the persisted/updated entity
+     * @throws PassboltApiException 400 when the locale is not supported
+     */
+    @Transactional
+    public OrganizationSetting setOrganizationLocale(String adminId, String value) {
+        assertIsValidLocale(value);
+        String locale = dasherize(value);
+
+        OrganizationSetting setting = organizationSettingRepository
+                .findByProperty(LOCALE_PROPERTY)
+                .orElseGet(OrganizationSetting::new);
+        if (setting.getId() == null) {
+            setting.setProperty(LOCALE_PROPERTY);
+            setting.setPropertyId(deterministicUuid(ORG_PROPERTY_ID_SEED));
+            setting.setCreatedBy(adminId);
+        }
+        setting.setValue(locale);
+        setting.setModifiedBy(adminId);
+        return organizationSettingRepository.save(setting);
     }
 
     /**

@@ -8563,10 +8563,16 @@ components:
               # import, mobile, multiFactorAuthentication, previewPassword).
               # Accept the reference implementation's richer plugin map.
               additionalProperties: true
+              # PHP always white-lists the version + enabled pair for every
+              # loaded plugin (SettingsIndexController::$alwaysWhiteListed);
+              # the spec only documented version on metadata. Allow it on the
+              # other enumerated plugins the reference actually emits it for.
               properties:
                 jwtAuthentication:
                   type: object
                   properties:
+                    version:
+                      type: string
                     enabled:
                       type: boolean
                 accountRecoveryRequestHelp:
@@ -8582,6 +8588,8 @@ components:
                 selfRegistration:
                   type: object
                   properties:
+                    version:
+                      type: string
                     enabled:
                       type: boolean
                 sso:
@@ -8607,6 +8615,8 @@ components:
                 inFormIntegration:
                   type: object
                   properties:
+                    version:
+                      type: string
                     enabled:
                       type: boolean
                 metadata:
@@ -8619,6 +8629,10 @@ components:
                 locale:
                   type: object
                   properties:
+                    version:
+                      type: string
+                    enabled:
+                      type: boolean
                     options:
                       type: array
                       items:
@@ -8631,6 +8645,8 @@ components:
                 rememberMe:
                   type: object
                   properties:
+                    version:
+                      type: string
                     options:
                       type: object
                       properties:

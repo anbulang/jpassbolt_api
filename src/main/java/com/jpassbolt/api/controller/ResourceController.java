@@ -12,6 +12,7 @@ import com.jpassbolt.api.repository.PermissionRepository;
 import com.jpassbolt.api.repository.UserRepository;
 import com.jpassbolt.api.service.FavoriteService;
 import com.jpassbolt.api.service.ResourceService;
+import com.jpassbolt.api.service.SecretAccessService;
 import com.jpassbolt.api.util.ApiResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -45,6 +46,7 @@ public class ResourceController {
         private final FavoriteService favoriteService;
         private final UserRepository userRepository;
         private final PermissionRepository permissionRepository;
+        private final SecretAccessService secretAccessService;
 
         /**
          * GET /resources.json
@@ -116,6 +118,10 @@ public class ResourceController {
                                         response.setSecrets(secrets.stream()
                                                         .map(this::toSecretResponseDto)
                                                         .collect(Collectors.toList()));
+                                        // Audit: record the caller reading their own secret of this
+                                        // resource. Mirrors PHP ResourcesViewController::_logSecretAccesses
+                                        // (which contains only the requesting user's secret). Best-effort.
+                                        secretAccessService.logCallerSecretAccess(userId, secrets);
                                         return ResponseEntity
                                                         .ok(createResponse("success", "The operation was successful.",
                                                                         response, "/resources/" + id + ".json"));

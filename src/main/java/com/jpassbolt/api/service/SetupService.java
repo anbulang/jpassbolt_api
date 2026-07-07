@@ -178,9 +178,12 @@ public class SetupService {
 
     /**
      * The token must be active, of type register, belong to the user and be
-     * younger than the configured expiry window.
+     * younger than the configured expiry window. Public because the guest
+     * form of GET /setup/user-key-policies/settings.json performs the same
+     * check (PHP AuthenticationTokenGetService::getActiveNotExpiredOrFail
+     * with TYPE_REGISTER).
      */
-    private AuthenticationToken getAndAssertRegisterToken(String userId, String tokenValue) {
+    public AuthenticationToken getAndAssertRegisterToken(String userId, String tokenValue) {
         AuthenticationToken token = authenticationTokenRepository
                 .findByTokenAndUserIdAndTypeAndActiveTrue(tokenValue, userId, TOKEN_TYPE_REGISTER)
                 .orElseThrow(() -> new PassboltApiException(HttpStatus.BAD_REQUEST,

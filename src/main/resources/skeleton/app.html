@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JPassbolt</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    background: #0f1115; color: #e6e9ef;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+  .card {
+    max-width: 460px; width: calc(100% - 48px); padding: 36px 32px;
+    background: #171a21; border: 1px solid #262b36; border-radius: 14px;
+    text-align: center;
+  }
+  h1 { font-size: 22px; letter-spacing: .5px; margin-bottom: 6px; }
+  .sub { color: #8b93a7; font-size: 13px; margin-bottom: 22px; }
+  #msg { font-size: 14px; line-height: 1.7; color: #c7cddb; }
+  .hint { margin-top: 18px; font-size: 12px; color: #8b93a7; line-height: 1.8; text-align: left; }
+</style>
+</head>
+<body>
+<!-- Skeleton / bootstrap page (official-Passbolt shape): the real application
+     is the browser extension. On this trusted domain the extension's content
+     script replaces this page with an extension-origin iframe hosting the
+     vault UI. This page only guides users who don't have the extension yet. -->
+<div class="card">
+  <h1>JPassbolt</h1>
+  <div class="sub">端到端加密密码管理器</div>
+  <p id="msg">正在检测浏览器插件…</p>
+  <div class="hint" id="steps">
+    1. 安装 JPassbolt 浏览器插件；<br>
+    2. 在插件设置中填写本服务器地址并导入你的私钥；<br>
+    3. 登录后本页面将自动切换为密码库界面。
+  </div>
+</div>
+<script>
+(function () {
+  // The extension's content script stamps its version on <html>. React to it
+  // both at load and when the stamp appears later (script injects at idle).
+  function refresh() {
+    var v = document.documentElement.getAttribute('data-jpassbolt-extension');
+    document.getElementById('msg').textContent = v
+      ? '插件已安装（v' + v + '）。请在插件中配置本服务器地址并登录，本页将自动切换为密码库。'
+      : '未检测到 JPassbolt 浏览器插件。请先完成以下步骤：';
+  }
+  refresh();
+  new MutationObserver(refresh).observe(document.documentElement,
+    { attributes: true, attributeFilter: ['data-jpassbolt-extension'] });
+})();
+</script>
+</body>
+</html>

@@ -9,8 +9,10 @@ import com.jpassbolt.api.repository.ProfileRepository;
 import com.jpassbolt.api.repository.RoleRepository;
 import com.jpassbolt.api.service.RecoverService;
 import com.jpassbolt.api.util.ApiResponse;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.AnonymousAuthenticationToken;
 import org.springframework.security.core.Authentication;
@@ -19,6 +21,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RestController;
@@ -122,7 +125,9 @@ public class RecoverController {
             RequestMethod.POST })
     public ResponseEntity<Map<String, Object>> complete(
             @PathVariable String userId,
-            @RequestBody(required = false) RecoverDto.CompleteRequest request) {
+            @RequestBody(required = false) RecoverDto.CompleteRequest request,
+            HttpServletRequest httpRequest,
+            @RequestHeader(value = HttpHeaders.USER_AGENT, required = false) String userAgent) {
         String url = "/setup/recover/complete/" + userId + ".json";
 
         if (isAuthenticated()) {
@@ -132,7 +137,7 @@ public class RecoverController {
         }
 
         try {
-            recoverService.completeRecover(userId, request);
+            recoverService.completeRecover(userId, request, httpRequest.getRemoteAddr(), userAgent);
             return ResponseEntity.ok(
                     createNullBodyResponse("success", "The recovery was completed successfully.", url));
         } catch (IllegalArgumentException e) {

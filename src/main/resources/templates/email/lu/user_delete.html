@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<!--
+  Sent to the managers of the groups a deleted user belonged to
+  (UserDeleteEmailRedactor). Variables: actorName (who deleted); deletedName +
+  deletedUsername (who was deleted); link (SPA users page). The whole <body> is
+  replaced by the shared shell; only the `content` fragment is pulled in.
+-->
+<body th:replace="~{_layout :: shell(#{email.user.delete.title}, ~{::content})}">
+<div th:fragment="content">
+  <p th:text="#{email.user.delete.intro(${deletedName},${deletedUsername})}">
+    A user has been deleted from your organization.
+  </p>
+  <p th:text="#{email.user.delete.groups}">
+    This user was a member of one or more groups you manage.
+  </p>
+  <p style="margin:24px 0;">
+    <a th:href="${link}" th:text="#{email.user.delete.cta}"
+       style="background:#2a6df4;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:600;display:inline-block;">
+      Log in to JPassbolt
+    </a>
+  </p>
+  <p style="color:#888;font-size:12px;word-break:break-all;"
+     th:text="#{email.button.fallback(${link})}">
+    Or open this link: ...
+  </p>
+</div>
+</body>
+</html>

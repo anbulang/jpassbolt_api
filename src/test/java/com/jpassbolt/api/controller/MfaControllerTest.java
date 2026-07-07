@@ -813,4 +813,87 @@ class MfaControllerTest {
                 .content("{}"))
                 .andExpect(status().isBadRequest());
     }
+
+    // ------------------------------------------------------------------
+    // DELETE /mfa/setup/{userId}.json — admin / self MFA reset
+    // ------------------------------------------------------------------
+
+    @Test
+    @WithMockUser(username = "admin@example.com", roles = { "USER" })
+    void testResetUserMfa_AdminResetsOther_DeletesRowAndTokens() throws Exception {
+        // Admin (no MFA of their own → gate passes) resets the target user.
+        seedOrgMfa("totp");
+        seedUserTotp(testUser);
+        mfaCookie(testUser, true); // an active mfa token belonging to the target
+
+        mockMvc.perform(delete("/mfa/setup/" + testUser.getId() + ".json"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.header.status").value("success"))
+                .andExpect(jsonPath("$.header.message").value(
+                        "The multi-factor authentication settings for the user were deleted."))
+                .andExpect(jsonPath("$.body").value(nullValue()));
+
+        assertThat(accountSettingRepository
+                .findFirstByUserIdAndProperty(testUser.getId(), "mfa")).isEmpty();
+        assertThat(mfaTokensOf(testUser)).isNotEmpty().allMatch(token -> !token.getActive());
+    }
+
+    @Test
+    void testResetUserMfa_SelfReset_DeletesRow() throws Exception {
+        // Self-reset by the default actor (test@example.com). No org MFA seeded so the
+        // enforcement gate does not block (account row still present → resettable).
+        seedUserTotp(testUser);
+        mfaCookie(testUser, true);
+
+        mockMvc.perform(delete("/mfa/setup/" + testUser.getId() + ".json"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.header.message").value(
+                        "The multi-factor authentication settings for the user were deleted."));
+
+        assertThat(accountSettingRepository
+                .findFirstByUserIdAndProperty(testUser.getId(), "mfa")).isEmpty();
+        assertThat(mfaTokensOf(testUser)).isNotEmpty().allMatch(token -> !token.getActive());
+    }
+
+    @Test
+    @WithMockUser(username = "admin@example.com", roles = { "USER" })
+    void testResetUserMfa_NoSettings_NoOpMessage() throws Exception {
+        // Target has no MFA account settings at all → distinct message, nothing deleted.
+        mockMvc.perform(delete("/mfa/setup/" + testUser.getId() + ".json"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.header.message").value(
+                        "No multi-factor authentication settings defined for the user."));
+    }
+
+    @Test
+    void testResetUserMfa_NonAdminResetsOther_Forbidden() throws Exception {
+        // Default actor (non-admin) targets the admin user → 403, admin's row untouched.
+        seedUserTotp(adminUser);
+
+        mockMvc.perform(delete("/mfa/setup/" + adminUser.getId() + ".json"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.header.status").value("error"))
+                .andExpect(jsonPath("$.header.message")
+                        .value("You are not allowed to access this location."));
+
+        assertThat(accountSettingRepository
+                .findFirstByUserIdAndProperty(adminUser.getId(), "mfa")).isPresent();
+    }
+
+    @Test
+    @WithMockUser(username = "admin@example.com", roles = { "USER" })
+    void testResetUserMfa_InvalidUuid_BadRequest() throws Exception {
+        mockMvc.perform(delete("/mfa/setup/not-a-uuid.json"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.header.message").value("The user id is not valid."));
+    }
+
+    @Test
+    @WithMockUser(username = "admin@example.com", roles = { "USER" })
+    void testResetUserMfa_UnknownUser_BadRequest() throws Exception {
+        // Well-formed but non-existent uuid → same 400 message as a malformed id (PHP parity).
+        mockMvc.perform(delete("/mfa/setup/" + UUID.randomUUID() + ".json"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.header.message").value("The user id is not valid."));
+    }
 }

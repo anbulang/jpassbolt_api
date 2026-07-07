@@ -64,9 +64,11 @@ public class EmailNotificationSettingsService {
 
     /**
      * The authoritative key set + defaults, mirroring PHP
-     * {@code CoreNotificationSettingsDefinition::buildSchema}. 25 boolean keys,
-     * already in the flattened snake_case form the API emits. Iteration order is
-     * the PHP {@code addField} order (LinkedHashMap) for a stable response shape.
+     * {@code CoreNotificationSettingsDefinition::buildSchema} (25 keys) plus the
+     * one key the SelfRegistration feature plugin contributes
+     * ({@code send_admin_user_register_complete}) = 26 boolean keys, already in
+     * the flattened snake_case form the API emits. Iteration order is the PHP
+     * {@code addField} order (LinkedHashMap) for a stable response shape.
      */
     public static final Map<String, Boolean> DEFAULTS = buildDefaults();
 
@@ -88,6 +90,12 @@ public class EmailNotificationSettingsService {
         d.put("send_admin_user_recover_complete", true);
         d.put("send_admin_user_disable_user", true);
         d.put("send_admin_user_disable_admin", true);
+        // Contributed by the SelfRegistration feature plugin (PHP
+        // SelfRegistrationNotificationSettingsDefinition, default true): notify
+        // admins when a guest self-registers. Not part of PHP's 25-key Core
+        // schema — JPassbolt keeps one flat DEFAULTS map, so enabling
+        // self-registration grows the effective settings to 26 keys.
+        d.put("send_admin_user_register_complete", true);
         // comment controls
         d.put("send_comment_add", true);
         // group controls
@@ -131,6 +139,47 @@ public class EmailNotificationSettingsService {
                     }
                 }));
         return effective;
+    }
+
+    /**
+     * Should the email gated by this notification setting be sent? This is the
+     * Phase-1 gating seam the redactors call before resolving recipients or
+     * rendering a body, mirroring PHP
+     * {@code EmailSubscriptionDispatcher::isRedactorActive()}:
+     * {@code return is_null($settingPath) || EmailNotificationSettings::get($settingPath);}
+     *
+     * <p>The public contract takes the DOTTED path form a redactor declares
+     * (e.g. {@code "send.password.share"}), matching PHP's
+     * {@code SubscribedEmailRedactorInterface::getNotificationSettingPath()}. The
+     * {@code '.'}→{@code '_'} translation is done here: PHP's
+     * {@code underscoreToDottedFormat} is a naive {@code str_replace} in both
+     * directions, and the two camelCase keys ({@code send_user_recoverComplete},
+     * {@code send_group_manager_requestAddUser}) survive a plain replace
+     * unchanged, so every dotted path maps char-for-char to its stored key.</p>
+     *
+     * <p>A {@code null} path means "always send" — the port of the two PHP
+     * redactors whose {@code getNotificationSettingPath()} returns null
+     * ({@code AdminDeleteEmailRedactor}, {@code UserAdminRoleRevokedEmailRedactor}).
+     * An unknown (typo) path returns {@code false} rather than throwing as PHP
+     * {@code get()} does: a defensive "off" can never spam recipients and never
+     * turns a domain request into a 5xx.</p>
+     *
+     * @param dottedPath the redactor's notification setting path in dotted form,
+     *                   or {@code null} for an always-on email
+     * @return true when the email should be sent
+     */
+    @Transactional(readOnly = true)
+    public boolean isEnabled(String dottedPath) {
+        if (dottedPath == null) {
+            return true; // always-on redactor (no getNotificationSettingPath)
+        }
+        String key = dottedPath.replace('.', '_');
+        Object value = get().get(key);
+        if (value == null) {
+            log.warn("Unknown email notification setting path '{}' — treating as disabled", dottedPath);
+            return false;
+        }
+        return asBoolean(value, false);
     }
 
     /**
