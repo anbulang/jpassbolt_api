@@ -33,11 +33,16 @@ logging:
     com.jpassbolt.api: DEBUG
 
 jpassbolt:
-  # Base URL of the CLIENT (the React SPA), used to build the setup/recover links
-  # placed in emails. Distinct from settings.full-base-url (the API/server URL):
-  # the recovery link must open the SPA, not the JSON API.
+  # Browser-facing links in emails (recovery/setup) and the skeleton page must
+  # point at the trusted server domain the user actually browses. By default
+  # PublicBaseUrlResolver DERIVES this from the request, gated against Host-header
+  # injection: only loopback / *.localhost / hosts listed in app.trusted-hosts are
+  # honored, otherwise it falls back to settings.full-base-url. In production set
+  # app.public-base-url to the public origin (recommended), or add the public
+  # hostname(s) to app.trusted-hosts.
   app:
-    base-url: ${JPASSBOLT_APP_BASE_URL:http://localhost:5173}
+    public-base-url: ${JPASSBOLT_APP_PUBLIC_BASE_URL:}
+    trusted-hosts: ${JPASSBOLT_APP_TRUSTED_HOSTS:}
   # Outbound email. Disabled by default: when off (or when no JavaMailSender bean
   # is configured, i.e. spring.mail.host unset), MailService LOGS the link instead
   # of sending — so default/test profiles need no SMTP. The `local` profile turns

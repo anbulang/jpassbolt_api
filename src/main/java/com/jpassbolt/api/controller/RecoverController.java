@@ -61,10 +61,13 @@ public class RecoverController {
 
     /**
      * POST /users/recover.json
-     * Enumeration-safe recovery request: always 200 with the same message,
-     * whether or not the username maps to an eligible user (PHP
-     * UsersRecoverController::recoverPost swallows the NotFoundException when
-     * preventEmailEnumeration is on). Success body is JSON null (nullBody).
+     * Recovery request. By default (official {@code preventEmailEnumeration=false})
+     * an unknown/ineligible username surfaces a 404 so the client can show the
+     * "requires an invitation" screen; when the flag is on, the service pretends
+     * success (200, same message) to hide account existence — PHP
+     * UsersRecoverController::recoverPost swallows the NotFoundException only in
+     * that mode. Success body is JSON null (nullBody). See
+     * {@link RecoverService#recover} for the flag semantics.
      */
     @PostMapping({ "/users/recover", "/users/recover.json" })
     public ResponseEntity<Map<String, Object>> recover(

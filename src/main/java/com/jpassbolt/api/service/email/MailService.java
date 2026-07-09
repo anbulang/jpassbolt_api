@@ -191,11 +191,26 @@ public class MailService {
     // Text comes from the messages/email bundles; only structure lives here.
 
     private String button(Locale locale, String link, String label) {
-        return "<p style=\"margin:24px 0\"><a href=\"" + link + "\" "
+        // Defense-in-depth: PublicBaseUrlResolver already whitelists the scheme,
+        // but escape the (request-derived) URL before it enters the href/text so
+        // no future/other caller can inject markup or a rogue attribute here.
+        String safeLink = esc(link);
+        return "<p style=\"margin:24px 0\"><a href=\"" + safeLink + "\" "
                 + "style=\"background:#2a6df4;color:#fff;text-decoration:none;padding:12px 20px;"
                 + "border-radius:8px;font-weight:600;display:inline-block\">" + label + "</a></p>"
                 + "<p style=\"color:#888;font-size:12px;word-break:break-all\">"
-                + msg("email.button.fallback", locale, link) + "</p>";
+                + msg("email.button.fallback", locale, safeLink) + "</p>";
+    }
+
+    /** Minimal HTML escaping for interpolating a (possibly request-derived) URL into markup. */
+    private static String esc(String s) {
+        if (s == null) {
+            return "";
+        }
+        return s.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("\"", "&quot;");
     }
 
     private String wrap(Locale locale, String title, String body) {

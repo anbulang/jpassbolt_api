@@ -84,7 +84,7 @@ public class PublicBaseUrlResolver {
             return null;
         }
         HttpServletRequest req = attrs.getRequest();
-        String scheme = firstNonBlank(req.getHeader("X-Forwarded-Proto"), req.getScheme());
+        String scheme = safeScheme(req);
 
         String hostname;
         String hostWithPort;
@@ -97,7 +97,10 @@ public class PublicBaseUrlResolver {
             int port = req.getServerPort();
             boolean defaultPort = ("https".equals(scheme) && port == 443)
                     || ("http".equals(scheme) && port == 80);
-            hostWithPort = (defaultPort || port <= 0) ? hostname : hostname + ":" + port;
+            // Bracket an IPv6 literal so "scheme://[::1]:8090" is a valid
+            // authority — req.getServerName() returns the bare "::1".
+            String hostForUri = bracketIfIpv6(hostname);
+            hostWithPort = (defaultPort || port <= 0) ? hostForUri : hostForUri + ":" + port;
         }
 
         // SECURITY GATE: never build links from an attacker-controllable host
@@ -126,11 +129,43 @@ public class PublicBaseUrlResolver {
         if (trustedHosts().contains(h)) {
             return true;
         }
+        // Auto-trust ONLY hosts the victim's own browser resolves to ITS OWN
+        // machine, so a link built from them can never reach a remote attacker:
+        //   - the exact loopback names / IPv6 loopback;
+        //   - a strict 127.0.0.0/8 IPv4 LITERAL. NOT startsWith("127."), which
+        //     would trust the attacker-registrable domain "127.0.0.1.evil.example"
+        //     (a real, resolvable public hostname) and poison the recovery link;
+        //   - *.localhost (RFC 6761 forces browsers to resolve it to loopback).
+        // ".local" (mDNS / RFC 6762) is deliberately NOT auto-trusted: it can
+        // resolve to an arbitrary host on the LAN (mDNS spoofing, legacy internal
+        // AD suffixes), so a production box must add it to trusted-hosts explicitly.
         return h.equals("localhost")
                 || h.equals("::1")
-                || h.startsWith("127.")
-                || h.endsWith(".local")
+                || isLoopbackIpv4Literal(h)
                 || h.endsWith(".localhost");
+    }
+
+    /** True iff {@code h} is a dotted-quad 127.0.0.0/8 literal, e.g. 127.0.0.1. */
+    private static boolean isLoopbackIpv4Literal(String h) {
+        String[] parts = h.split("\\.", -1);
+        if (parts.length != 4 || !"127".equals(parts[0])) {
+            return false;
+        }
+        for (String p : parts) {
+            if (p.isEmpty() || p.length() > 3) {
+                return false;
+            }
+            for (int i = 0; i < p.length(); i++) {
+                char c = p.charAt(i);
+                if (c < '0' || c > '9') {   // ASCII-only: reject Unicode digits
+                    return false;
+                }
+            }
+            if (Integer.parseInt(p) > 255) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private Set<String> trustedHosts() {
@@ -156,8 +191,35 @@ public class PublicBaseUrlResolver {
         return colon >= 0 ? hostMaybePort.substring(0, colon) : hostMaybePort;
     }
 
-    private static String firstNonBlank(String a, String b) {
-        return (a != null && !a.isBlank()) ? a.trim() : b;
+    /**
+     * Scheme for the outbound link. {@code X-Forwarded-Proto} is attacker
+     * controllable and not validated upstream, so accept ONLY a clean
+     * {@code http}/{@code https} token (the first value of a possibly
+     * comma-joined multi-proxy header); anything else — a spoofed
+     * {@code "javascript:…"} or a malformed {@code "https, http"} — falls back
+     * to the servlet's own scheme. Stops a {@code javascript:} scheme from ever
+     * reaching an email {@code href}.
+     */
+    private static String safeScheme(HttpServletRequest req) {
+        String xfp = req.getHeader("X-Forwarded-Proto");
+        if (xfp != null && !xfp.isBlank()) {
+            String first = xfp.split(",")[0].trim().toLowerCase(Locale.ROOT);
+            if ("http".equals(first) || "https".equals(first)) {
+                return first;
+            }
+        }
+        return "https".equalsIgnoreCase(req.getScheme()) ? "https" : "http";
+    }
+
+    /** Wrap a bare IPv6 literal in [] for URI authority use; leave anything else as-is. */
+    private static String bracketIfIpv6(String host) {
+        if (host == null) {
+            return "";
+        }
+        if (host.startsWith("[") || host.indexOf(':') < 0) {
+            return host;
+        }
+        return "[" + host + "]";
     }
 
     private static String trimTrailingSlash(String s) {
