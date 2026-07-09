@@ -114,7 +114,7 @@ class ShareEmailRedactorTest {
         assertThat(recipients).containsExactlyInAnyOrder("alice@passbolt.com", "bob@passbolt.com");
 
         EmailMessage any = captor.getAllValues().get(0);
-        assertThat(any.subject()).isEqualTo("Grace Hopper shared a password with you");
+        assertThat(any.subject()).isEqualTo("Grace Hopper 与您共享了一个密码");
         assertThat(any.html())
                 .contains("AWS root")                                 // resource name (v4)
                 .contains("/app/passwords/view/res-1")                // SPA deep link
@@ -162,7 +162,7 @@ class ShareEmailRedactorTest {
         ArgumentCaptor<EmailMessage> captor = ArgumentCaptor.forClass(EmailMessage.class);
         verify(mailService).send(captor.capture());
         assertThat(captor.getValue().html())
-                .contains("Grace Hopper shared a password with you")   // nameless intro
+                .contains("Grace Hopper 与您共享了一个密码")   // nameless intro
                 .doesNotContain("shared the password");                 // not the named-intro variant
     }
 }

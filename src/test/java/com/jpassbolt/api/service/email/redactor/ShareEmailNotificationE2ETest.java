@@ -130,6 +130,6 @@ class ShareEmailNotificationE2ETest {
                 .map(Object::toString)
                 .collect(Collectors.toSet());
         assertThat(recipients).containsExactlyInAnyOrder("alice-e2e@passbolt.com", "bob-e2e@passbolt.com");
-        assertThat(messages[0].getSubject()).isEqualTo("Grace Hopper shared a password with you");
+        assertThat(messages[0].getSubject()).isEqualTo("Grace Hopper 与您共享了一个密码");
     }
 }

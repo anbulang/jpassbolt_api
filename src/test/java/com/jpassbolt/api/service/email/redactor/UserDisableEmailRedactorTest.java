@@ -112,7 +112,7 @@ class UserDisableEmailRedactorTest {
         // Both admins — the operator included (PHP does not exclude them).
         assertThat(sent).extracting(EmailMessage::recipient)
                 .containsExactlyInAnyOrder("ada@passbolt.com", "carol@passbolt.com");
-        assertThat(sent.get(0).subject()).isEqualTo("Betty Holberton has been suspended");
+        assertThat(sent.get(0).subject()).isEqualTo("Betty Holberton 已被停用");
         assertThat(sent.get(0).html()).contains("betty@passbolt.com");
     }
 
@@ -147,7 +147,7 @@ class UserDisableEmailRedactorTest {
         verify(mailService).send(captor.capture());
         EmailMessage msg = captor.getValue();
         assertThat(msg.recipient()).isEqualTo("carol@passbolt.com");
-        assertThat(msg.subject()).isEqualTo("Your account has been suspended");
+        assertThat(msg.subject()).isEqualTo("您的账户已被停用");
         // The operator's address is the contact point (mailto in PHP).
         assertThat(msg.html()).contains("ada@passbolt.com");
     }

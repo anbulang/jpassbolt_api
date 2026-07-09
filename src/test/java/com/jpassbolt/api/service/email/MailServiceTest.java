@@ -42,11 +42,18 @@ class MailServiceTest {
         when(smtp.resolveForSend()).thenReturn(
                 new com.jpassbolt.api.service.SmtpSettingsService.SmtpTransportResolution(
                         false, null, null));
-        MailService s = new MailService(provider, MESSAGES, locale, smtp);
+        MailService s = new MailService(provider, MESSAGES, locale, smtp, baseUrlStub());
         ReflectionTestUtils.setField(s, "enabled", enabled);
         ReflectionTestUtils.setField(s, "from", "no-reply@test.local");
-        ReflectionTestUtils.setField(s, "appBaseUrl", "http://localhost:5173/");
         return s;
+    }
+
+    /** Trusted-domain resolver stub: links resolve to the server origin. */
+    private com.jpassbolt.api.service.PublicBaseUrlResolver baseUrlStub() {
+        com.jpassbolt.api.service.PublicBaseUrlResolver r =
+                mock(com.jpassbolt.api.service.PublicBaseUrlResolver.class);
+        when(r.resolve()).thenReturn("http://localhost:8090");
+        return r;
     }
 
     /** AccountLocaleService stub resolving every user to the given Passbolt code. */
@@ -88,10 +95,9 @@ class MailServiceTest {
                 new com.jpassbolt.api.service.SmtpSettingsService.SmtpTransportResolution(
                         true, dbSender, "DB Sender <db@x.test>"));
 
-        MailService s = new MailService(provider, MESSAGES, localeStub("en-UK"), smtp);
+        MailService s = new MailService(provider, MESSAGES, localeStub("en-UK"), smtp, baseUrlStub());
         ReflectionTestUtils.setField(s, "enabled", false); // disabled — a DB config still sends
         ReflectionTestUtils.setField(s, "from", "no-reply@test.local");
-        ReflectionTestUtils.setField(s, "appBaseUrl", "http://localhost:5173/");
 
         s.sendRecoverEmail("ada@passbolt.com", "uid-1", "tok-1", "default");
 

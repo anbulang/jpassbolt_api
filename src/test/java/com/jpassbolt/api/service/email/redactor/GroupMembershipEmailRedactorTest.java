@@ -147,7 +147,7 @@ class GroupMembershipEmailRedactorTest {
         addRedactor.onGroupMembershipChanged(updateEvent());
         EmailMessage message = singleSent();
         assertThat(message.recipient()).isEqualTo("alice@passbolt.com");
-        assertThat(message.subject()).isEqualTo("Ada Lovelace added you to the group Engineering");
+        assertThat(message.subject()).isEqualTo("Ada Lovelace 把您加入了群组 Engineering");
         assertThat(message.html()).contains("/app/groups");
     }
 
@@ -164,7 +164,7 @@ class GroupMembershipEmailRedactorTest {
         deleteRedactor.onGroupMembershipChanged(updateEvent());
         EmailMessage message = singleSent();
         assertThat(message.recipient()).isEqualTo("bob@passbolt.com");
-        assertThat(message.subject()).isEqualTo("Ada Lovelace removed you from the group Engineering");
+        assertThat(message.subject()).isEqualTo("Ada Lovelace 把您移出了群组 Engineering");
     }
 
     @Test
@@ -183,8 +183,8 @@ class GroupMembershipEmailRedactorTest {
         updateRedactor.onGroupMembershipChanged(updateEvent());
         EmailMessage message = singleSent();
         assertThat(message.recipient()).isEqualTo("carol@passbolt.com");
-        assertThat(message.subject()).isEqualTo("Ada Lovelace updated your membership in the group Engineering");
-        assertThat(message.html()).contains("group manager"); // promoted line (isManager=true)
+        assertThat(message.subject()).isEqualTo("Ada Lovelace 更新了您在群组 Engineering 中的成员身份");
+        assertThat(message.html()).contains("群组管理员"); // promoted line (isManager=true), zh default
     }
 
     @Test
@@ -194,7 +194,7 @@ class GroupMembershipEmailRedactorTest {
         // current managers = {ada, dave, carol}; minus affected {alice,bob,carol}
         // minus actor {ada} => {dave}.
         assertThat(message.recipient()).isEqualTo("dave@passbolt.com");
-        assertThat(message.subject()).isEqualTo("Ada Lovelace updated the group Engineering");
+        assertThat(message.subject()).isEqualTo("Ada Lovelace 更新了群组 Engineering");
         assertThat(message.html())
                 .contains("Alice Added")
                 .contains("Bob Removed")

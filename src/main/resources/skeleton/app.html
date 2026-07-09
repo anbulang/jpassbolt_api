@@ -5,52 +5,431 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>JPassbolt</title>
 <style>
-  :root { color-scheme: dark; }
+  /* ---- aegis light palette (mirrors jpassbolt_frontend/src/index.css) ---- */
+  :root {
+    --sans: "IBM Plex Sans", system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, monospace;
+    --bg: oklch(0.984 0.003 255);
+    --surface: #ffffff;
+    --surface-2: oklch(0.976 0.004 255);
+    --border: oklch(0.912 0.006 255);
+    --text: oklch(0.255 0.014 262);
+    --text-2: oklch(0.475 0.013 262);
+    --text-3: oklch(0.625 0.011 262);
+    --accent: oklch(0.525 0.152 258);
+    --accent-press: oklch(0.455 0.152 258);
+    --accent-soft: oklch(0.955 0.028 258);
+    --green: oklch(0.565 0.118 158);
+    --red: oklch(0.565 0.182 23);
+    --red-soft: oklch(0.962 0.028 23);
+    --red-text: oklch(0.515 0.18 23);
+    --r: 10px;
+    --r-lg: 14px;
+    --r-xl: 20px;
+    --shadow: 0 4px 14px oklch(0.4 0.03 262 / 0.08), 0 1px 3px oklch(0.4 0.02 262 / 0.06);
+    --shadow-lg: 0 18px 50px oklch(0.3 0.03 262 / 0.18), 0 4px 14px oklch(0.3 0.02 262 / 0.10);
+  }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
-    min-height: 100vh; display: flex; align-items: center; justify-content: center;
-    background: #0f1115; color: #e6e9ef;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+    min-height: 100vh; display: grid; place-items: center; padding: 32px;
+    font-family: var(--sans); color: var(--text);
+    background: radial-gradient(1200px 640px at 50% -12%, var(--accent-soft), transparent 60%), var(--bg);
   }
   .card {
-    max-width: 460px; width: calc(100% - 48px); padding: 36px 32px;
-    background: #171a21; border: 1px solid #262b36; border-radius: 14px;
-    text-align: center;
+    width: 460px; max-width: 100%; background: var(--surface);
+    border: 1px solid var(--border); border-radius: var(--r-xl);
+    box-shadow: var(--shadow-lg); overflow: hidden;
   }
-  h1 { font-size: 22px; letter-spacing: .5px; margin-bottom: 6px; }
-  .sub { color: #8b93a7; font-size: 13px; margin-bottom: 22px; }
-  #msg { font-size: 14px; line-height: 1.7; color: #c7cddb; }
-  .hint { margin-top: 18px; font-size: 12px; color: #8b93a7; line-height: 1.8; text-align: left; }
+  .top { padding: 20px 28px 0; }
+  .brand { display: flex; align-items: center; gap: 10px; }
+  .brand .lg {
+    width: 30px; height: 30px; border-radius: 8px; background: var(--accent);
+    color: #fff; display: grid; place-items: center; font-weight: 700; font-size: 13px;
+  }
+  .brand .bn { font-size: 14px; font-weight: 600; letter-spacing: -0.01em; }
+  .brand .lang { margin-left: auto; display: flex; gap: 2px; }
+  .brand .lang button {
+    border: none; background: none; cursor: pointer; font-family: var(--sans);
+    font-size: 12px; color: var(--text-3); padding: 2px 6px; border-radius: 6px;
+  }
+  .brand .lang button.on { color: var(--accent); font-weight: 600; background: var(--accent-soft); }
+  .body { padding: 26px 28px 28px; text-align: center; }
+  .badge {
+    width: 58px; height: 58px; border-radius: 16px; background: var(--accent); color: #fff;
+    display: grid; place-items: center; margin: 4px auto 16px; box-shadow: var(--shadow);
+  }
+  .badge.green { background: var(--green); }
+  .badge svg { width: 28px; height: 28px; }
+  h2 { font-size: 20px; font-weight: 600; letter-spacing: -0.02em; }
+  .sub { font-size: 13px; color: var(--text-3); margin-top: 6px; line-height: 1.5; }
+  form { margin-top: 22px; text-align: left; }
+  label.fl { display: block; font-size: 12px; font-weight: 500; color: var(--text-2); margin-bottom: 7px; }
+  label.fl .req { color: var(--red); }
+  .field {
+    display: flex; align-items: center; gap: 9px; height: 42px; padding: 0 13px;
+    border: 1px solid var(--border); border-radius: var(--r); background: var(--surface-2);
+    transition: border-color .14s, box-shadow .14s;
+  }
+  .field:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); background: var(--surface); }
+  .field.err { border-color: var(--red); box-shadow: 0 0 0 3px var(--red-soft); }
+  .field svg { width: 17px; height: 17px; color: var(--text-3); flex: 0 0 17px; }
+  .field input { flex: 1; border: none; outline: none; background: none; font-family: var(--sans); font-size: 14px; color: var(--text); min-width: 0; }
+  .terms { display: flex; align-items: center; gap: 8px; margin-top: 14px; font-size: 13px; color: var(--text-2); }
+  .terms a { color: var(--accent); text-decoration: underline; }
+  .btn {
+    width: 100%; height: 44px; margin-top: 20px; border: 1px solid var(--accent);
+    border-radius: var(--r); background: var(--accent); color: #fff;
+    font-family: var(--sans); font-size: 15px; font-weight: 600; cursor: pointer;
+    transition: background .14s; display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  }
+  .btn:hover:not(:disabled) { background: var(--accent-press); border-color: var(--accent-press); }
+  .btn:disabled { opacity: .5; cursor: not-allowed; }
+  .btn.ghost { background: transparent; color: var(--accent); border-color: var(--border); }
+  .btn.ghost:hover:not(:disabled) { background: var(--surface-2); }
+  .err-msg { margin-top: 12px; font-size: 12.5px; color: var(--red-text); text-align: center; min-height: 16px; }
+  /* compact store chip — replaces the old oversized grey puzzle box */
+  .chip {
+    display: flex; align-items: center; gap: 12px; margin-top: 22px; padding: 12px 14px;
+    border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--surface-2);
+    text-decoration: none; text-align: left; transition: border-color .14s, background .14s, box-shadow .14s;
+  }
+  .chip:hover { border-color: var(--accent); background: var(--surface); box-shadow: var(--shadow); }
+  .chip .cl {
+    width: 36px; height: 36px; border-radius: 9px; background: #fff; flex: 0 0 36px;
+    border: 1px solid var(--border); display: grid; place-items: center;
+  }
+  .chip .cl svg { width: 22px; height: 22px; display: block; }
+  .chip .ct { flex: 1; min-width: 0; }
+  .chip .ct .t1 { display: block; font-size: 13.5px; font-weight: 600; color: var(--text); }
+  .chip .ct .t2 { display: block; font-size: 12px; color: var(--text-3); margin-top: 1px; }
+  .chip > svg { width: 15px; height: 15px; color: var(--text-3); flex: 0 0 15px; }
+  .detecting {
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    margin-top: 16px; font-size: 12px; color: var(--text-3);
+  }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); animation: pulse 1.2s ease-in-out infinite; }
+  @keyframes pulse { 0%, 100% { opacity: .3; } 50% { opacity: 1; } }
 </style>
 </head>
 <body>
-<!-- Skeleton / bootstrap page (official-Passbolt shape): the real application
-     is the browser extension. On this trusted domain the extension's content
-     script replaces this page with an extension-origin iframe hosting the
-     vault UI. This page only guides users who don't have the extension yet. -->
-<div class="card">
-  <h1>JPassbolt</h1>
-  <div class="sub">端到端加密密码管理器</div>
-  <p id="msg">正在检测浏览器插件…</p>
-  <div class="hint" id="steps">
-    1. 安装 JPassbolt 浏览器插件；<br>
-    2. 在插件设置中填写本服务器地址并导入你的私钥；<br>
-    3. 登录后本页面将自动切换为密码库界面。
-  </div>
-</div>
+<!-- Extension-parity skeleton (official-Passbolt shape). The server serves this
+     bootstrap shell as fixed bytes; on the trusted domain the browser extension's
+     content script (content/appBootstrap.ts) replaces it with a full-viewport
+     extension-origin iframe hosting the real UI. What shows here is only the
+     server-rendered fallback for users WITHOUT the extension — the state-A email
+     prompt, the state-B install prompt, or the app-onboarding guidance, chosen by
+     URL path. Bilingual (zh default): language = ?locale override > org default
+     (GET /api/settings.json app.locale) > zh; the servlet stays static. -->
+<div class="card" id="root"></div>
 <script>
 (function () {
-  // The extension's content script stamps its version on <html>. React to it
-  // both at load and when the stamp appears later (script injects at idle).
-  function refresh() {
-    var v = document.documentElement.getAttribute('data-jpassbolt-extension');
-    document.getElementById('msg').textContent = v
-      ? '插件已安装（v' + v + '）。请在插件中配置本服务器地址并登录，本页将自动切换为密码库。'
-      : '未检测到 JPassbolt 浏览器插件。请先完成以下步骤：';
+  var API = '/api';
+  var root = document.getElementById('root');
+
+  // ---- i18n (bilingual zh/en, default zh) -----------------------------------
+  var DICT = {
+    zh: {
+      emailTitle: '请输入邮箱以继续',
+      emailLabel: '邮箱', terms: '服务条款', acceptPre: '我接受', acceptPost: '',
+      next: '下一步', wait: '请稍候…', netErr: '无法连接服务器，请重试。',
+      mailboxTitle: '请查收邮件！',
+      mailboxSub: '我们已向你发送验证链接。<br>若稍后仍未收到，请检查垃圾邮件箱。',
+      inviteReqTitle: '访问本服务需要邀请',
+      inviteReqSub: '该邮箱未关联本域下任何已批准的用户。请联系管理员申请邀请链接。',
+      inviteReqRetry: '换个邮箱重试',
+      installTitle: '请安装浏览器扩展',
+      installSub: '从下方商店安装扩展，本页会自动检测并继续。',
+      detectedTitle: '已检测到扩展', loadingWs: '正在加载安全工作区…',
+      chipHint: '点击前往商店安装扩展', detecting: '正在自动检测扩展…', refresh: '刷新以检测扩展',
+      appTitle: '端到端加密密码管理器',
+      appSub: '安装 JPassbolt 浏览器扩展，然后配置本服务器地址并登录，本页将自动切换为你的密码库。',
+      appReadySub: '在扩展中配置本服务器并登录，本页将切换为你的密码库。'
+    },
+    en: {
+      emailTitle: 'Please enter your email to continue.',
+      emailLabel: 'Email', terms: 'terms', acceptPre: 'I accept the', acceptPost: '',
+      next: 'Next', wait: 'Please wait…', netErr: 'Could not reach the server. Please try again.',
+      mailboxTitle: 'Check your mailbox!',
+      mailboxSub: 'We sent you a link to verify your email.<br>Check your spam folder if you do not hear from us after a while.',
+      inviteReqTitle: 'Access to this service requires an invitation.',
+      inviteReqSub: 'This email is not associated with any approved users on this domain. Please contact your administrator to request an invitation link.',
+      inviteReqRetry: 'Try with another email',
+      installTitle: 'Please install the browser extension.',
+      installSub: 'Install the extension from the store below — this page detects it automatically.',
+      detectedTitle: 'Extension detected.', loadingWs: 'Loading the secure workspace…',
+      chipHint: 'Open the store to install the extension', detecting: 'Detecting the extension…', refresh: 'Refresh to detect extension',
+      appTitle: 'End-to-end encrypted password manager',
+      appSub: 'Install the JPassbolt browser extension, then configure this server address and sign in. This page will switch to your vault automatically.',
+      appReadySub: 'Configure this server in the extension and sign in — this page will switch to your vault.'
+    }
+  };
+  // Passbolt code (en-UK / zh-CN / en / zh …) → page code.
+  function normLocale(code) { return (String(code || '').toLowerCase().indexOf('zh') === 0) ? 'zh' : 'en'; }
+  var explicit = new URLSearchParams(location.search).get('locale'); // manual override wins
+  var LOCALE = explicit ? normLocale(explicit) : 'zh';               // default Chinese
+  function t(k) { return DICT[LOCALE][k]; }
+
+  function svg(paths) {
+    return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+      + 'stroke-linecap="round" stroke-linejoin="round">' + paths + '</svg>';
   }
-  refresh();
-  new MutationObserver(refresh).observe(document.documentElement,
-    { attributes: true, attributeFilter: ['data-jpassbolt-extension'] });
+  var ICON = {
+    mailCheck: svg('<path d="M22 13V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h9"/><path d="m3 7 9 6 9-6"/><path d="m16 19 2 2 4-4"/>'),
+    puzzle: svg('<path d="M15.5 4.5a2 2 0 1 0-4 0V6H8a2 2 0 0 0-2 2v3.5H4.5a2 2 0 1 0 0 4H6V19a2 2 0 0 0 2 2h3.5v-1.5a2 2 0 1 1 4 0V21H19a2 2 0 0 0 2-2v-3.5h-1.5a2 2 0 1 1 0-4H21V8a2 2 0 0 0-2-2h-3.5z"/>'),
+    at: svg('<circle cx="12" cy="12" r="4"/><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8"/>'),
+    check: svg('<path d="M20 6 9 17l-5-5"/>'),
+    external: svg('<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>')
+  };
+  // Brand logos for the store chip (fixed colors, not currentColor): a flat
+  // three-sector Chrome wheel and an Edge-blue disc — close enough at 22px.
+  var LOGO = {
+    chrome: '<svg viewBox="0 0 48 48">'
+      + '<path fill="#EA4335" d="M24 24 41.32 14A20 20 0 0 0 6.68 14Z"/>'
+      + '<path fill="#FBBC05" d="M24 24 6.68 14A20 20 0 0 0 24 44Z"/>'
+      + '<path fill="#34A853" d="M24 24V44A20 20 0 0 0 41.32 14Z"/>'
+      + '<circle cx="24" cy="24" r="9.5" fill="#fff"/><circle cx="24" cy="24" r="7" fill="#4285F4"/></svg>',
+    edge: '<svg viewBox="0 0 48 48"><defs><linearGradient id="egr" x1="0" y1="0" x2="1" y2="1">'
+      + '<stop offset="0" stop-color="#38d0d8"/><stop offset="1" stop-color="#2563eb"/></linearGradient></defs>'
+      + '<circle cx="24" cy="24" r="20" fill="url(#egr)"/>'
+      + '<text x="24" y="32" font-family="Arial, sans-serif" font-size="24" font-weight="bold" fill="#fff" text-anchor="middle">e</text></svg>'
+  };
+
+  // The extension's content script stamps BOTH an attribute and a stable class
+  // on <html> (content/index.ts) — accept either, so a partial stamp (e.g. the
+  // attribute write raced an early snapshot) still counts as installed.
+  function extPresent() {
+    var de = document.documentElement;
+    return !!de.getAttribute('data-jpassbolt-extension') || de.classList.contains('jpassbolt-extension');
+  }
+
+  // ---- browser detection + extension store links ----------------------------
+  // Chrome and Edge are supported (both Chromium). Edge's UA carries "Edg/";
+  // anything else Chromium (Chrome/, but not Opera "OPR/") is treated as Chrome;
+  // unknown browsers fall back to the Chrome Web Store. INTERIM: until JPassbolt
+  // publishes its own extension, these point at the OFFICIAL Passbolt extension
+  // (drop-in stand-in) — swap the URLs when the JPassbolt listings go live.
+  var STORE = {
+    chrome: { zh: 'Chrome 应用商店', en: 'Chrome Web Store', logo: 'chrome',
+      url: 'https://chromewebstore.google.com/detail/passbolt-open-source-pass/didegimhafipceonhjepacocaffmoppf' },
+    edge: { zh: 'Edge 加载项', en: 'Microsoft Edge Add-ons', logo: 'edge',
+      url: 'https://microsoftedge.microsoft.com/addons/detail/passbolt-open-source-pa/ljeppgjhohmhpbdhjjjbiflabdgfkhpo' }
+  };
+  function detectStore() {
+    var ua = navigator.userAgent || '';
+    if (/Edg\//.test(ua)) return STORE.edge;              // Microsoft Edge (Chromium)
+    return STORE.chrome;                                   // Chrome (and Chromium fallback)
+  }
+
+  function brand() {
+    return '<div class="top"><div class="brand"><div class="lg">JP</div><div class="bn">JPassbolt</div>'
+      + '<div class="lang">'
+      + '<button type="button" data-loc="zh" class="' + (LOCALE === 'zh' ? 'on' : '') + '">中文</button>'
+      + '<button type="button" data-loc="en" class="' + (LOCALE === 'en' ? 'on' : '') + '">EN</button>'
+      + '</div></div></div>';
+  }
+  function wireLang() {
+    var b = root.querySelectorAll('.lang button');
+    for (var i = 0; i < b.length; i++) {
+      b[i].addEventListener('click', function (e) {
+        LOCALE = e.currentTarget.getAttribute('data-loc');
+        explicit = LOCALE; // a manual pick becomes the override, stops org-refresh clobber
+        document.documentElement.lang = LOCALE;
+        render();
+      });
+    }
+  }
+
+  // ---- state A: enter your email -> triggers a recovery link email ----------
+  function renderEmail() {
+    root.innerHTML = brand()
+      + '<div class="body">'
+      + '<h2>' + t('emailTitle') + '</h2>'
+      + '<form id="f" novalidate>'
+      + '<label class="fl" for="em">' + t('emailLabel') + ' <span class="req">*</span></label>'
+      + '<div class="field" id="fld">' + ICON.at + '<input id="em" type="email" autocomplete="username" placeholder="you@organization.com" autofocus></div>'
+      + '<label class="terms">' + t('acceptPre') + ' <input type="checkbox" id="tc"> <a href="' + API + '/settings.json" target="_blank" rel="noopener">' + t('terms') + '</a> ' + t('acceptPost') + '</label>'
+      + '<button class="btn" id="go" type="submit" disabled>' + t('next') + '</button>'
+      + '<div class="err-msg" id="er"></div>'
+      + '</form>'
+      + '</div>';
+    wireLang();
+    var em = document.getElementById('em');
+    var tc = document.getElementById('tc');
+    var go = document.getElementById('go');
+    var er = document.getElementById('er');
+    var fld = document.getElementById('fld');
+    function valid() { return tc.checked && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em.value.trim()); }
+    function sync() { go.disabled = !valid(); }
+    em.addEventListener('input', function () { fld.classList.remove('err'); er.textContent = ''; sync(); });
+    tc.addEventListener('change', sync);
+    document.getElementById('f').addEventListener('submit', function (e) {
+      e.preventDefault();
+      if (!valid()) { fld.classList.add('err'); return; }
+      go.disabled = true; go.textContent = t('wait'); er.textContent = '';
+      fetch(API + '/users/recover.json', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify({ username: em.value.trim() })
+      }).then(function (res) {
+        // Official parity: the response STATUS drives the next screen.
+        //   2xx  -> the link was (or would have been) sent: "check your mailbox".
+        //   404  -> unknown/deleted/disabled account (enumeration protection off,
+        //           the official CE default): "requires an invitation".
+        //   else -> validation / server error: surface it inline and let them retry.
+        // fetch only rejects on a network failure, so a 404 lands here, NOT in
+        // catch() — which is why the old always-mailbox branch masked it.
+        if (res.ok) { renderMailbox(); return; }
+        if (res.status === 404) { renderInvite(); return; }
+        return res.json().then(function (j) {
+          go.disabled = false; go.textContent = t('next');
+          fld.classList.add('err');
+          er.textContent = (j && j.header && j.header.message) || t('netErr');
+        }, function () {
+          go.disabled = false; go.textContent = t('next');
+          er.textContent = t('netErr');
+        });
+      }).catch(function () {
+        go.disabled = false; go.textContent = t('next');
+        er.textContent = t('netErr');
+      });
+    });
+  }
+
+  // ---- state A confirmation: check your mailbox -----------------------------
+  function renderMailbox() {
+    root.innerHTML = brand()
+      + '<div class="body">'
+      + '<div class="badge">' + ICON.mailCheck + '</div>'
+      + '<h2>' + t('mailboxTitle') + '</h2>'
+      + '<p class="sub">' + t('mailboxSub') + '</p>'
+      + '</div>';
+    wireLang();
+  }
+
+  // ---- state A alternative: this email has no approved account --------------
+  // Reached on a 404 from recover when enumeration protection is off (official
+  // CE default): the account is unknown/deleted/disabled, so — matching the
+  // official extension's screen — we say access requires an invitation and offer
+  // to try another email rather than silently claiming a mail was sent.
+  function renderInvite() {
+    root.innerHTML = brand()
+      + '<div class="body">'
+      + '<div class="badge">' + ICON.at + '</div>'
+      + '<h2>' + t('inviteReqTitle') + '</h2>'
+      + '<p class="sub">' + t('inviteReqSub') + '</p>'
+      + '<button class="btn" id="retry" type="button">' + t('inviteReqRetry') + '</button>'
+      + '</div>';
+    wireLang();
+    document.getElementById('retry').addEventListener('click', renderEmail);
+  }
+
+  // One compact, branded chip linking to the right store for this browser —
+  // the whole chip is the download CTA (no separate oversized button/box).
+  function storeChip() {
+    var store = detectStore();
+    return '<a class="chip" href="' + store.url + '" target="_blank" rel="noopener">'
+      + '<span class="cl">' + LOGO[store.logo] + '</span>'
+      + '<span class="ct"><span class="t1">' + store[LOCALE] + '</span>'
+      + '<span class="t2">' + t('chipHint') + '</span></span>'
+      + ICON.external + '</a>';
+  }
+  function detectingLine(text) {
+    return '<div class="detecting"><span class="dot"></span>' + text + '</div>';
+  }
+  function wireRefresh() {
+    var rf = document.getElementById('rf');
+    if (rf) rf.addEventListener('click', function () { location.reload(); });
+  }
+
+  // ---- state B: please install the browser extension ------------------------
+  function renderInstall() {
+    var installed = extPresent();
+    root.innerHTML = brand()
+      + '<div class="body">'
+      + '<div class="badge' + (installed ? ' green' : '') + '">' + (installed ? ICON.check : ICON.puzzle) + '</div>'
+      + '<h2>' + (installed ? t('detectedTitle') : t('installTitle')) + '</h2>'
+      + '<p class="sub">' + (installed ? t('loadingWs') : t('installSub')) + '</p>'
+      + (installed
+          ? detectingLine(t('loadingWs'))
+          : storeChip()
+            + detectingLine(t('detecting'))
+            + '<button class="btn ghost" type="button" id="rf">' + t('refresh') + '</button>')
+      + '</div>';
+    wireLang();
+    wireRefresh();
+  }
+
+  // ---- app path (/, /app*) onboarding guidance ------------------------------
+  function renderApp() {
+    var installed = extPresent();
+    root.innerHTML = brand()
+      + '<div class="body">'
+      + '<div class="badge' + (installed ? ' green' : '') + '">' + (installed ? ICON.check : ICON.puzzle) + '</div>'
+      + '<h2>' + (installed ? t('detectedTitle') : t('appTitle')) + '</h2>'
+      + '<p class="sub">' + (installed ? t('appReadySub') : t('appSub')) + '</p>'
+      + (installed ? '' : storeChip()
+          + detectingLine(t('detecting'))
+          + '<button class="btn ghost" type="button" id="rf">' + t('refresh') + '</button>')
+      + '</div>';
+    wireLang();
+    wireRefresh();
+  }
+
+  // ---- path router ----------------------------------------------------------
+  function classify(p) {
+    if (p === '/auth/login') return 'auth';
+    if (p.indexOf('/setup/') === 0 || p === '/recover' || p.indexOf('/recover/') === 0) return 'guest';
+    return 'app';
+  }
+  function render() {
+    switch (classify(location.pathname)) {
+      case 'auth': renderEmail(); break;    // state A (sign-in triage)
+      case 'guest': renderInstall(); break; // state B (email-link landing)
+      default: renderApp();                 // app shell onboarding
+    }
+  }
+
+  render();
+
+  // Refine language from the admin-configured org default (guest-readable
+  // /settings.json app.locale) unless the URL / a manual pick overrode it. Skip
+  // re-render if the user is mid-typing their email (state A with a value).
+  if (!explicit) {
+    fetch(API + '/settings.json', { headers: { Accept: 'application/json' } })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        var app = (j && j.body && j.body.app) || (j && j.app) || {};
+        var loc = normLocale(app.locale);
+        if (explicit || loc === LOCALE) return;
+        var em = document.getElementById('em');
+        if (classify(location.pathname) === 'auth' && em && em.value) return;
+        LOCALE = loc; document.documentElement.lang = loc; render();
+      }).catch(function () { /* offline / no settings — keep zh default */ });
+  }
+
+  // The extension stamps data-jpassbolt-extension + the jpassbolt-extension
+  // class on <html> at idle; when the install/app fallback is showing, flip it
+  // to "detected" the moment either marker lands (the content-script iframe
+  // then takes over the whole viewport). The auth path is deliberately NOT
+  // re-rendered: its email form is identical with or without the extension
+  // (the takeover replaces the DOM wholesale anyway) and the user may be
+  // mid-typing. A 300ms poll backs up the observer for 30s — it catches a
+  // stamp that landed between our first render and observer attachment, and
+  // any marker path the attribute filter misses.
+  var wasDetected = extPresent();
+  function syncDetection() {
+    var now = extPresent();
+    if (now === wasDetected) return;
+    wasDetected = now;
+    if (classify(location.pathname) !== 'auth') render();
+  }
+  new MutationObserver(syncDetection).observe(document.documentElement,
+    { attributes: true, attributeFilter: ['data-jpassbolt-extension', 'class'] });
+  var polls = 0;
+  var pollTimer = setInterval(function () {
+    syncDetection();
+    if (extPresent() || ++polls >= 100) clearInterval(pollTimer);
+  }, 300);
 })();
 </script>
 </body>

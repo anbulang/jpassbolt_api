@@ -129,7 +129,7 @@ class CommentAddEmailRedactorTest {
         assertThat(recipients).containsExactlyInAnyOrder("alice@passbolt.com", "bob@passbolt.com");
 
         EmailMessage any = captor.getAllValues().get(0);
-        assertThat(any.subject()).isEqualTo("Grace Hopper commented on Prod DB");
+        assertThat(any.subject()).isEqualTo("Grace Hopper 评论了 Prod DB");
         assertThat(any.html())
                 .contains("Prod DB")
                 .contains("/app/passwords/view/" + resourceId)

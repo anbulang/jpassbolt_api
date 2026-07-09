@@ -97,7 +97,7 @@ class UserRegisterEmailRedactorTest {
 
         EmailMessage message = captor.getValue();
         assertThat(message.recipient()).isEqualTo("newbie@passbolt.com");
-        assertThat(message.subject()).isEqualTo("Welcome to JPassbolt, New!");
+        assertThat(message.subject()).isEqualTo("欢迎使用 JPassbolt，New！");
         assertThat(message.html())
                 .contains("/setup/" + invitedId + "/tok-12345")
                 .contains("Ada Lovelace"); // admin attribution line present

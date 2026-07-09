@@ -111,7 +111,7 @@ class SelfRegistrationEmailRedactorTest {
         assertThat(captor.getAllValues()).extracting(EmailMessage::recipient)
                 .containsExactlyInAnyOrder("ada@passbolt.com", "betty@passbolt.com");
         assertThat(captor.getAllValues().get(0).subject())
-                .isEqualTo("New just created an account on JPassbolt!");
+                .isEqualTo("New 刚刚在 JPassbolt 上创建了账户！");
     }
 
     @Test
@@ -150,9 +150,9 @@ class SelfRegistrationEmailRedactorTest {
         EmailMessage toOther = captor.getAllValues().stream()
                 .filter(m -> m.recipient().equals("betty@passbolt.com")).findFirst().orElseThrow();
 
-        assertThat(toActor.subject()).isEqualTo("You edited the self registration settings.");
-        assertThat(toOther.subject()).isEqualTo("Ada Lovelace edited the self registration settings.");
-        assertThat(toOther.html()).contains("Enabled").contains("passbolt.com");
+        assertThat(toActor.subject()).isEqualTo("您修改了自助注册设置。");
+        assertThat(toOther.subject()).isEqualTo("Ada Lovelace 修改了自助注册设置。");
+        assertThat(toOther.html()).contains("已启用").contains("passbolt.com");
     }
 
     @Test
@@ -162,7 +162,7 @@ class SelfRegistrationEmailRedactorTest {
 
         ArgumentCaptor<EmailMessage> captor = ArgumentCaptor.forClass(EmailMessage.class);
         verify(mailService, times(2)).send(captor.capture());
-        assertThat(captor.getAllValues().get(0).html()).contains("Disabled");
+        assertThat(captor.getAllValues().get(0).html()).contains("已禁用");
     }
 
     @Test

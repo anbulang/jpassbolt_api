@@ -1,5 +1,6 @@
 package com.jpassbolt.api.service.email;
 
+import com.jpassbolt.api.service.PublicBaseUrlResolver;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.MessageSource;
@@ -23,15 +24,16 @@ import java.util.Map;
  * {@link MailService} already does for recovery/setup mail.</p>
  *
  * <p>Two variables are injected into every template automatically:
- * {@code appName} and {@code appBaseUrl} (the SPA base URL, trailing slash
- * stripped) so links resolve to the client, never the API.</p>
+ * {@code appName} and {@code appBaseUrl} (the trusted server domain from
+ * {@link PublicBaseUrlResolver}, trailing slash stripped) so links resolve to
+ * the browser-facing origin, never the API context path.</p>
  */
 @Service
 public class EmailTemplateService {
 
     private final SpringTemplateEngine emailTemplateEngine;
     private final MessageSource mailMessageSource;
-    private final String appBaseUrl;
+    private final PublicBaseUrlResolver baseUrlResolver;
     private final String appName;
 
     /**
@@ -43,11 +45,11 @@ public class EmailTemplateService {
     public EmailTemplateService(
             SpringTemplateEngine emailTemplateEngine,
             @Qualifier("mailMessageSource") MessageSource mailMessageSource,
-            @Value("${jpassbolt.app.base-url:http://localhost:5173}") String appBaseUrl,
+            PublicBaseUrlResolver baseUrlResolver,
             @Value("${jpassbolt.app.name:JPassbolt}") String appName) {
         this.emailTemplateEngine = emailTemplateEngine;
         this.mailMessageSource = mailMessageSource;
-        this.appBaseUrl = appBaseUrl;
+        this.baseUrlResolver = baseUrlResolver;
         this.appName = appName;
     }
 
@@ -79,26 +81,23 @@ public class EmailTemplateService {
         }
         // Globals available to every template; do not override a caller-supplied value.
         model.putIfAbsent("appName", appName);
-        model.putIfAbsent("appBaseUrl", trimTrailingSlash(appBaseUrl));
+        model.putIfAbsent("appBaseUrl", baseUrlResolver.resolve());
         context.setVariables(model);
         return emailTemplateEngine.process(templateName, context);
     }
 
     /**
-     * Build an absolute SPA deep link from a path (e.g.
-     * {@code "/app/passwords/view/" + id}). Redactors render after commit, off the
-     * servlet request thread, so there is no request host to derive — links must
-     * use the configured client base URL ({@code jpassbolt.app.base-url}), the same
-     * base {@link MailService} uses for recovery/setup links.
+     * Build an absolute deep link on the trusted server domain from a path (e.g.
+     * {@code "/app/passwords/view/" + id}). Resolved through the SAME
+     * {@link PublicBaseUrlResolver} that {@link MailService} uses, so every email
+     * — recovery and every redactor notification — points at one consistent
+     * origin (request-derived + Host-injection-gated when on a request thread,
+     * else the configured {@code full-base-url}), never the retired SPA URL.
      *
      * @param path an absolute path beginning with {@code /}
-     * @return {@code appBaseUrl + path} with the base's trailing slash trimmed
+     * @return {@code resolve() + path}; the resolver already trims trailing slashes
      */
     public String link(String path) {
-        return trimTrailingSlash(appBaseUrl) + (path == null ? "" : path);
-    }
-
-    private static String trimTrailingSlash(String url) {
-        return url == null ? "" : url.replaceAll("/+$", "");
+        return baseUrlResolver.resolve() + (path == null ? "" : path);
     }
 }

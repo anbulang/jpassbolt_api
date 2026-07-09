@@ -1,6 +1,7 @@
 package com.jpassbolt.api.service.email;
 
 import com.jpassbolt.api.service.AccountLocaleService;
+import com.jpassbolt.api.service.PublicBaseUrlResolver;
 import com.jpassbolt.api.service.SmtpSettingsService;
 import jakarta.mail.internet.MimeMessage;
 import lombok.extern.slf4j.Slf4j;
@@ -62,6 +63,9 @@ public class MailService {
      */
     private final SmtpSettingsService smtpSettingsService;
 
+    /** Resolves the trusted-domain origin of browser-facing links from the request. */
+    private final PublicBaseUrlResolver baseUrlResolver;
+
     /**
      * Explicit constructor (not Lombok {@code @RequiredArgsConstructor}) so the
      * {@link Qualifier} on the parameter is honored: without it, Spring would
@@ -71,11 +75,13 @@ public class MailService {
     public MailService(ObjectProvider<JavaMailSender> mailSenderProvider,
                        @Qualifier("mailMessageSource") MessageSource messageSource,
                        AccountLocaleService accountLocaleService,
-                       SmtpSettingsService smtpSettingsService) {
+                       SmtpSettingsService smtpSettingsService,
+                       PublicBaseUrlResolver baseUrlResolver) {
         this.mailSenderProvider = mailSenderProvider;
         this.messageSource = messageSource;
         this.accountLocaleService = accountLocaleService;
         this.smtpSettingsService = smtpSettingsService;
+        this.baseUrlResolver = baseUrlResolver;
     }
 
     @Value("${jpassbolt.email.enabled:false}")
@@ -84,14 +90,14 @@ public class MailService {
     @Value("${jpassbolt.email.from:no-reply@jpassbolt.local}")
     private String from;
 
-    /** CLIENT base URL (the SPA), not the API. Recovery/setup links must open the SPA. */
-    @Value("${jpassbolt.app.base-url:http://localhost:5173}")
-    private String appBaseUrl;
-
-    /** Account recovery: link opens the SPA's /recover/{userId}/{token} flow. */
+    /**
+     * Account recovery: the emailed link opens {domain}/setup/recover/start/{userId}/{token}
+     * on the trusted server domain (request-derived), so the browser extension's content
+     * script attaches and drives the recover flow — official-Passbolt shape.
+     */
     public void sendRecoverEmail(String toEmail, String userId, String token, String recoveryCase) {
         Locale locale = localeFor(userId);
-        String link = clientUrl("/recover/" + userId + "/" + token);
+        String link = clientUrl("/setup/recover/start/" + userId + "/" + token);
         String subject = msg("email.recover.subject", locale, toEmail);
         String html = wrap(locale, msg("email.recover.title", locale),
                 "<p>" + msg("email.recover.intro", locale) + "</p>"
@@ -131,7 +137,7 @@ public class MailService {
     }
 
     private String clientUrl(String path) {
-        return appBaseUrl.replaceAll("/+$", "") + path;
+        return baseUrlResolver.resolve() + path;
     }
 
     private void send(String to, String subject, String html, String logFallback) {
@@ -185,11 +191,26 @@ public class MailService {
     // Text comes from the messages/email bundles; only structure lives here.
 
     private String button(Locale locale, String link, String label) {
-        return "<p style=\"margin:24px 0\"><a href=\"" + link + "\" "
+        // Defense-in-depth: PublicBaseUrlResolver already whitelists the scheme,
+        // but escape the (request-derived) URL before it enters the href/text so
+        // no future/other caller can inject markup or a rogue attribute here.
+        String safeLink = esc(link);
+        return "<p style=\"margin:24px 0\"><a href=\"" + safeLink + "\" "
                 + "style=\"background:#2a6df4;color:#fff;text-decoration:none;padding:12px 20px;"
                 + "border-radius:8px;font-weight:600;display:inline-block\">" + label + "</a></p>"
                 + "<p style=\"color:#888;font-size:12px;word-break:break-all\">"
-                + msg("email.button.fallback", locale, link) + "</p>";
+                + msg("email.button.fallback", locale, safeLink) + "</p>";
+    }
+
+    /** Minimal HTML escaping for interpolating a (possibly request-derived) URL into markup. */
+    private static String esc(String s) {
+        if (s == null) {
+            return "";
+        }
+        return s.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("\"", "&quot;");
     }
 
     private String wrap(Locale locale, String title, String body) {

@@ -43,8 +43,13 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class AccountLocaleService {
 
-    /** PHP GetOrgLocaleService::DEFAULT_LOCALE. */
-    public static final String DEFAULT_LOCALE = "en-UK";
+    /**
+     * Terminal fallback locale (user setting → org setting → this). JPassbolt
+     * defaults to Chinese by product requirement (bilingual zh/en, admin
+     * configurable, default 中文) — a deliberate deviation from PHP passbolt's
+     * en-UK default. An admin-configured organization locale still wins.
+     */
+    public static final String DEFAULT_LOCALE = "zh-CN";
 
     /** PHP LocaleService::SETTING_PROPERTY. */
     public static final String LOCALE_PROPERTY = "locale";

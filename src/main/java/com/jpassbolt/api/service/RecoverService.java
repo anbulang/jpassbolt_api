@@ -82,6 +82,16 @@ public class RecoverService {
     private long recoverTokenExpiryDays;
 
     /**
+     * Official passbolt.security.preventEmailEnumeration (config/default.php,
+     * default FALSE). FALSE (default): an unknown/deleted/disabled email yields a
+     * 404, so the client can tell the user the account is unknown and show the
+     * "requires an invitation" screen — the official CE default. TRUE: pretend
+     * success (200 "check your email") to hide whether the email is in use.
+     */
+    @Value("${jpassbolt.security.prevent-email-enumeration:false}")
+    private boolean preventEmailEnumeration;
+
+    /**
      * POST /users/recover.json — enumeration-safe recovery request. PHP
      * UserRecoverService::recover:
      * <ul>
@@ -115,9 +125,19 @@ public class RecoverService {
                 .filter(u -> u.getDisabled() == null)
                 .orElse(null);
         if (user == null) {
-            // Enumeration safety: pretend everything is fine.
-            log.info("Recovery requested for unknown/ineligible username (no token issued).");
-            return null;
+            if (preventEmailEnumeration) {
+                // Enumeration protection ON: pretend everything is fine.
+                log.info("Recovery requested for unknown/ineligible username "
+                        + "(enumeration protection on; no token issued).");
+                return null;
+            }
+            // Official default (preventEmailEnumeration=false): surface a 404 so
+            // the client shows the "requires an invitation" screen (PHP
+            // UserRecoverService::getUserOrFail throws NotFoundException, which
+            // UsersRecoverController swallows only when the flag is on).
+            log.info("Recovery requested for unknown/ineligible username (404).");
+            throw new PassboltApiException(HttpStatus.NOT_FOUND,
+                    "This user does not exist or has been deleted. Please contact your administrator.");
         }
 
         String tokenType = Boolean.TRUE.equals(user.getActive())

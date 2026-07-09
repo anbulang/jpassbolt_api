@@ -79,13 +79,35 @@ public class SkeletonPageConfig {
             }
         }
 
+        // Browser-facing routes the extension content script attaches to
+        // (content/appBootstrap.ts): the app shell (/ , /app…), the guest flows
+        // reached from an email link (/setup/… , /recover…), and the sign-in
+        // triage (/auth/login). All are served the SAME skeleton — the page's
+        // own JS + the extension decide which state to paint. Everything else
+        // (favicons, stray paths) still 404s.
+        private static boolean isBrowserPageUrl(String path) {
+            return "/".equals(path)
+                    || "/app".equals(path) || path.startsWith("/app/")
+                    || "/auth/login".equals(path)
+                    || path.startsWith("/setup/")
+                    || "/recover".equals(path) || path.startsWith("/recover/");
+        }
+
         @Override
         protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
             String path = req.getRequestURI();
-            // Same shape as passbolt's ParseAppUrlService: root or /app…, nothing else.
-            boolean isAppUrl = "/".equals(path) || "/app".equals(path) || path.startsWith("/app/");
-            if (!isAppUrl) {
+            if (!isBrowserPageUrl(path)) {
                 resp.sendError(HttpServletResponse.SC_NOT_FOUND);
+                return;
+            }
+            // Official Passbolt 302-redirects an unauthenticated browser hitting the
+            // domain root to the login page (Application.php unauthenticatedRedirect →
+            // /auth/login). This filter-less skeleton context can't read the session,
+            // so we mirror the common (unauthenticated) case: "/" → /auth/login. The
+            // extension still takes over /auth/login exactly as it would have at "/".
+            if ("/".equals(path)) {
+                resp.setStatus(HttpServletResponse.SC_FOUND);
+                resp.setHeader("Location", "/auth/login?redirect=%2F");
                 return;
             }
             resp.setStatus(HttpServletResponse.SC_OK);
