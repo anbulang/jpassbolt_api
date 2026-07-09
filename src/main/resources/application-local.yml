@@ -12,18 +12,36 @@ spring:
     properties:
       hibernate:
         format_sql: true
-  # Local dev SMTP -> MailHog (run: docker run -p 1025:1025 -p 8025:8025 mailhog/mailhog).
-  # No auth/TLS; view captured mail at http://localhost:8025. Switching to a real
-  # provider in prod is just these host/port/credentials, no code change.
+  # SMTP transport — configured entirely via env vars / config file (no admin UI
+  # needed), the same model as Passbolt CE's EMAIL_TRANSPORT_DEFAULT_* Docker vars
+  # (https://www.passbolt.com/docs/hosting/install/ce/docker/). Both the Passbolt
+  # names and JPASSBOLT_SMTP_* aliases are accepted; the secret (password) is only
+  # ever supplied via env — never committed here.
+  #
+  # Default (no env set): MailHog (docker run -p 1025:1025 -p 8025:8025 mailhog/mailhog;
+  # captured mail at http://localhost:8025).
+  #
+  # 163 example (port 465 = implicit SSL):
+  #   EMAIL_TRANSPORT_DEFAULT_HOST=smtp.163.com
+  #   EMAIL_TRANSPORT_DEFAULT_PORT=465
+  #   EMAIL_TRANSPORT_DEFAULT_USERNAME=anbulang@163.com
+  #   EMAIL_TRANSPORT_DEFAULT_PASSWORD=<163 authorization code>
+  #   EMAIL_DEFAULT_FROM=anbulang@163.com
+  #   JPASSBOLT_SMTP_AUTH=true
+  #   JPASSBOLT_SMTP_SSL=true         # 465 = implicit SSL; for 587 use JPASSBOLT_SMTP_STARTTLS=true instead
   mail:
-    host: ${JPASSBOLT_SMTP_HOST:localhost}
-    port: ${JPASSBOLT_SMTP_PORT:1025}
+    host: ${EMAIL_TRANSPORT_DEFAULT_HOST:${JPASSBOLT_SMTP_HOST:localhost}}
+    port: ${EMAIL_TRANSPORT_DEFAULT_PORT:${JPASSBOLT_SMTP_PORT:1025}}
+    username: ${EMAIL_TRANSPORT_DEFAULT_USERNAME:${JPASSBOLT_SMTP_USERNAME:}}
+    password: ${EMAIL_TRANSPORT_DEFAULT_PASSWORD:${JPASSBOLT_SMTP_PASSWORD:}}
     properties:
       mail:
         smtp:
-          auth: false
+          auth: ${JPASSBOLT_SMTP_AUTH:false}
           starttls:
-            enable: false
+            enable: ${JPASSBOLT_SMTP_STARTTLS:false}
+          ssl:
+            enable: ${JPASSBOLT_SMTP_SSL:false}
 
 jpassbolt:
   # Turn on real email sending in local dev (captured by MailHog above).

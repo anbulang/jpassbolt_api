@@ -141,7 +141,7 @@ class UserDeleteEmailRedactorTest {
         verify(mailService, times(1)).send(captor.capture());
         EmailMessage message = captor.getValue();
         assertThat(message.recipient()).isEqualTo("mgr@passbolt.com");
-        assertThat(message.subject()).isEqualTo("Ada Lovelace deleted user Vic Tim");
+        assertThat(message.subject()).isEqualTo("Ada Lovelace 删除了用户 Vic Tim");
         assertThat(message.html()).contains("Vic Tim").contains("/app/users");
     }
 
@@ -174,9 +174,9 @@ class UserDeleteEmailRedactorTest {
                 .collect(Collectors.toMap(EmailMessage::recipient, m -> m));
         assertThat(byRecipient.keySet())
                 .containsExactlyInAnyOrder("ada@passbolt.com", "boss@passbolt.com", "mgr@passbolt.com");
-        assertThat(byRecipient.get("ada@passbolt.com").subject()).isEqualTo("You deleted administrator Rogue One");
+        assertThat(byRecipient.get("ada@passbolt.com").subject()).isEqualTo("您删除了管理员 Rogue One");
         assertThat(byRecipient.get("boss@passbolt.com").subject())
-                .isEqualTo("Ada Lovelace deleted administrator Rogue One");
+                .isEqualTo("Ada Lovelace 删除了管理员 Rogue One");
     }
 
     @Test

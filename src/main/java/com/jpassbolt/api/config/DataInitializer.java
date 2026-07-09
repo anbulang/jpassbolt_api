@@ -333,6 +333,21 @@ public class DataInitializer implements CommandLineRunner {
             log.info("[demo] dame@passbolt.com seeded (user, loginable) — verify: cross-user share to a non-admin third account");
         }
 
+        // ①.5 anbulang1@gmail.com — real-email account-recovery E2E test user.
+        // Active + loginable, holds the DISTINCT frances test keypair (fingerprint
+        // parsed from the bundled fixture public key, so it never collides with
+        // ada/betty/dame). To drive the full four-state flow: import
+        // frances_private.key (passbolt_api_ref/.../TestData/config/gpg/) with
+        // passphrase "frances@passbolt.com" into the extension, then request a
+        // recovery for this email — with SMTP configured, the link is delivered
+        // as real mail.
+        if (userRepository.findByUsername("anbulang1@gmail.com").isEmpty()) {
+            User anbulang = createUserWithProfile("anbulang1@gmail.com", userRole.getId(), true,
+                    "Anbulang", "Tester");
+            seedGpgKeyFromClasspath(anbulang.getId(), "classpath:gpg/fixtures/frances_public.asc");
+            log.info("[demo] anbulang1@gmail.com seeded (active, loginable) — recovery E2E: import frances_private.key, passphrase frances@passbolt.com");
+        }
+
         // ② ruth — inactive (setup not finished) + register token: verify the
         // inactive-login rejection and the "finish setup" guidance.
         if (userRepository.findByUsername("ruth@passbolt.com").isEmpty()) {

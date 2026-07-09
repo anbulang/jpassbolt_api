@@ -171,7 +171,7 @@ class AccountLocaleControllerTest {
         // nothing set anywhere → default
         mockMvc.perform(get("/account/settings/locales.json"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.body.value").value("en-UK"));
+                .andExpect(jsonPath("$.body.value").value("zh-CN"));
 
         // org-level set, still no user setting → org value
         seedOrgLocale("de-DE");

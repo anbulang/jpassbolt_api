@@ -1,5 +1,9 @@
 server:
   port: 8080
+  # Bind loopback only by default: local dev servers must not be reachable from
+  # the network (security-baseline requirement). Production deployments behind
+  # a reverse proxy override this with the SERVER_ADDRESS environment variable.
+  address: ${SERVER_ADDRESS:127.0.0.1}
   servlet:
     context-path: /api
 
@@ -40,10 +44,19 @@ jpassbolt:
   # this on and points spring.mail at a local MailHog.
   email:
     enabled: ${JPASSBOLT_EMAIL_ENABLED:false}
-    from: ${JPASSBOLT_EMAIL_FROM:no-reply@jpassbolt.local}
+    from: ${EMAIL_DEFAULT_FROM:${JPASSBOLT_EMAIL_FROM:no-reply@jpassbolt.local}}
   auth:
     register-token-expiry-days: 10   # 对照 PHP PASSBOLT_AUTH_REGISTER_TOKEN_EXPIRY 默认 '10 days'
     recover-token-expiry-days: 10    # 对照 PHP PASSBOLT_AUTH_RECOVER_TOKEN_EXPIRY 默认 '10 days'
+  security:
+    # Mirror official passbolt.security.preventEmailEnumeration
+    # (config/default.php: env PASSBOLT_SECURITY_PREVENT_EMAIL_ENUMERATION,
+    # default FALSE). When false (official default) POST /users/recover.json
+    # answers 404 for an unknown/deleted/disabled email, so the client shows the
+    # "requires an invitation" screen — the official CE default the plugin
+    # renders. Set true to hide account existence (always 200 "check your
+    # email"), which is the more private but non-default behaviour.
+    prevent-email-enumeration: ${PASSBOLT_SECURITY_PREVENT_EMAIL_ENUMERATION:false}
   jwt:
     # Legacy HS256 secret — no longer used for signing (RS256 key pair below);
     # still read by HealthcheckService (core.salt). Inject via env, never commit.

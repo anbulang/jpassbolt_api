@@ -38,8 +38,12 @@ import java.util.TimeZone;
 @RequiredArgsConstructor
 public class SettingsService {
 
-    /** PHP GetOrgLocaleService::DEFAULT_LOCALE. */
-    private static final String DEFAULT_LOCALE = "en-UK";
+    /**
+     * Default org locale exposed as {@code app.locale} in guest GET /settings.json.
+     * MUST stay in sync with {@link AccountLocaleService#DEFAULT_LOCALE} (zh-CN)
+     * so the skeleton page and outbound emails agree on the default language.
+     */
+    private static final String DEFAULT_LOCALE = AccountLocaleService.DEFAULT_LOCALE;
 
     /** PHP LocaleService::SETTING_PROPERTY. */
     private static final String LOCALE_PROPERTY = "locale";

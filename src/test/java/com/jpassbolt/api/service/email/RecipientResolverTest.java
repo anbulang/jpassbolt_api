@@ -135,8 +135,8 @@ class RecipientResolverTest {
         User u = saveUser("nolocale@passbolt.com", userRoleId, true, false, null);
 
         Recipient r = resolver.resolveUsers(List.of(u.getId())).iterator().next();
-        // No user/org locale seeded → default en-UK → Locale("en")
-        assertThat(r.locale()).isEqualTo(new Locale("en"));
+        // No user/org locale seeded → product default zh-CN → Locale("zh","CN")
+        assertThat(r.locale()).isEqualTo(new Locale("zh", "CN"));
         // No profile → display name falls back to the email
         assertThat(r.fullName()).isEqualTo("nolocale@passbolt.com");
     }

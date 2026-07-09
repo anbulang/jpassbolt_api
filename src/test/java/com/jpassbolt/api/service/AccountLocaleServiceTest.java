@@ -92,7 +92,7 @@ class AccountLocaleServiceTest {
 
         assertThat(service.getUserLocale(USER_ID))
                 .isEqualTo(AccountLocaleService.DEFAULT_LOCALE)
-                .isEqualTo("en-UK");
+                .isEqualTo("zh-CN");
     }
 
     @Test
@@ -192,9 +192,9 @@ class AccountLocaleServiceTest {
         assertThat(service.toJavaLocale("fr-FR")).isEqualTo(new Locale("fr", "FR"));
         // en-UK: UK is not an ISO region, only the language survives
         assertThat(service.toJavaLocale("en-UK")).isEqualTo(new Locale("en"));
-        // blank/null → default (en-UK → en)
-        assertThat(service.toJavaLocale(null)).isEqualTo(new Locale("en"));
-        assertThat(service.toJavaLocale("")).isEqualTo(new Locale("en"));
+        // blank/null → default (zh-CN → zh_CN)
+        assertThat(service.toJavaLocale(null)).isEqualTo(new Locale("zh", "CN"));
+        assertThat(service.toJavaLocale("")).isEqualTo(new Locale("zh", "CN"));
     }
 
     @Test
@@ -203,6 +203,6 @@ class AccountLocaleServiceTest {
         lenient().when(organizationSettingRepository.findByProperty("locale"))
                 .thenReturn(Optional.empty());
 
-        assertThat(service.getOrganizationLocale()).isEqualTo("en-UK");
+        assertThat(service.getOrganizationLocale()).isEqualTo("zh-CN");
     }
 }

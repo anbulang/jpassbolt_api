@@ -111,8 +111,8 @@ class SettingsControllerTest {
                                 .andExpect(status().isOk())
                                 .andExpect(jsonPath("$.header.status").value("success"))
                                 .andExpect(jsonPath("$.body.app.url").exists())
-                                // No locale row seeded -> default fallback.
-                                .andExpect(jsonPath("$.body.app.locale").value("en-UK"))
+                                // No locale row seeded -> default fallback (zh-CN, the product default).
+                                .andExpect(jsonPath("$.body.app.locale").value("zh-CN"))
                                 .andExpect(jsonPath("$.body.app.version.number").value("5.7.2"))
                                 .andExpect(jsonPath("$.body.app.server_timezone").exists())
                                 .andExpect(jsonPath("$.body.app.session_timeout").exists())
@@ -269,6 +269,6 @@ class SettingsControllerTest {
                 // Table cleared in setUp() — no locale row present.
                 mockMvc.perform(get("/settings.json"))
                                 .andExpect(status().isOk())
-                                .andExpect(jsonPath("$.body.app.locale").value("en-UK"));
+                                .andExpect(jsonPath("$.body.app.locale").value("zh-CN"));
         }
 }

@@ -111,7 +111,7 @@ class RecoverCompleteEmailRedactorTest {
         verify(mailService, times(1)).send(captor.capture());
         EmailMessage message = captor.getValue();
         assertThat(message.recipient()).isEqualTo("vic@passbolt.com");
-        assertThat(message.subject()).isEqualTo("You just completed the account recovery process!");
+        assertThat(message.subject()).isEqualTo("您已完成账户恢复！");
         assertThat(message.html())
                 .contains("1.2.3.4")
                 .contains("Mozilla/5.0 TestAgent")
@@ -135,7 +135,7 @@ class RecoverCompleteEmailRedactorTest {
                 .map(EmailMessage::recipient).collect(Collectors.toSet());
         assertThat(recipients).containsExactlyInAnyOrder("boss@passbolt.com", "ada@passbolt.com");
         assertThat(captor.getAllValues().get(0).subject())
-                .isEqualTo("Vic just completed the account recovery process");
+                .isEqualTo("Vic 完成了账户恢复");
     }
 
     @Test

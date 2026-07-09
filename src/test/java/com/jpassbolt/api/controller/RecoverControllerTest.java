@@ -249,7 +249,11 @@ class RecoverControllerTest {
     }
 
     @Test
-    void testRecover_NonExistentUser_EnumerationSafeSuccess() throws Exception {
+    void testRecover_NonExistentUser_NotFound_ByDefault() throws Exception {
+        // preventEmailEnumeration defaults to FALSE (official CE default), so an
+        // unknown email returns 404 — the client then shows "requires an
+        // invitation" (see RecoverEnumerationProtectionTest for the flag-on 200
+        // enumeration-safe variant).
         String body = objectMapper.writeValueAsString(Map.of("username", "ghost@example.com"));
 
         long tokensBefore = authenticationTokenRepository.count();
@@ -257,11 +261,12 @@ class RecoverControllerTest {
         mockMvc.perform(post("/users/recover.json")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(body))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.header.status").value("success"))
-                .andExpect(jsonPath("$.header.message").value("Recovery process started, check your email."));
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.header.status").value("error"))
+                .andExpect(jsonPath("$.header.message")
+                        .value("This user does not exist or has been deleted. Please contact your administrator."));
 
-        // No token was issued for a non-existent user.
+        // Still no token issued for a non-existent user.
         assertThat(authenticationTokenRepository.count()).isEqualTo(tokensBefore);
     }
 

@@ -100,7 +100,7 @@ class MfaUserSettingsResetEmailRedactorTest {
         // Only the affected user is notified — never the admin.
         assertThat(msg.recipient()).isEqualTo("betty@passbolt.com");
         assertThat(msg.subject())
-                .isEqualTo("Your multi-factor authentication settings were reset by an administrator.");
+                .isEqualTo("您的多重身份验证设置已被管理员重置。");
         assertThat(msg.html()).contains("Ada Lovelace");
     }
 
@@ -113,14 +113,14 @@ class MfaUserSettingsResetEmailRedactorTest {
         EmailMessage msg = captor.getValue();
         assertThat(msg.recipient()).isEqualTo("betty@passbolt.com");
         assertThat(msg.subject())
-                .isEqualTo("Your multi-factor authentication settings were reset by you.");
+                .isEqualTo("您的多重身份验证设置已被您本人重置。");
         // The self body shows the self intro, never the admin-attribution intro
         // ("… for your account") nor the (absent) admin's name. NB: the shared notice
         // paragraph legitimately contains the word "administrator", so that is not a
         // discriminator — the admin-only phrase is.
         assertThat(msg.html())
-                .contains("Your multi-factor authentication settings were reset.")
-                .doesNotContain("for your account")
+                .contains("您的多重身份验证设置已被重置。")
+                .doesNotContain("您账户的")
                 .doesNotContain("Ada Lovelace");
     }
 
