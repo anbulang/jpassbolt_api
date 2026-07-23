@@ -109,6 +109,15 @@
   }
   .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); animation: pulse 1.2s ease-in-out infinite; }
   @keyframes pulse { 0%, 100% { opacity: .3; } 50% { opacity: 1; } }
+  /* unsafe-mode footer: plain http on a non-loopback host (server-decided) */
+  .unsafe {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 2147483000;
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    padding: 11px 16px; background: var(--red-soft); border-top: 1px solid var(--red);
+    color: var(--red-text); font-size: 12.5px; line-height: 1.4; text-align: center;
+  }
+  .unsafe svg { width: 16px; height: 16px; flex: 0 0 16px; }
+  body:has(.unsafe) { padding-bottom: 72px; }
 </style>
 </head>
 <body>
@@ -126,11 +135,18 @@
   var API = '/api';
   var root = document.getElementById('root');
 
+  // Server-substituted flag (SkeletonPageServlet.UNSAFE_MODE_TOKEN): true when
+  // this page was served over plain http to a NON-loopback host. Decided on the
+  // server on purpose — a client-side `location.protocol` check is trivially
+  // patched away by the very MITM the banner warns about, and it cannot see
+  // X-Forwarded-Proto. The quotes keep this file valid JS when opened raw.
+  var UNSAFE_MODE = ('__JP_UNSAFE_MODE__' === 'true');
+
   // ---- i18n (bilingual zh/en, default zh) -----------------------------------
   var DICT = {
     zh: {
       emailTitle: '请输入邮箱以继续',
-      emailLabel: '邮箱', terms: '服务条款', acceptPre: '我接受', acceptPost: '',
+      emailLabel: '邮箱', terms: '服务条款', privacy: '隐私政策', acceptPre: '我已阅读并同意', termsAnd: ' 和 ',
       next: '下一步', wait: '请稍候…', netErr: '无法连接服务器，请重试。',
       mailboxTitle: '请查收邮件！',
       mailboxSub: '我们已向你发送验证链接。<br>若稍后仍未收到，请检查垃圾邮件箱。',
@@ -140,14 +156,17 @@
       installTitle: '请安装浏览器扩展',
       installSub: '从下方商店安装扩展，本页会自动检测并继续。',
       detectedTitle: '已检测到扩展', loadingWs: '正在加载安全工作区…',
+      wsTimeoutTitle: '扩展未能接管本页',
+      wsTimeoutSub: '请刷新重试。若仍无效，请确认扩展已启用，并允许它在本站点上运行。',
       chipHint: '点击前往商店安装扩展', detecting: '正在自动检测扩展…', refresh: '刷新以检测扩展',
       appTitle: '端到端加密密码管理器',
       appSub: '安装 JPassbolt 浏览器扩展，然后配置本服务器地址并登录，本页将自动切换为你的密码库。',
-      appReadySub: '在扩展中配置本服务器并登录，本页将切换为你的密码库。'
+      appReadySub: '在扩展中配置本服务器并登录，本页将切换为你的密码库。',
+      unsafeMode: '不安全模式：本站未启用 HTTPS，你的数据在传输中可能被窃听。'
     },
     en: {
       emailTitle: 'Please enter your email to continue.',
-      emailLabel: 'Email', terms: 'terms', acceptPre: 'I accept the', acceptPost: '',
+      emailLabel: 'Email', terms: 'terms and conditions', privacy: 'privacy policy', acceptPre: 'I have read and agree to the', termsAnd: ' and ',
       next: 'Next', wait: 'Please wait…', netErr: 'Could not reach the server. Please try again.',
       mailboxTitle: 'Check your mailbox!',
       mailboxSub: 'We sent you a link to verify your email.<br>Check your spam folder if you do not hear from us after a while.',
@@ -157,10 +176,13 @@
       installTitle: 'Please install the browser extension.',
       installSub: 'Install the extension from the store below — this page detects it automatically.',
       detectedTitle: 'Extension detected.', loadingWs: 'Loading the secure workspace…',
+      wsTimeoutTitle: 'The extension could not take over this page.',
+      wsTimeoutSub: 'Please refresh and try again. If it keeps failing, check that the extension is enabled and allowed to run on this site.',
       chipHint: 'Open the store to install the extension', detecting: 'Detecting the extension…', refresh: 'Refresh to detect extension',
       appTitle: 'End-to-end encrypted password manager',
       appSub: 'Install the JPassbolt browser extension, then configure this server address and sign in. This page will switch to your vault automatically.',
-      appReadySub: 'Configure this server in the extension and sign in — this page will switch to your vault.'
+      appReadySub: 'Configure this server in the extension and sign in — this page will switch to your vault.',
+      unsafeMode: 'Unsafe mode: HTTPS is not enabled on this site — your data may be intercepted in transit.'
     }
   };
   // Passbolt code (en-UK / zh-CN / en / zh …) → page code.
@@ -168,6 +190,44 @@
   var explicit = new URLSearchParams(location.search).get('locale'); // manual override wins
   var LOCALE = explicit ? normLocale(explicit) : 'zh';               // default Chinese
   function t(k) { return DICT[LOCALE][k]; }
+
+  // 管理员配置的法务链接(GET /settings.json → body.passbolt.legal)。null = 尚未加载;
+  // 加载后为 { terms, privacy }(未配置的项为空串)。任一非空 → 邮箱页必须勾选同意
+  // (对齐官方 EnterUsernameForm 的 mustValidateTerms)。
+  var LEGAL = null;
+  // 把 URL 安全地放进 href 属性(法务 URL 由管理员配置,防御性转义)。
+  function escAttr(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;')
+      .replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+  // 只放行 http/https 的法务 URL;javascript:/data: 等伪协议或解析失败返回空串,
+  // 防止被攻陷的管理员在 organization_settings 里塞伪协议造成点击型 XSS。
+  function safeHttpUrl(s) {
+    // 空/空白必须先返回 ''——new URL('', base) 不抛异常而是解析成 base 本身
+    // (http://host/,truthy),会把"未配置法务 URL"误判成已配置、强制弹勾选框。
+    if (!s || !String(s).trim()) return '';
+    try {
+      var u = new URL(String(s), location.origin);
+      return (u.protocol === 'http:' || u.protocol === 'https:') ? u.href : '';
+    } catch (e) { return ''; }
+  }
+  // 按已配置的 URL 拼出 <a> 链接数组(服务条款 / 隐私政策)。
+  function legalLinks() {
+    var out = [];
+    var tu = LEGAL ? safeHttpUrl(LEGAL.terms) : '';
+    var pu = LEGAL ? safeHttpUrl(LEGAL.privacy) : '';
+    if (tu) {
+      out.push('<a href="' + escAttr(tu) + '" target="_blank" rel="noopener">' + t('terms') + '</a>');
+    }
+    if (pu) {
+      out.push('<a href="' + escAttr(pu) + '" target="_blank" rel="noopener">' + t('privacy') + '</a>');
+    }
+    return out;
+  }
+  // 是否要求同意法务条款(任一 http/https URL 已配置)。
+  function legalRequired() {
+    return !!(LEGAL && (safeHttpUrl(LEGAL.terms) || safeHttpUrl(LEGAL.privacy)));
+  }
 
   function svg(paths) {
     return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
@@ -178,7 +238,8 @@
     puzzle: svg('<path d="M15.5 4.5a2 2 0 1 0-4 0V6H8a2 2 0 0 0-2 2v3.5H4.5a2 2 0 1 0 0 4H6V19a2 2 0 0 0 2 2h3.5v-1.5a2 2 0 1 1 4 0V21H19a2 2 0 0 0 2-2v-3.5h-1.5a2 2 0 1 1 0-4H21V8a2 2 0 0 0-2-2h-3.5z"/>'),
     at: svg('<circle cx="12" cy="12" r="4"/><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8"/>'),
     check: svg('<path d="M20 6 9 17l-5-5"/>'),
-    external: svg('<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>')
+    external: svg('<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>'),
+    unlock: svg('<rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/>')
   };
   // Brand logos for the store chip (fixed colors, not currentColor): a flat
   // three-sector Chrome wheel and an Edge-blue disc — close enough at 22px.
@@ -241,27 +302,44 @@
 
   // ---- state A: enter your email -> triggers a recovery link email ----------
   function renderEmail() {
+    // 仅当管理员配置了服务条款 / 隐私政策 URL 时才渲染"同意"勾选框
+    // (mustValidateTerms)。两者皆未配置 → 不渲染勾选框,继续按钮仅校验邮箱。
+    // LEGAL 尚未加载(null)时先不渲染,settings 到达后会重渲染补上。
+    var links = legalLinks();
+    var termsHtml = '';
+    if (links.length) {
+      termsHtml = '<label class="terms">'
+        + '<input type="checkbox" id="tc"> '
+        + '<span>' + t('acceptPre') + ' ' + links.join(t('termsAnd')) + '</span>'
+        + '</label>';
+    }
     root.innerHTML = brand()
       + '<div class="body">'
       + '<h2>' + t('emailTitle') + '</h2>'
       + '<form id="f" novalidate>'
       + '<label class="fl" for="em">' + t('emailLabel') + ' <span class="req">*</span></label>'
       + '<div class="field" id="fld">' + ICON.at + '<input id="em" type="email" autocomplete="username" placeholder="you@organization.com" autofocus></div>'
-      + '<label class="terms">' + t('acceptPre') + ' <input type="checkbox" id="tc"> <a href="' + API + '/settings.json" target="_blank" rel="noopener">' + t('terms') + '</a> ' + t('acceptPost') + '</label>'
+      + termsHtml
       + '<button class="btn" id="go" type="submit" disabled>' + t('next') + '</button>'
       + '<div class="err-msg" id="er"></div>'
       + '</form>'
       + '</div>';
     wireLang();
     var em = document.getElementById('em');
-    var tc = document.getElementById('tc');
+    var tc = document.getElementById('tc'); // 无勾选框时为 null
     var go = document.getElementById('go');
     var er = document.getElementById('er');
     var fld = document.getElementById('fld');
-    function valid() { return tc.checked && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em.value.trim()); }
+    // 运行时读 DOM 而非捕获的 tc:若法务要求同意但勾选框尚未渲染(settings 竞态),
+    // 判为未满足,阻止在补渲染前跳过同意直接提交(纵深防御,配合下方补渲染)。
+    function valid() {
+      var box = document.getElementById('tc');
+      if (legalRequired() && !box) return false;
+      return (!box || box.checked) && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em.value.trim());
+    }
     function sync() { go.disabled = !valid(); }
     em.addEventListener('input', function () { fld.classList.remove('err'); er.textContent = ''; sync(); });
-    tc.addEventListener('change', sync);
+    if (tc) tc.addEventListener('change', sync);
     document.getElementById('f').addEventListener('submit', function (e) {
       e.preventDefault();
       if (!valid()) { fld.classList.add('err'); return; }
@@ -341,6 +419,44 @@
     if (rf) rf.addEventListener('click', function () { location.reload(); });
   }
 
+  // ---- "loading the workspace…" watchdog ------------------------------------
+  // On a guest (email-link) path the extension is expected to replace this page
+  // with its own full-viewport iframe within a moment of being detected. If it
+  // does not — worker down, mount refused, stale content script after an update —
+  // the old code sat on "Loading the secure workspace…" forever. Give it 10s,
+  // then say what happened and offer the same refresh the install card uses.
+  //
+  // The takeover appends an <iframe title="JPassbolt"> and hides our card, so a
+  // successful mount is detectable (and even if the check ever missed it, the
+  // message would render inside the already-hidden card — invisible either way).
+  var WS_TAKEOVER_TIMEOUT_MS = 10000;
+  var wsTimer = null;
+  function extensionTookOver() {
+    return !!document.querySelector('iframe[title="JPassbolt"]');
+  }
+  function clearWorkspaceTimeout() {
+    if (wsTimer) { clearTimeout(wsTimer); wsTimer = null; }
+  }
+  function armWorkspaceTimeout() {
+    clearWorkspaceTimeout();
+    wsTimer = setTimeout(function () {
+      wsTimer = null;
+      if (extensionTookOver()) return;
+      renderWorkspaceTimeout();
+    }, WS_TAKEOVER_TIMEOUT_MS);
+  }
+  function renderWorkspaceTimeout() {
+    root.innerHTML = brand()
+      + '<div class="body">'
+      + '<div class="badge">' + ICON.puzzle + '</div>'
+      + '<h2>' + t('wsTimeoutTitle') + '</h2>'
+      + '<p class="sub">' + t('wsTimeoutSub') + '</p>'
+      + '<button class="btn ghost" type="button" id="rf">' + t('refresh') + '</button>'
+      + '</div>';
+    wireLang();
+    wireRefresh();
+  }
+
   // ---- state B: please install the browser extension ------------------------
   function renderInstall() {
     var installed = extPresent();
@@ -357,6 +473,9 @@
       + '</div>';
     wireLang();
     wireRefresh();
+    // Only the detected state waits on a takeover; the install prompt waits on
+    // the user, so it must not start (or keep) the watchdog.
+    if (installed) armWorkspaceTimeout(); else clearWorkspaceTimeout();
   }
 
   // ---- app path (/, /app*) onboarding guidance ------------------------------
@@ -375,6 +494,26 @@
     wireRefresh();
   }
 
+  // ---- unsafe-mode footer ---------------------------------------------------
+  // Lives OUTSIDE #root so re-rendering the card never drops it, and is created
+  // once then relabelled on every render (the language switch calls render()).
+  // The extension takeover hides all body children, so it disappears with the
+  // rest of the skeleton — the extension's own UI owns that warning afterwards.
+  function syncUnsafeBar() {
+    if (!UNSAFE_MODE) return;
+    var bar = document.getElementById('unsafe');
+    if (!bar) {
+      bar = document.createElement('div');
+      bar.id = 'unsafe';
+      bar.className = 'unsafe';
+      bar.setAttribute('role', 'alert');
+      bar.innerHTML = ICON.unlock + '<span class="ut"></span>';
+      document.body.appendChild(bar);
+    }
+    // textContent, not innerHTML: the copy is ours, keep it un-parsed anyway.
+    bar.querySelector('.ut').textContent = t('unsafeMode');
+  }
+
   // ---- path router ----------------------------------------------------------
   function classify(p) {
     if (p === '/auth/login') return 'auth';
@@ -387,25 +526,50 @@
       case 'guest': renderInstall(); break; // state B (email-link landing)
       default: renderApp();                 // app shell onboarding
     }
+    syncUnsafeBar();
   }
 
   render();
 
-  // Refine language from the admin-configured org default (guest-readable
-  // /settings.json app.locale) unless the URL / a manual pick overrode it. Skip
-  // re-render if the user is mid-typing their email (state A with a value).
-  if (!explicit) {
-    fetch(API + '/settings.json', { headers: { Accept: 'application/json' } })
-      .then(function (r) { return r.json(); })
-      .then(function (j) {
-        var app = (j && j.body && j.body.app) || (j && j.app) || {};
+  // Guest-readable /settings.json 拉一次,做两件事:
+  //  ① 精化语言(未手动指定 locale 时,用 app.locale 组织默认);
+  //  ② 读取 passbolt.legal 的 terms / privacy_policy URL → 决定邮箱页是否显示
+  //     "同意服务条款/隐私政策"勾选框(mustValidateTerms)。
+  // 用户正在输入邮箱(state A 且已有值)时不重渲染,避免清空输入——与既有语言
+  // 精化守卫一致;语言变量仍会更新,下次渲染自然生效。
+  fetch(API + '/settings.json', { headers: { Accept: 'application/json' } })
+    .then(function (r) { return r.json(); })
+    .then(function (j) {
+      var body = (j && j.body) || j || {};
+      var app = body.app || {};
+      var legal = (body.passbolt && body.passbolt.legal) || {};
+      LEGAL = {
+        terms: (legal.terms && legal.terms.url) || '',
+        privacy: (legal.privacy_policy && legal.privacy_policy.url) || ''
+      };
+      var onAuth = classify(location.pathname) === 'auth';
+      var em = document.getElementById('em');
+      var midType = onAuth && em && em.value;
+      var localeChanged = false;
+      if (!explicit) {
         var loc = normLocale(app.locale);
-        if (explicit || loc === LOCALE) return;
-        var em = document.getElementById('em');
-        if (classify(location.pathname) === 'auth' && em && em.value) return;
-        LOCALE = loc; document.documentElement.lang = loc; render();
-      }).catch(function () { /* offline / no settings — keep zh default */ });
-  }
+        if (loc !== LOCALE) { LOCALE = loc; document.documentElement.lang = loc; localeChanged = true; }
+      }
+      if (midType) {
+        // 用户正在输入邮箱:默认不重渲染以免打断。但若法务要求同意而当前没有勾选框
+        // (settings 回来得比用户输入晚),必须补上勾选框——否则用户可跳过同意直接提交。
+        // 补渲染时保留已输入的邮箱并恢复焦点、重算按钮态。
+        var needBox = onAuth && legalRequired() && !document.getElementById('tc');
+        if (!needBox) return;
+        var val = em.value;
+        render();
+        var em2 = document.getElementById('em');
+        if (em2) { em2.value = val; em2.focus(); em2.dispatchEvent(new Event('input')); }
+        return;
+      }
+      // auth 页总是重渲染一次以反映 legal(补上/去掉勾选框);其它页仅语言变化时。
+      if (onAuth || localeChanged) render();
+    }).catch(function () { /* offline / no settings — 保持 zh 默认、不显示勾选框 */ });
 
   // The extension stamps data-jpassbolt-extension + the jpassbolt-extension
   // class on <html> at idle; when the install/app fallback is showing, flip it

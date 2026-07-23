@@ -136,10 +136,12 @@ class AuditLogIntegrationTest {
     }
 
     @Test
-    void forbiddenSecretViewRecordsNoAccess() throws Exception {
-        // A resource the user has no permission on.
+    void deniedSecretViewRecordsNoAccess() throws Exception {
+        // A resource the user has no permission on. The denial is a 404 (an
+        // unauthorized caller must not learn whether the resource exists), and
+        // no secret_accesses row may be written for a secret never handed out.
         mockMvc.perform(get("/secrets/resource/" + UUID.randomUUID() + ".json"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isNotFound());
         assertThat(secretAccessRepository.count()).isZero();
     }
 

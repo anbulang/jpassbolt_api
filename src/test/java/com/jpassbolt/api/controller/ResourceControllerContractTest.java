@@ -167,6 +167,75 @@ class ResourceControllerContractTest extends OpenApiComplianceTest {
                 // .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
         }
 
+        /**
+         * The four index query parameters added for the filter/contain gap
+         * (filterIsOwnedByMe / filterIsSharedWithMe / filterIsSharedWithGroup /
+         * containPermission) are all DECLARED in the spec on GET
+         * /resources.json, so sending them introduces no
+         * validation.request.parameter.unknown violation — the request side is
+         * contract-clean even though the response {@code isValid} assertion
+         * stays off for the two pre-existing reasons documented on
+         * {@link #testIndexResourcesContract()} (pagination + v4 metadata).
+         * No {@code isValid} here for exactly that reason.
+         */
+        @Test
+        void testIndexResourcesContract_SpecDeclaredFiltersAccepted() throws Exception {
+                createResourceWithPermission("Visible", "admin", "https://visible.com", Permission.OWNER);
+
+                mockMvc.perform(get("/resources.json")
+                                .param("filter[is-owned-by-me]", "1")
+                                .param("filter[is-shared-with-me]", "1")
+                                .param("filter[is-shared-with-group]", UUID.randomUUID().toString())
+                                .param("contain[permission]", "1")
+                                .param("contain[favorite]", "1")
+                                .accept(MediaType.APPLICATION_JSON))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.header.status").value("success"))
+                                .andExpect(jsonPath("$.body").isArray());
+        }
+
+        /**
+         * contain[permission]=1 must emit the singular permissionIndexAndView
+         * object (the plural "permissions" array is a separate, unimplemented
+         * contain) with all 8 spec-required fields. Shape-only assertion — see
+         * the class javadoc for why the index {@code isValid} stays disabled.
+         */
+        @Test
+        void testIndexResourcesContract_ContainPermissionShape() throws Exception {
+                Resource resource = createResourceWithPermission("Visible", "admin", "https://visible.com",
+                                Permission.OWNER);
+
+                mockMvc.perform(get("/resources.json")
+                                .param("contain[permission]", "1")
+                                .accept(MediaType.APPLICATION_JSON))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.body[0].permission.id").exists())
+                                .andExpect(jsonPath("$.body[0].permission.aco").value("Resource"))
+                                .andExpect(jsonPath("$.body[0].permission.aco_foreign_key").value(resource.getId()))
+                                .andExpect(jsonPath("$.body[0].permission.aro").value("User"))
+                                .andExpect(jsonPath("$.body[0].permission.aro_foreign_key").value(testUser.getId()))
+                                .andExpect(jsonPath("$.body[0].permission.type").value(Permission.OWNER))
+                                .andExpect(jsonPath("$.body[0].permission.created").exists())
+                                .andExpect(jsonPath("$.body[0].permission.modified").exists())
+                                // Singular contain only — no plural array.
+                                .andExpect(jsonPath("$.body[0].permissions").doesNotExist());
+        }
+
+        /**
+         * A malformed group id is a 400 with the PHP QueryStringComponent
+         * message. The spec types filter[is-shared-with-group] as a uuid string
+         * but declares no 400 response for the index, so no {@code isValid}.
+         */
+        @Test
+        void testIndexResourcesContract_InvalidGroupFilter() throws Exception {
+                mockMvc.perform(get("/resources.json")
+                                .param("filter[is-shared-with-group]", "1")
+                                .accept(MediaType.APPLICATION_JSON))
+                                .andExpect(status().isBadRequest())
+                                .andExpect(jsonPath("$.header.status").value("error"))
+                                .andExpect(jsonPath("$.header.code").value(400));
+        }
+
         @Test
         void testViewResourceContract() throws Exception {
                 Resource resource = createResourceWithPermission("My Password", "user1", "https://mysite.com",

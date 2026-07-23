@@ -23,6 +23,25 @@ public interface GpgKeyRepository extends JpaRepository<GpgKey, String> {
     Optional<GpgKey> findByFingerprintAndDeletedFalse(String fingerprint);
 
     /**
+     * Whole-table fingerprint uniqueness probe, INCLUDING soft-deleted rows
+     * (PHP {@code GpgkeysTable::buildRules} {@code isUnique(['fingerprint'])}
+     * does not exclude them either). One key pair maps to exactly one account,
+     * ever — JwtAuthService verifies a login challenge against the key stored
+     * on the claimed user's row, so a duplicated fingerprint would let one
+     * private key authenticate as two users. Safe against pre-existing
+     * duplicate rows (unlike the Optional finders, which would throw
+     * IncorrectResultSizeDataAccessException).
+     */
+    boolean existsByFingerprint(String fingerprint);
+
+    /**
+     * All rows sharing a fingerprint regardless of deleted flag. Used by the
+     * seeder to detect (and refuse to widen) fingerprint collisions even when
+     * the table already holds dirty duplicate data.
+     */
+    List<GpgKey> findAllByFingerprint(String fingerprint);
+
+    /**
      * Find a GPG key by key ID for active (non-deleted) keys only.
      */
     Optional<GpgKey> findByKeyIdAndDeletedFalse(String keyId);

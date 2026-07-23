@@ -74,7 +74,7 @@ public class JwtAuthService {
     private final ObjectMapper objectMapper;
 
     /** Domain claim — PHP Router::url('/', true). Same source as JwtService.iss. */
-    @Value("${jpassbolt.settings.full-base-url:http://localhost:8080}")
+    @Value("${jpassbolt.settings.full-base-url:http://localhost:8090}")
     private String fullBaseUrl;
 
     /** PHP passbolt.auth.token.refresh_token.expiry default '1 month'. */

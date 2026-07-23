@@ -80,4 +80,36 @@ class SkeletonPageIntegrationTest {
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(resp.getBody()).contains("\"status\"");
     }
+
+    /**
+     * SP-37: the skeleton context has no Spring Security filter chain, so the
+     * servlet writes the official Passbolt header set itself. Asserted through a
+     * real Tomcat because that is the only place the two contexts can be
+     * compared side by side.
+     */
+    @Test
+    void skeletonAndApiBothCarryOfficialSecurityHeaders() {
+        for (String path : new String[] { "/auth/login", "/api/healthcheck/status.json" }) {
+            ResponseEntity<String> resp = rest.getForEntity(root(path), String.class);
+            assertThat(resp.getHeaders().getFirst("X-Content-Type-Options")).as(path).isEqualTo("nosniff");
+            assertThat(resp.getHeaders().getFirst("X-Download-Options")).as(path).isEqualTo("noopen");
+            assertThat(resp.getHeaders().getFirst("X-Permitted-Cross-Domain-Policies")).as(path).isEqualTo("all");
+            assertThat(resp.getHeaders().getFirst("Referrer-Policy")).as(path).isEqualTo("same-origin");
+            assertThat(resp.getHeaders().getFirst("X-Frame-Options")).as(path).isEqualToIgnoringCase("SAMEORIGIN");
+        }
+    }
+
+    /**
+     * SP-36: the unsafe-mode banner must never fire during local development.
+     * This request is plain http, but to a loopback host — the exact case the
+     * flag has to stay off for.
+     */
+    @Test
+    void plainHttpOnLoopbackDoesNotShowUnsafeBanner() {
+        ResponseEntity<String> resp = rest.getForEntity(root("/auth/login"), String.class);
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(resp.getBody()).contains("var UNSAFE_MODE = ('false' === 'true');");
+        // the server substituted the flag; no template token leaks to the browser
+        assertThat(resp.getBody()).doesNotContain("__JP_UNSAFE_MODE__");
+    }
 }

@@ -9,6 +9,8 @@ import com.jpassbolt.api.service.MfaService;
 import com.jpassbolt.api.service.TotpService;
 import com.jpassbolt.api.service.UserService;
 import com.jpassbolt.api.util.ApiResponse;
+import com.jpassbolt.api.util.HttpRequestSecurity;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpHeaders;
@@ -77,6 +79,9 @@ public class MfaController {
     /** PHP MfaVerifiedCookie::MFA_COOKIE_ALIAS. */
     public static final String MFA_COOKIE = "passbolt_mfa";
 
+    /** Set and cleared with the same SameSite, or the browser may not overwrite it. */
+    private static final String MFA_COOKIE_SAME_SITE = "Lax";
+
     /** Strict UUID shape (PHP {@code Validation::uuid}, same as CommentController). */
     private static final Pattern UUID_PATTERN = Pattern.compile(
             "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$");
@@ -121,7 +126,8 @@ public class MfaController {
             @PathVariable String mfaProviderName,
             @RequestBody(required = false) MfaDto.VerifyRequest request,
             @CookieValue(value = MFA_COOKIE, required = false) String mfaCookie,
-            @RequestHeader(value = HttpHeaders.USER_AGENT, required = false) String userAgent) {
+            @RequestHeader(value = HttpHeaders.USER_AGENT, required = false) String userAgent,
+            HttpServletRequest httpRequest) {
         String url = "/mfa/verify/" + mfaProviderName + ".json";
         String userId = getCurrentUserId();
 
@@ -147,7 +153,7 @@ public class MfaController {
         String token = mfaService.createMfaVerifiedToken(userId, MfaService.PROVIDER_TOTP, remember, userAgent);
 
         return ResponseEntity.ok()
-                .header(HttpHeaders.SET_COOKIE, buildMfaCookie(token, remember).toString())
+                .header(HttpHeaders.SET_COOKIE, buildMfaCookie(token, remember, httpRequest).toString())
                 .body(createNullBodyResponse("success",
                         "The multi-factor authentication was a success.", url));
     }
@@ -161,7 +167,7 @@ public class MfaController {
      */
     @RequestMapping(value = { "/verify/error", "/verify/error.json" }, method = {
             RequestMethod.GET, RequestMethod.POST, RequestMethod.PUT, RequestMethod.DELETE })
-    public ResponseEntity<Map<String, Object>> verifyError() {
+    public ResponseEntity<Map<String, Object>> verifyError(HttpServletRequest httpRequest) {
         String url = "/mfa/verify/error.json";
         String userId = getCurrentUserId();
 
@@ -177,8 +183,16 @@ public class MfaController {
         body.put("mfa_providers", providers);
         body.put("providers", providerUrls);
 
+        // Same attributes as buildMfaCookie (minus Max-Age): several browsers
+        // only overwrite a cookie when Path/Secure/SameSite match, so a mismatch
+        // here would leave the stale passbolt_mfa cookie in place.
         ResponseCookie expired = ResponseCookie.from(MFA_COOKIE, "")
-                .path("/").httpOnly(true).maxAge(0).build();
+                .path("/")
+                .httpOnly(true)
+                .secure(HttpRequestSecurity.isSecureRequest(httpRequest))
+                .sameSite(MFA_COOKIE_SAME_SITE)
+                .maxAge(0)
+                .build();
         return ResponseEntity.status(HttpStatus.FORBIDDEN)
                 .header(HttpHeaders.SET_COOKIE, expired.toString())
                 .body(createErrorResponseWithCode(403,
@@ -252,7 +266,8 @@ public class MfaController {
     @PostMapping({ "/setup/totp", "/setup/totp.json" })
     public ResponseEntity<Map<String, Object>> setupTotpPost(
             @RequestBody(required = false) MfaDto.TotpSetupRequest request,
-            @RequestHeader(value = HttpHeaders.USER_AGENT, required = false) String userAgent) {
+            @RequestHeader(value = HttpHeaders.USER_AGENT, required = false) String userAgent,
+            HttpServletRequest httpRequest) {
         String url = "/mfa/setup/totp.json";
         String userId = getCurrentUserId();
 
@@ -298,7 +313,7 @@ public class MfaController {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("verified", verified);
         return ResponseEntity.ok()
-                .header(HttpHeaders.SET_COOKIE, buildMfaCookie(token, false).toString())
+                .header(HttpHeaders.SET_COOKIE, buildMfaCookie(token, false, httpRequest).toString())
                 .body(createResponse("success",
                         "Multi Factor Authentication is configured!", body, url));
     }
@@ -473,14 +488,36 @@ public class MfaController {
     // ------------------------------------------------------------------
 
     /**
-     * passbolt_mfa cookie: Path=/, HttpOnly; with remember a 30-day Max-Age
-     * (PHP DefaultRememberAMonthSettingService is always enabled in CE, so
-     * no configuration switch), otherwise session-scoped.
+     * passbolt_mfa cookie: Path=/, HttpOnly, Secure iff the request reached us
+     * over TLS, SameSite=Lax; with remember a 30-day Max-Age (PHP
+     * DefaultRememberAMonthSettingService is always enabled in CE, so no
+     * configuration switch), otherwise session-scoped.
+     *
+     * <p>
+     * <b>Secure.</b> This cookie carries a second-factor credential (an
+     * {@code authentication_tokens(type='mfa')} UUID) — over plain http it is
+     * sniffable and replayable, so it must be marked Secure whenever the hop
+     * actually is TLS. It is derived per request rather than hardcoded because
+     * local development runs on plain http and a permanently-Secure cookie is
+     * silently dropped by the browser there. Same rule as PHP
+     * {@code MfaVerifiedCookie::get} → {@code isSslOrCookiesSecure($request)}.
+     * </p>
+     *
+     * <p>
+     * <b>SameSite=Lax.</b> Primary authentication is {@code Authorization:
+     * Bearer}, never a cookie, so this cookie alone authenticates nothing — Lax
+     * simply stops a cross-site POST from silently carrying the MFA proof, and
+     * still rides along on top-level navigations. {@code Strict} is not used
+     * because it would also drop the cookie on a legitimate inbound link to the
+     * app. (PHP leaves SameSite unset, i.e. browser-default Lax.)
+     * </p>
      */
-    private ResponseCookie buildMfaCookie(String token, boolean remember) {
+    private ResponseCookie buildMfaCookie(String token, boolean remember, HttpServletRequest request) {
         ResponseCookie.ResponseCookieBuilder builder = ResponseCookie.from(MFA_COOKIE, token)
                 .path("/")
-                .httpOnly(true);
+                .httpOnly(true)
+                .secure(HttpRequestSecurity.isSecureRequest(request))
+                .sameSite(MFA_COOKIE_SAME_SITE);
         if (remember) {
             builder.maxAge(Duration.ofDays(MfaService.MFA_TOKEN_MAX_DURATION_DAYS));
         }

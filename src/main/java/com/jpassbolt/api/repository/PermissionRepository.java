@@ -134,6 +134,51 @@ public interface PermissionRepository extends JpaRepository<Permission, String> 
                         @Param("minType") int minType);
 
         /**
+         * Resource ids on which the given ARO holds ANY permission row — PHP
+         * ResourcesFindersTrait::_filterQuerySharedWithGroup, which calls
+         * findAllByAro(RESOURCE_ACO, $groupId) with NO options. Three
+         * deliberate quirks are copied verbatim from the reference rather than
+         * "fixed":
+         * <ul>
+         * <li>no checkGroupsUsers — the group is NOT expanded to its members,
+         * only the group's own permission rows count;</li>
+         * <li>no type filter — READ/UPDATE/OWNER all qualify;</li>
+         * <li>no {@code aro = 'Group'} predicate — findAllByAro matches on
+         * aro_foreign_key alone.</li>
+         * </ul>
+         * This is NOT an access check: callers must still intersect with the
+         * requester's own accessible set (PHP layers
+         * filterResourcesByPermissions on top of this filter).
+         */
+        @Query("SELECT DISTINCT p.acoForeignKey FROM Permission p " +
+                        "WHERE p.aco = 'Resource' AND p.aroForeignKey = :aroForeignKey")
+        List<String> findResourceIdsSharedWithAro(@Param("aroForeignKey") String aroForeignKey);
+
+        /**
+         * Every permission row the user holds on the given resources, directly
+         * ("User" ARO) or through a group they belong to — the batch form of
+         * PHP findHighestByAcoAndAro(RESOURCE_ACO, Resources.id, userId), which
+         * the reference runs as a correlated per-row subquery
+         * (ORDER BY type DESC LIMIT 1). Fetching the candidate rows in one
+         * query and reducing to the highest type in Java avoids the N+1. Same
+         * ARO set as {@link #findAccessibleResourceIdsIncludingGroups}
+         * (checkGroupsUsers=true), so the winning row may legitimately be a
+         * 'Group' row when a group grants more than the user's own row.
+         *
+         * <p>
+         * Callers MUST skip the call when {@code resourceIds} is empty — JPQL
+         * {@code IN :emptyCollection} is not portable.
+         * </p>
+         */
+        @Query("SELECT p FROM Permission p WHERE p.aco = 'Resource' AND p.acoForeignKey IN :resourceIds " +
+                        "AND ((p.aro = 'User' AND p.aroForeignKey = :userId) " +
+                        "OR (p.aro = 'Group' AND p.aroForeignKey IN " +
+                        "(SELECT gu.groupId FROM GroupUser gu WHERE gu.userId = :userId)))")
+        List<Permission> findUserAndGroupPermissionsForResources(
+                        @Param("userId") String userId,
+                        @Param("resourceIds") java.util.Collection<String> resourceIds);
+
+        /**
          * Resource ids where the user is the sole OWNER of a SHARED resource
          * (exactly one OWNER permission, more than one permission in total) —
          * PHP findSharedAcosByAroIsSoleOwner, User ARO only. The group

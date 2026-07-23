@@ -1,5 +1,6 @@
 package com.jpassbolt.api.config;
 
+import com.jpassbolt.api.util.HttpRequestSecurity;
 import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -13,6 +14,7 @@ import org.springframework.context.annotation.Configuration;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
+import java.nio.charset.StandardCharsets;
 import java.util.Objects;
 
 /**
@@ -30,6 +32,12 @@ import java.util.Objects;
  * else here, keeping the API, its security filter chain and every MockMvc /
  * contract test completely untouched. The skeleton context intentionally has
  * no Spring filters: the page is public static HTML by design.
+ *
+ * Because there is no {@code HeaderWriterFilter} here, the servlet writes the
+ * official Passbolt security headers itself (see {@link SecurityHeaders}), and
+ * because the page must warn the user when it is being served over plain http
+ * on a non-loopback host, the HTML carries one server-substituted flag (see
+ * {@link SkeletonPageServlet#UNSAFE_MODE_TOKEN}).
  */
 @Configuration
 public class SkeletonPageConfig {
@@ -67,16 +75,51 @@ public class SkeletonPageConfig {
 
     static final class SkeletonPageServlet extends HttpServlet {
 
-        private final byte[] html = loadSkeleton();
+        /**
+         * The single template variable of the page. {@code app.html} contains
+         * {@code var UNSAFE_MODE = ('__JP_UNSAFE_MODE__' === 'true');} — the
+         * quoted form keeps the file valid JavaScript when it is opened
+         * directly (un-substituted it just evaluates to {@code false}), and the
+         * server only ever substitutes the literals {@code true} / {@code false},
+         * so no injection surface is opened.
+         */
+        static final String UNSAFE_MODE_TOKEN = "__JP_UNSAFE_MODE__";
 
-        private static byte[] loadSkeleton() {
+        private final String html = loadSkeleton();
+
+        private static String loadSkeleton() {
             try (InputStream in = Objects.requireNonNull(
                     SkeletonPageServlet.class.getResourceAsStream("/skeleton/app.html"),
                     "missing classpath resource /skeleton/app.html")) {
-                return in.readAllBytes();
+                return new String(in.readAllBytes(), StandardCharsets.UTF_8);
             } catch (IOException e) {
                 throw new UncheckedIOException(e);
             }
+        }
+
+        /**
+         * "Unsafe mode" = this page reached the browser over plain http on a
+         * host that is NOT the user's own machine, i.e. every byte (including
+         * the JWT the extension will later send) is readable on the wire.
+         * Official Passbolt shows the same footer warning when HTTPS is off.
+         *
+         * <p>
+         * Loopback is excluded so local development never shows the banner. No
+         * application-layer https redirect is performed — TLS termination is the
+         * reverse proxy's job (see {@code docs/deployment.md}); a redirect here
+         * would break plain-http local development for no gain.
+         * </p>
+         *
+         * <p>
+         * Note the corollary for operators: a proxy that terminates TLS and
+         * forwards plain http MUST send {@code X-Forwarded-Proto: https}, or
+         * this banner will (correctly, from the app's point of view) appear on
+         * an https site.
+         * </p>
+         */
+        static boolean isUnsafeMode(HttpServletRequest request) {
+            return !HttpRequestSecurity.isSecureRequest(request)
+                    && !HttpRequestSecurity.isLoopbackHost(HttpRequestSecurity.hostname(request));
         }
 
         // Browser-facing routes the extension content script attaches to
@@ -95,6 +138,10 @@ public class SkeletonPageConfig {
 
         @Override
         protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+            // Written first so they also ride on the 302 and the 404 — this
+            // context has no Spring Security HeaderWriterFilter to do it.
+            SecurityHeaders.applyTo(resp);
+
             String path = req.getRequestURI();
             if (!isBrowserPageUrl(path)) {
                 resp.sendError(HttpServletResponse.SC_NOT_FOUND);
@@ -110,10 +157,17 @@ public class SkeletonPageConfig {
                 resp.setHeader("Location", "/auth/login?redirect=%2F");
                 return;
             }
+            byte[] page = html
+                    .replace(UNSAFE_MODE_TOKEN, Boolean.toString(isUnsafeMode(req)))
+                    .getBytes(StandardCharsets.UTF_8);
+
             resp.setStatus(HttpServletResponse.SC_OK);
             resp.setContentType("text/html;charset=UTF-8");
-            resp.setContentLength(html.length);
-            resp.getOutputStream().write(html);
+            // The body now varies with the request's scheme and host, so it must
+            // not be reused from a shared cache for a different origin.
+            resp.setHeader("Cache-Control", "no-store");
+            resp.setContentLength(page.length);
+            resp.getOutputStream().write(page);
         }
     }
 }

@@ -39,7 +39,7 @@ public class SettingsProperties {
      * origin (to be confirmed during integration with the extension whether
      * the {@code /api} context path belongs here).
      */
-    private String fullBaseUrl = "http://localhost:8080";
+    private String fullBaseUrl = "http://localhost:8090";
 
     /** Passbolt edition identifier ("ce" for Community Edition). */
     private String edition = "ce";

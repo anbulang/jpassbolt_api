@@ -237,7 +237,9 @@ public class AuthController {
      * Stage 2: Complete authentication
      */
     private ResponseEntity<?> handleStage2(HttpHeaders headers, String userTokenResult, User user) {
-        String jwt = authService.loginStage2(userTokenResult);
+        // `user` is the account proven by the request's keyid — the login token
+        // must belong to THEM, and the JWT is minted for THEM (see loginStage2).
+        String jwt = authService.loginStage2(userTokenResult, user);
 
         // Mark as authenticated
         headers.set("X-GPGAuth-Authenticated", "true");

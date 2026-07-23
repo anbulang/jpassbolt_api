@@ -13,6 +13,7 @@ import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 
@@ -58,7 +59,7 @@ public class HealthcheckService {
     @Value("${server.servlet.context-path:/api}")
     private String contextPath;
 
-    @Value("${server.port:8080}")
+    @Value("${server.port:8090}")
     private String serverPort;
 
     @Value("${jpassbolt.jwt.secret:}")
@@ -130,7 +131,14 @@ public class HealthcheckService {
     }
 
     private Map<String, Object> checkCore() {
-        String fullBaseUrl = "http://localhost:" + serverPort + contextPath;
+        // Report the CONFIGURED public origin (the same value email links use via
+        // emailBaseUrl / isHttpsFullBaseUrl), not a hard-coded localhost guess —
+        // otherwise a production APP_FULL_BASE_URL=https://vault.example.com box
+        // still shows "http://localhost:8090" and misleads operators.
+        String configured = settingsProperties.getFullBaseUrl();
+        String fullBaseUrl = (configured != null && !configured.isBlank())
+                ? configured
+                : "http://localhost:" + serverPort + contextPath;
         Map<String, Object> core = new LinkedHashMap<>();
         core.put("cache", true);
         core.put("debugDisabled", true);
@@ -146,9 +154,38 @@ public class HealthcheckService {
         return core;
     }
 
+    /**
+     * True when the configured public base URL is an https origin — the only
+     * SSL fact this application can state without opening a socket.
+     */
+    private boolean isHttpsFullBaseUrl() {
+        String fullBaseUrl = settingsProperties.getFullBaseUrl();
+        return fullBaseUrl != null && fullBaseUrl.toLowerCase(Locale.ROOT).startsWith("https://");
+    }
+
+    /**
+     * The {@code ssl} domain reports on a TLS handshake JPassbolt never
+     * performs. PHP's {@code SslHealthcheckService} self-requests
+     * {@code fullBaseUrl} three times with different peer-verification
+     * settings; doing that here would mean an outbound HTTP call from a
+     * healthcheck endpoint, which this service deliberately never makes (see
+     * class javadoc).
+     *
+     * <p>
+     * So the three booleans are {@code false} in the sense of "not
+     * established", NOT "the certificate failed validation" — an operator
+     * reading them as a cert failure would be misled, hence the explicit
+     * {@code info} string, which is the only field of this domain that carries
+     * real information. Certificate validity must be checked at the reverse
+     * proxy that terminates TLS (see {@code docs/deployment.md}).
+     * </p>
+     */
     private Map<String, Object> checkSsl() {
         Map<String, Object> ssl = new LinkedHashMap<>();
-        ssl.put("info", "SSL checks are not performed by JPassbolt; TLS termination is expected at the reverse proxy.");
+        ssl.put("info", "No certificate validation was performed: JPassbolt never opens an outbound TLS "
+                + "connection to itself. TLS termination (and therefore certificate validity) is the "
+                + "reverse proxy's responsibility. peerValid/hostValid/notSelfSigned are 'not checked', "
+                + "not 'invalid'.");
         ssl.put("peerValid", false);
         ssl.put("hostValid", false);
         ssl.put("notSelfSigned", false);
@@ -243,8 +280,18 @@ public class HealthcheckService {
         info.put("currentVersion", currentVersion);
         application.put("info", info);
         application.put("latestVersion", true);
+        // Always false: JPassbolt performs NO application-layer HTTP->HTTPS
+        // redirect (PHP's App.forceSSL / requiresChannel equivalent). Forcing
+        // the channel is delegated to the reverse proxy — see
+        // docs/deployment.md — because an app-level redirect would break plain
+        // http local development and is redundant behind a correct proxy.
+        // Do not "fix" this to mirror sslFullBaseUrl: the two answer different
+        // questions (is https enforced? vs is the public URL an https one?).
         application.put("sslForce", false);
-        application.put("sslFullBaseUrl", false);
+        // Real config-derived value (was hardcoded false, which told an
+        // operator running a correctly configured https deployment that their
+        // base URL was plain http).
+        application.put("sslFullBaseUrl", isHttpsFullBaseUrl());
         application.put("seleniumDisabled", true);
         application.put("robotsIndexDisabled", true);
         // LinkedHashMap (not Map.of): selfRegistrationProvider is a nullable string.

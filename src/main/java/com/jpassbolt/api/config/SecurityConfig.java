@@ -11,6 +11,8 @@ import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.HttpStatusEntryPoint;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter.ReferrerPolicy;
+import org.springframework.security.web.header.writers.StaticHeadersWriter;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
@@ -24,6 +26,7 @@ import java.util.List;
  * <li>JWT Bearer authentication via {@link JwtAuthenticationFilter}</li>
  * <li>CORS enabled for frontend dev server</li>
  * <li>Stateless session management</li>
+ * <li>The official Passbolt security-header set ({@link SecurityHeaders})</li>
  * </ul>
  */
 @Configuration
@@ -39,6 +42,22 @@ public class SecurityConfig {
                 http
                                 .csrf(AbstractHttpConfigurer::disable)
                                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
+                                // Official Passbolt's SecurityHeadersMiddleware set (see
+                                // SecurityHeaders for the evidence + the SAMEORIGIN /
+                                // "all" rationale). Spring's own defaults — nosniff and
+                                // the Cache-Control trio — stay on: defaultsDisabled()
+                                // is NOT called, so this only ADDS to them and swaps
+                                // frame-options DENY -> SAMEORIGIN.
+                                .headers(headers -> headers
+                                                .frameOptions(frame -> frame.sameOrigin())
+                                                .referrerPolicy(referrer -> referrer
+                                                                .policy(ReferrerPolicy.SAME_ORIGIN))
+                                                .addHeaderWriter(new StaticHeadersWriter(
+                                                                SecurityHeaders.X_DOWNLOAD_OPTIONS,
+                                                                SecurityHeaders.X_DOWNLOAD_OPTIONS_VALUE))
+                                                .addHeaderWriter(new StaticHeadersWriter(
+                                                                SecurityHeaders.X_PERMITTED_CROSS_DOMAIN_POLICIES,
+                                                                SecurityHeaders.X_PERMITTED_CROSS_DOMAIN_POLICIES_VALUE)))
                                 .sessionManagement(session -> session
                                                 .sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                                 .authorizeHttpRequests(auth -> auth

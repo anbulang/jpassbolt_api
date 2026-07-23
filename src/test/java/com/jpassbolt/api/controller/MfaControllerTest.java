@@ -27,6 +27,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.test.context.support.WithMockUser;
@@ -39,6 +40,7 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.endsWith;
 import static org.hamcrest.Matchers.nullValue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
@@ -317,6 +319,111 @@ class MfaControllerTest {
 
         JsonNode data = objectMapper.readTree(mfaTokensOf(testUser).get(0).getData());
         assertThat(data.path("remember").asBoolean()).isTrue();
+    }
+
+    // ------------------------------------------------------------------
+    // passbolt_mfa cookie attributes (SP-38)
+    //
+    // The cookie carries a second-factor credential, so it must be HttpOnly +
+    // SameSite=Lax always, and Secure exactly when the request reached us over
+    // TLS. Secure is request-derived (PHP MfaVerifiedCookie ->
+    // isSslOrCookiesSecure) rather than hardcoded: a permanently-Secure cookie
+    // would be dropped by the browser during plain-http local development.
+    // ------------------------------------------------------------------
+
+    @Test
+    void testVerifyPost_PlainHttp_CookieIsHttpOnlyLaxAndNotSecure() throws Exception {
+        seedOrgMfa("totp");
+        String uri = seedUserTotp(testUser);
+        String code = totpService.generateCurrentCode(uri);
+
+        mockMvc.perform(post("/mfa/verify/totp.json")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"totp\":\"" + code + "\"}"))
+                .andExpect(status().isOk())
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("HttpOnly")))
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("SameSite=Lax")))
+                // local http dev must not be locked out by a Secure cookie
+                .andExpect(cookie().secure("passbolt_mfa", false));
+    }
+
+    @Test
+    void testVerifyPost_ForwardedProtoHttps_CookieIsSecure() throws Exception {
+        seedOrgMfa("totp");
+        String uri = seedUserTotp(testUser);
+        String code = totpService.generateCurrentCode(uri);
+
+        mockMvc.perform(post("/mfa/verify/totp.json")
+                .header("X-Forwarded-Proto", "https")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"totp\":\"" + code + "\"}"))
+                .andExpect(status().isOk())
+                .andExpect(cookie().secure("passbolt_mfa", true))
+                .andExpect(cookie().httpOnly("passbolt_mfa", true))
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("SameSite=Lax")));
+    }
+
+    @Test
+    void testVerifyPost_DirectTls_CookieIsSecure() throws Exception {
+        seedOrgMfa("totp");
+        String uri = seedUserTotp(testUser);
+        String code = totpService.generateCurrentCode(uri);
+
+        mockMvc.perform(post("/mfa/verify/totp.json")
+                .secure(true)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"totp\":\"" + code + "\"}"))
+                .andExpect(status().isOk())
+                .andExpect(cookie().secure("passbolt_mfa", true));
+    }
+
+    /**
+     * A spoofed X-Forwarded-Proto must never DOWNGRADE a genuine TLS request:
+     * isSecureRequest ORs the servlet's own isSecure() in.
+     */
+    @Test
+    void testVerifyPost_TlsWithLyingForwardedProto_StillSecure() throws Exception {
+        seedOrgMfa("totp");
+        String uri = seedUserTotp(testUser);
+        String code = totpService.generateCurrentCode(uri);
+
+        mockMvc.perform(post("/mfa/verify/totp.json")
+                .secure(true)
+                .header("X-Forwarded-Proto", "http")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"totp\":\"" + code + "\"}"))
+                .andExpect(status().isOk())
+                .andExpect(cookie().secure("passbolt_mfa", true));
+    }
+
+    /** The clearing cookie must carry the same attributes, or browsers may not overwrite it. */
+    @Test
+    void testVerifyError_ClearCookie_MirrorsSetAttributes() throws Exception {
+        seedOrgMfa("totp");
+        seedUserTotp(testUser);
+
+        mockMvc.perform(get("/mfa/verify/error.json").header("X-Forwarded-Proto", "https"))
+                .andExpect(status().isForbidden())
+                .andExpect(cookie().maxAge("passbolt_mfa", 0))
+                .andExpect(cookie().secure("passbolt_mfa", true))
+                .andExpect(cookie().httpOnly("passbolt_mfa", true))
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("SameSite=Lax")));
+    }
+
+    @Test
+    void testSetupPost_PlainHttp_CookieIsLaxAndNotSecure() throws Exception {
+        seedOrgMfa("totp");
+        String uri = totpService.buildProvisioningUri("jpassbolt", testUser.getUsername(),
+                totpService.generateSecret());
+        String code = totpService.generateCurrentCode(uri);
+
+        mockMvc.perform(post("/mfa/setup/totp.json")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(
+                        java.util.Map.of("otpProvisioningUri", uri, "totp", code))))
+                .andExpect(status().isOk())
+                .andExpect(cookie().secure("passbolt_mfa", false))
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("SameSite=Lax")));
     }
 
     @Test

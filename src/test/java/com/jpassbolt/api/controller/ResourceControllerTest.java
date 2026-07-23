@@ -2,16 +2,22 @@ package com.jpassbolt.api.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jpassbolt.api.dto.ResourceDto;
+import com.jpassbolt.api.model.Favorite;
 import com.jpassbolt.api.model.Folder;
 import com.jpassbolt.api.model.FoldersRelation;
+import com.jpassbolt.api.model.Group;
+import com.jpassbolt.api.model.GroupUser;
 import com.jpassbolt.api.model.MetadataKey;
 import com.jpassbolt.api.model.OrganizationSetting;
 import com.jpassbolt.api.model.Permission;
 import com.jpassbolt.api.model.Resource;
 import com.jpassbolt.api.model.Secret;
 import com.jpassbolt.api.model.User;
+import com.jpassbolt.api.repository.FavoriteRepository;
 import com.jpassbolt.api.repository.FolderRepository;
 import com.jpassbolt.api.repository.FoldersRelationRepository;
+import com.jpassbolt.api.repository.GroupRepository;
+import com.jpassbolt.api.repository.GroupUserRepository;
 import com.jpassbolt.api.repository.MetadataKeyRepository;
 import com.jpassbolt.api.repository.OrganizationSettingRepository;
 import com.jpassbolt.api.repository.PermissionRepository;
@@ -72,6 +78,15 @@ class ResourceControllerTest {
         private FoldersRelationRepository foldersRelationRepository;
 
         @Autowired
+        private GroupRepository groupRepository;
+
+        @Autowired
+        private GroupUserRepository groupUserRepository;
+
+        @Autowired
+        private FavoriteRepository favoriteRepository;
+
+        @Autowired
         private ObjectMapper objectMapper;
 
         private User testUser;
@@ -85,9 +100,14 @@ class ResourceControllerTest {
                 metadataKeyRepository.deleteAll();
                 foldersRelationRepository.deleteAll();
                 folderRepository.deleteAll();
+                favoriteRepository.deleteAll();
                 permissionRepository.deleteAll();
                 secretRepository.deleteAll();
                 resourceRepository.deleteAll();
+                // groups_users before groups: membership rows reference both a
+                // group and a user, so they clear first (FK dependency order).
+                groupUserRepository.deleteAll();
+                groupRepository.deleteAll();
                 userRepository.deleteAll();
 
                 testUser = new User();
@@ -170,6 +190,416 @@ class ResourceControllerTest {
                                 .andExpect(jsonPath("$.body[0].name").value("Visible"));
         }
 
+        // =================================================================
+        // GET /resources.json filters + contains (OpenAPI filterIsOwnedByMe /
+        // filterIsSharedWithMe / filterIsSharedWithGroup / containPermission).
+        //
+        // Semantics follow PHP ResourcesFindersTrait verbatim:
+        // - "owned" is permission type=OWNER(15), GROUP-INCLUSIVE, and has
+        //   nothing to do with created_by;
+        // - is-shared-with-me = accessible AND NOT owner (incl. via group);
+        // - is-shared-with-group does NOT expand the group to its members and
+        //   does NOT filter on type;
+        // - contain[permission] is the SINGULAR highest permission row.
+        // =================================================================
+
+        /** A resource nobody-but-the-given-ARO row grants access to. */
+        private Resource createResourceWithAroPermission(String name, String aro, String aroForeignKey, int permType) {
+                Resource resource = new Resource();
+                resource.setName(name);
+                resource.setCreatedBy(testUser.getId());
+                resource.setModifiedBy(testUser.getId());
+                resource.setDeleted(false);
+                resourceRepository.save(resource);
+
+                Permission perm = new Permission();
+                perm.setAco(Permission.RESOURCE_ACO);
+                perm.setAcoForeignKey(resource.getId());
+                perm.setAro(aro);
+                perm.setAroForeignKey(aroForeignKey);
+                perm.setType(permType);
+                permissionRepository.save(perm);
+
+                return resource;
+        }
+
+        private Group createGroup(String name) {
+                Group group = new Group();
+                group.setName(name);
+                group.setDeleted(false);
+                group.setCreatedBy(testUser.getId());
+                group.setModifiedBy(testUser.getId());
+                return groupRepository.save(group);
+        }
+
+        private void addMember(Group group, User user) {
+                GroupUser membership = new GroupUser();
+                membership.setGroupId(group.getId());
+                membership.setUserId(user.getId());
+                membership.setIsAdmin(false);
+                groupUserRepository.save(membership);
+        }
+
+        /** Grant an extra permission row on an existing resource. */
+        private Permission grant(Resource resource, String aro, String aroForeignKey, int permType) {
+                Permission perm = new Permission();
+                perm.setAco(Permission.RESOURCE_ACO);
+                perm.setAcoForeignKey(resource.getId());
+                perm.setAro(aro);
+                perm.setAroForeignKey(aroForeignKey);
+                perm.setType(permType);
+                return permissionRepository.save(perm);
+        }
+
+        private User createUser(String username) {
+                User user = new User();
+                user.setUsername(username);
+                user.setRoleId("user");
+                user.setActive(true);
+                user.setDeleted(false);
+                return userRepository.save(user);
+        }
+
+        @Test
+        void testIndex_FilterIsOwnedByMe_ReturnsOnlyOwnedResources() throws Exception {
+                createResourceWithPermission("Owned", null, null, Permission.OWNER);
+                createResourceWithPermission("ReadOnly", null, null, Permission.READ);
+                createResourceWithPermission("Updatable", null, null, Permission.UPDATE);
+
+                mockMvc.perform(get("/resources.json").param("filter[is-owned-by-me]", "1"))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.body.length()").value(1))
+                                .andExpect(jsonPath("$.body[0].name").value("Owned"));
+        }
+
+        @Test
+        void testIndex_FilterIsOwnedByMe_IncludesOwnershipInheritedFromGroup() throws Exception {
+                // The user holds NO direct row on this resource — a group they
+                // belong to owns it. PHP findAcosByAroIsOwner runs with
+                // checkGroupsUsers=true, so it MUST be reported as owned.
+                Group group = createGroup("Owners");
+                addMember(group, testUser);
+                createResourceWithAroPermission("OwnedByMyGroup", Permission.GROUP_ARO, group.getId(),
+                                Permission.OWNER);
+
+                mockMvc.perform(get("/resources.json").param("filter[is-owned-by-me]", "1"))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.body.length()").value(1))
+                                .andExpect(jsonPath("$.body[0].name").value("OwnedByMyGroup"));
+        }
+
+        @Test
+        void testIndex_FilterIsSharedWithMe_ReturnsAccessibleNonOwned() throws Exception {
+                createResourceWithPermission("Owned", null, null, Permission.OWNER);
+                createResourceWithPermission("ReadOnly", null, null, Permission.READ);
+                createResourceWithPermission("Updatable", null, null, Permission.UPDATE);
+
+                // PHP FindIndexTest asserts exactly: permission >= READ && < OWNER.
+                mockMvc.perform(get("/resources.json").param("filter[is-shared-with-me]", "1"))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.body.length()").value(2))
+                                .andExpect(jsonPath("$.body[*].name",
+                                                Matchers.containsInAnyOrder("ReadOnly", "Updatable")));
+        }
+
+        @Test
+        void testIndex_FilterIsSharedWithMe_ExcludesOwnershipInheritedFromGroup() throws Exception {
+                // The trickiest branch: the user has a direct READ row, but a
+                // group they belong to is OWNER. Because the owner subquery is
+                // group-inclusive, this resource is OWNED and must NOT surface
+                // as "shared with me".
+                Group group = createGroup("Owners");
+                addMember(group, testUser);
+                Resource resource = createResourceWithPermission("GroupOwnedButIReadIt", null, null, Permission.READ);
+                grant(resource, Permission.GROUP_ARO, group.getId(), Permission.OWNER);
+
+                createResourceWithPermission("TrulyShared", null, null, Permission.READ);
+
+                mockMvc.perform(get("/resources.json").param("filter[is-shared-with-me]", "1"))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.body.length()").value(1))
+                                .andExpect(jsonPath("$.body[0].name").value("TrulyShared"));
+        }
+
+        @Test
+        void testIndex_FilterIsSharedWithMe_IgnoresCreatedBy() throws Exception {
+                // Ownership is a permission fact only. This row was created by
+                // the test user yet grants them mere READ -> it IS "shared with
+                // me", despite created_by pointing at them.
+                createResourceWithPermission("CreatedByMeButOnlyRead", null, null, Permission.READ);
+
+                mockMvc.perform(get("/resources.json").param("filter[is-shared-with-me]", "1"))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.body.length()").value(1))
+                                .andExpect(jsonPath("$.body[0].name").value("CreatedByMeButOnlyRead"));
+        }
+
+        @Test
+        void testIndex_FilterIsOwnedByMe_ZeroStillAppliesFilter() throws Exception {
+                // Upstream quirk, deliberately matched: PHP guards this filter
+                // with isset(), which is TRUE for a normalised `false`, so =0
+                // behaves exactly like =1. (filter[is-favorite] differs — it is
+                // value-tested.) The official plugin never sends =0.
+                createResourceWithPermission("Owned", null, null, Permission.OWNER);
+                createResourceWithPermission("ReadOnly", null, null, Permission.READ);
+
+                mockMvc.perform(get("/resources.json").param("filter[is-owned-by-me]", "0"))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.body.length()").value(1))
+                                .andExpect(jsonPath("$.body[0].name").value("Owned"));
+        }
+
+        @Test
+        void testIndex_FilterIsFavoriteZero_ExcludesFavorites() throws Exception {
+                // The counterpart to the isset() quirk above: PHP guards
+                // is-favorite with isset() but then branches on the VALUE, so =0
+                // is NOT "no filter" — it is notMatching('Favorites'), i.e.
+                // "exclude my favorites". Omitting the parameter is the only way
+                // not to filter.
+                Resource favorite = createResourceWithPermission("Favorite", null, null, Permission.OWNER);
+                favoriteRepository.save(new Favorite(testUser.getId(), favorite.getId(),
+                                Favorite.FOREIGN_MODEL_RESOURCE));
+                createResourceWithPermission("Plain", null, null, Permission.OWNER);
+
+                mockMvc.perform(get("/resources.json").param("filter[is-favorite]", "0"))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.body.length()").value(1))
+                                .andExpect(jsonPath("$.body[0].name").value("Plain"));
+
+                // Sanity: the same fixture with =1 returns the complement, and
+                // omitting the filter returns both -> =0 really is a filter.
+                mockMvc.perform(get("/resources.json").param("filter[is-favorite]", "1"))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.body.length()").value(1))
+                                .andExpect(jsonPath("$.body[0].name").value("Favorite"));
+                mockMvc.perform(get("/resources.json"))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.body.length()").value(2));
+        }
+
+        @Test
+        void testIndex_FilterIsSharedWithGroup_ReturnsAllTypesGrantedToGroup() throws Exception {
+                // PHP applies NO type filter here: READ, UPDATE and OWNER rows
+                // held by the group all qualify.
+                Group group = createGroup("Marketing");
+                addMember(group, testUser);
+                Resource read = createResourceWithPermission("GroupRead", null, null, Permission.READ);
+                Resource update = createResourceWithPermission("GroupUpdate", null, null, Permission.READ);
+                Resource owner = createResourceWithPermission("GroupOwner", null, null, Permission.READ);
+                grant(read, Permission.GROUP_ARO, group.getId(), Permission.READ);
+                grant(update, Permission.GROUP_ARO, group.getId(), Permission.UPDATE);
+                grant(owner, Permission.GROUP_ARO, group.getId(), Permission.OWNER);
+
+                createResourceWithPermission("NotSharedWithGroup", null, null, Permission.OWNER);
+
+                mockMvc.perform(get("/resources.json").param("filter[is-shared-with-group]", group.getId()))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.body.length()").value(3))
+                                .andExpect(jsonPath("$.body[*].name", Matchers.containsInAnyOrder(
+                                                "GroupRead", "GroupUpdate", "GroupOwner")));
+        }
+
+        @Test
+        void testIndex_FilterIsSharedWithGroup_ForeignGroupStillBoundedByOwnAccess() throws Exception {
+                // No membership check exists in PHP — any authenticated user may
+                // name any group. Safety comes from the base accessible set: the
+                // caller sees only the intersection, never the group's private
+                // resources. This is the anti-leak assertion.
+                User other = createUser("other@example.com");
+                Group foreignGroup = createGroup("Finance");
+                addMember(foreignGroup, other);
+
+                // Shared with the foreign group AND readable by the caller.
+                Resource visible = createResourceWithPermission("VisibleAndGroupShared", null, null, Permission.READ);
+                grant(visible, Permission.GROUP_ARO, foreignGroup.getId(), Permission.OWNER);
+
+                // Shared with the foreign group but the caller has NO access.
+                createResourceWithAroPermission("InvisibleGroupSecret", Permission.GROUP_ARO, foreignGroup.getId(),
+                                Permission.OWNER);
+
+                mockMvc.perform(get("/resources.json").param("filter[is-shared-with-group]", foreignGroup.getId()))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.body.length()").value(1))
+                                .andExpect(jsonPath("$.body[0].name").value("VisibleAndGroupShared"));
+        }
+
+        @Test
+        void testIndex_FilterIsSharedWithGroup_InvalidUuid_BadRequest() throws Exception {
+                mockMvc.perform(get("/resources.json").param("filter[is-shared-with-group]", "1"))
+                                .andExpect(status().isBadRequest())
+                                .andExpect(jsonPath("$.header.status").value("error"))
+                                .andExpect(jsonPath("$.header.message",
+                                                Matchers.containsString("Invalid filter")))
+                                .andExpect(jsonPath("$.header.message", Matchers.containsString(
+                                                "\"1\" is not a valid group id for filter is-shared-with-group.")));
+        }
+
+        @Test
+        void testIndex_FilterIsSharedWithGroup_UnknownGroup_ReturnsEmpty() throws Exception {
+                // PHP performs no existence check — an unknown (but well-formed)
+                // group id simply matches nothing.
+                createResourceWithPermission("Mine", null, null, Permission.OWNER);
+
+                mockMvc.perform(get("/resources.json")
+                                .param("filter[is-shared-with-group]", UUID.randomUUID().toString()))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.body").isArray())
+                                .andExpect(jsonPath("$.body").isEmpty());
+        }
+
+        @Test
+        void testIndex_ContainPermission_EmitsHighestPermissionWithAllSpecFields() throws Exception {
+                Resource resource = createResourceWithPermission("WithPermission", null, null, Permission.OWNER);
+
+                mockMvc.perform(get("/resources.json").param("contain[permission]", "1"))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.body.length()").value(1))
+                                // permissionIndexAndView requires exactly these 8 fields.
+                                .andExpect(jsonPath("$.body[0].permission.id").exists())
+                                .andExpect(jsonPath("$.body[0].permission.aco").value("Resource"))
+                                .andExpect(jsonPath("$.body[0].permission.aco_foreign_key").value(resource.getId()))
+                                .andExpect(jsonPath("$.body[0].permission.aro").value("User"))
+                                .andExpect(jsonPath("$.body[0].permission.aro_foreign_key").value(testUser.getId()))
+                                .andExpect(jsonPath("$.body[0].permission.type").value(Permission.OWNER))
+                                .andExpect(jsonPath("$.body[0].permission.created").exists())
+                                .andExpect(jsonPath("$.body[0].permission.modified").exists());
+        }
+
+        @Test
+        void testIndex_ContainPermission_PicksGroupRowWhenGroupGrantsMore() throws Exception {
+                // The user has READ directly; their group has OWNER. The highest
+                // row wins and it is the GROUP's — so aro/aro_foreign_key must
+                // describe the group, NOT the user.
+                Group group = createGroup("Powerful");
+                addMember(group, testUser);
+                Resource resource = createResourceWithPermission("GroupBoostsMe", null, null, Permission.READ);
+                grant(resource, Permission.GROUP_ARO, group.getId(), Permission.OWNER);
+
+                mockMvc.perform(get("/resources.json").param("contain[permission]", "1"))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.body.length()").value(1))
+                                .andExpect(jsonPath("$.body[0].permission.type").value(Permission.OWNER))
+                                .andExpect(jsonPath("$.body[0].permission.aro").value("Group"))
+                                .andExpect(jsonPath("$.body[0].permission.aro_foreign_key").value(group.getId()));
+        }
+
+        @Test
+        void testIndex_ContainPermission_IgnoresOtherUsersPermissions() throws Exception {
+                // Another user OWNs the resource; the caller only READs it. The
+                // contain is the CALLER's highest permission, so it must report
+                // READ and never leak the other user's row.
+                User other = createUser("other@example.com");
+                Resource resource = createResourceWithPermission("SharedWithMe", null, null, Permission.READ);
+                grant(resource, Permission.USER_ARO, other.getId(), Permission.OWNER);
+
+                mockMvc.perform(get("/resources.json").param("contain[permission]", "1"))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.body[0].permission.type").value(Permission.READ))
+                                .andExpect(jsonPath("$.body[0].permission.aro_foreign_key").value(testUser.getId()));
+        }
+
+        @Test
+        void testIndex_ContainPermission_DoesNotChangeResultCount() throws Exception {
+                // Unlike PHP (where the contain doubles as an INNER-join access
+                // filter), ours is a pure field add — the base set is already
+                // READ-and-up, which covers every level.
+                createResourceWithPermission("A", null, null, Permission.OWNER);
+                createResourceWithPermission("B", null, null, Permission.READ);
+                createResourceWithPermission("C", null, null, Permission.UPDATE);
+
+                mockMvc.perform(get("/resources.json"))
+                                .andExpect(jsonPath("$.body.length()").value(3));
+                mockMvc.perform(get("/resources.json").param("contain[permission]", "1"))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.body.length()").value(3))
+                                .andExpect(jsonPath("$.body[*].permission.id",
+                                                Matchers.hasSize(3)));
+        }
+
+        @Test
+        void testIndex_WithoutContainPermission_PermissionSerializedAsNull() throws Exception {
+                createResourceWithPermission("NoContain", null, null, Permission.OWNER);
+
+                // PHP contain semantics: without the contain the key is present
+                // but unfilled. Asserted on the RAW body — jsonPath's
+                // doesNotExist() cannot tell "absent" from "explicit null", so it
+                // would pass either way and prove nothing. This pins the shape the
+                // browser extension actually parses (mirrors the favorite field's
+                // documented default-inclusion decision in ResourceDto.Response).
+                mockMvc.perform(get("/resources.json"))
+                                .andExpect(status().isOk())
+                                .andExpect(content().string(Matchers.containsString("\"permission\":null")));
+        }
+
+        @Test
+        void testIndex_FiltersCombine_WithAnd() throws Exception {
+                // is-shared-with-me AND is-favorite AND is-shared-with-group:
+                // PHP accumulates independent where() clauses -> intersection.
+                Group group = createGroup("Team");
+                addMember(group, testUser);
+
+                // The only row satisfying all three.
+                Resource wanted = createResourceWithPermission("Wanted", null, null, Permission.READ);
+                grant(wanted, Permission.GROUP_ARO, group.getId(), Permission.READ);
+                favoriteRepository.save(new Favorite(testUser.getId(), wanted.getId(),
+                                Favorite.FOREIGN_MODEL_RESOURCE));
+
+                // Favorite + group-shared, but OWNED -> fails is-shared-with-me.
+                Resource owned = createResourceWithPermission("OwnedFavorite", null, null, Permission.OWNER);
+                grant(owned, Permission.GROUP_ARO, group.getId(), Permission.READ);
+                favoriteRepository.save(new Favorite(testUser.getId(), owned.getId(),
+                                Favorite.FOREIGN_MODEL_RESOURCE));
+
+                // Shared-with-me + group-shared, but NOT favorite.
+                Resource notFavorite = createResourceWithPermission("NotFavorite", null, null, Permission.READ);
+                grant(notFavorite, Permission.GROUP_ARO, group.getId(), Permission.READ);
+
+                // Shared-with-me + favorite, but NOT shared with the group.
+                Resource notGroupShared = createResourceWithPermission("NotGroupShared", null, null, Permission.READ);
+                favoriteRepository.save(new Favorite(testUser.getId(), notGroupShared.getId(),
+                                Favorite.FOREIGN_MODEL_RESOURCE));
+
+                mockMvc.perform(get("/resources.json")
+                                .param("filter[is-shared-with-me]", "1")
+                                .param("filter[is-favorite]", "true")
+                                .param("filter[is-shared-with-group]", group.getId()))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.body.length()").value(1))
+                                .andExpect(jsonPath("$.body[0].name").value("Wanted"));
+        }
+
+        @Test
+        void testIndex_FilterIsOwnedByMeAndSharedWithMe_AreMutuallyExclusive() throws Exception {
+                // Both at once = owned AND not-owned -> always empty, matching
+                // PHP's two accumulated (IN / NOT IN) clauses on one subquery.
+                createResourceWithPermission("Owned", null, null, Permission.OWNER);
+                createResourceWithPermission("ReadOnly", null, null, Permission.READ);
+
+                mockMvc.perform(get("/resources.json")
+                                .param("filter[is-owned-by-me]", "1")
+                                .param("filter[is-shared-with-me]", "1"))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.body").isArray())
+                                .andExpect(jsonPath("$.body").isEmpty());
+        }
+
+        @Test
+        void testIndex_FiltersNeverWidenAccess() throws Exception {
+                // A resource the caller cannot see must stay invisible no matter
+                // which filter is applied.
+                User other = createUser("other@example.com");
+                Resource foreign = createResourceWithAroPermission("Foreign", Permission.USER_ARO, other.getId(),
+                                Permission.OWNER);
+
+                mockMvc.perform(get("/resources.json").param("filter[is-owned-by-me]", "1"))
+                                .andExpect(jsonPath("$.body").isEmpty());
+                mockMvc.perform(get("/resources.json").param("filter[is-shared-with-me]", "1"))
+                                .andExpect(jsonPath("$.body").isEmpty());
+                mockMvc.perform(get("/resources.json").param("contain[permission]", "1"))
+                                .andExpect(jsonPath("$.body").isEmpty());
+                assertThat(resourceRepository.findById(foreign.getId())).isPresent();
+        }
+
         @Test
         void testGetResource_WithPermission() throws Exception {
                 Resource resource = createResourceWithPermission("My Password", "user1", "https://mysite.com",
@@ -197,9 +627,13 @@ class ResourceControllerTest {
                 resource.setDeleted(false);
                 resourceRepository.save(resource);
 
+                // A caller with no permission must not be able to tell an existing
+                // resource from a nonexistent one (PHP ResourcesViewController only
+                // ever raises NotFound) — 404, never 403.
                 mockMvc.perform(get("/resources/" + resource.getId() + ".json"))
-                                .andExpect(status().isForbidden())
-                                .andExpect(jsonPath("$.header.status").value("error"));
+                                .andExpect(status().isNotFound())
+                                .andExpect(jsonPath("$.header.status").value("error"))
+                                .andExpect(jsonPath("$.header.message").value("The resource does not exist."));
         }
 
         @Test
@@ -323,6 +757,49 @@ class ResourceControllerTest {
         }
 
         @Test
+        void testUpdateResource_WithReadOnlyPermission_Forbidden() throws Exception {
+                Resource resource = createResourceWithPermission("Read Only", null, null, Permission.READ);
+                String body = objectMapper.writeValueAsString(
+                                ResourceDto.UpdateRequest.builder().name("Nope").build());
+
+                // Visible (READ) but not editable → 403, which leaks nothing new.
+                mockMvc.perform(put("/resources/" + resource.getId() + ".json")
+                                .contentType(MediaType.APPLICATION_JSON).content(body))
+                                .andExpect(status().isForbidden())
+                                .andExpect(jsonPath("$.header.message")
+                                                .value("You are not authorized to update this resource."));
+        }
+
+        @Test
+        void testUpdateResource_WithoutAnyPermission_NotFound() throws Exception {
+                // No access at all must be indistinguishable from "does not exist".
+                Resource resource = new Resource();
+                resource.setName("Invisible");
+                resource.setCreatedBy(testUser.getId());
+                resource.setModifiedBy(testUser.getId());
+                resource.setDeleted(false);
+                resourceRepository.save(resource);
+                String body = objectMapper.writeValueAsString(
+                                ResourceDto.UpdateRequest.builder().name("Nope").build());
+
+                mockMvc.perform(put("/resources/" + resource.getId() + ".json")
+                                .contentType(MediaType.APPLICATION_JSON).content(body))
+                                .andExpect(status().isNotFound())
+                                .andExpect(jsonPath("$.header.message").value("The resource does not exist."));
+        }
+
+        @Test
+        void testUpdateResource_MalformedUuid_BadRequest() throws Exception {
+                String body = objectMapper.writeValueAsString(
+                                ResourceDto.UpdateRequest.builder().name("Nope").build());
+                mockMvc.perform(put("/resources/not-a-uuid.json")
+                                .contentType(MediaType.APPLICATION_JSON).content(body))
+                                .andExpect(status().isBadRequest())
+                                .andExpect(jsonPath("$.header.message")
+                                                .value("The resource identifier should be a valid UUID."));
+        }
+
+        @Test
         void testDeleteResource_WithOwnerPermission() throws Exception {
                 Resource resource = createResourceWithPermission("To Delete", null, null, Permission.OWNER);
 
@@ -338,9 +815,51 @@ class ResourceControllerTest {
         void testDeleteResource_WithReadOnlyPermission_Forbidden() throws Exception {
                 Resource resource = createResourceWithPermission("Cannot Delete", null, null, Permission.READ);
 
+                // READ is visible-but-not-deletable: 403 tells them what they already
+                // know (the resource exists), so it leaks nothing.
                 mockMvc.perform(delete("/resources/" + resource.getId() + ".json"))
                                 .andExpect(status().isForbidden())
-                                .andExpect(jsonPath("$.header.status").value("error"));
+                                .andExpect(jsonPath("$.header.status").value("error"))
+                                .andExpect(jsonPath("$.header.message")
+                                                .value("You do not have the permission to delete this resource."));
+        }
+
+        @Test
+        void testDeleteResource_WithUpdatePermission_Succeeds() throws Exception {
+                // PHP ResourcesTable::softDelete asserts Permission::UPDATE, not OWNER.
+                Resource resource = createResourceWithPermission("Deletable By Editor", null, null, Permission.UPDATE);
+
+                mockMvc.perform(delete("/resources/" + resource.getId() + ".json"))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.header.status").value("success"));
+
+                assertThat(resourceRepository.findById(resource.getId()).orElseThrow().getDeleted()).isTrue();
+        }
+
+        @Test
+        void testDeleteResource_WithoutAnyPermission_NotFound() throws Exception {
+                // No access at all: answer as "does not exist" so delete cannot be
+                // used to probe which resource UUIDs are real (PHP _handleDeleteError).
+                Resource resource = new Resource();
+                resource.setName("Invisible");
+                resource.setCreatedBy(testUser.getId());
+                resource.setModifiedBy(testUser.getId());
+                resource.setDeleted(false);
+                resourceRepository.save(resource);
+
+                mockMvc.perform(delete("/resources/" + resource.getId() + ".json"))
+                                .andExpect(status().isNotFound())
+                                .andExpect(jsonPath("$.header.message").value("The resource does not exist."));
+
+                assertThat(resourceRepository.findById(resource.getId()).orElseThrow().getDeleted()).isFalse();
+        }
+
+        @Test
+        void testDeleteResource_MalformedUuid_BadRequest() throws Exception {
+                mockMvc.perform(delete("/resources/not-a-uuid.json"))
+                                .andExpect(status().isBadRequest())
+                                .andExpect(jsonPath("$.header.message")
+                                                .value("The resource identifier should be a valid UUID."));
         }
 
         // =================================================================

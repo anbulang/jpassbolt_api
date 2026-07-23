@@ -107,15 +107,28 @@ class SecretControllerTest {
         // Remove permission
         permissionRepository.deleteAll();
 
+        // No access is answered exactly like "does not exist": a 403 would confirm
+        // to an unauthorized caller that this resource UUID is real.
         mockMvc.perform(get("/secrets/resource/" + testResource.getId()))
-                .andExpect(status().isForbidden())
-                .andExpect(jsonPath("$.header.status").value("error"));
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.header.status").value("error"))
+                .andExpect(jsonPath("$.header.message").value("The secret does not exist."));
     }
 
     @Test
     void testGetSecret_NotFound() throws Exception {
+        // Indistinguishable from the no-permission case above — that is the point.
         mockMvc.perform(get("/secrets/resource/00000000-0000-0000-0000-000000000000"))
-                .andExpect(status().isForbidden()); // No permission = 403
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.header.message").value("The secret does not exist."));
+    }
+
+    @Test
+    void testGetSecret_MalformedUuid_BadRequest() throws Exception {
+        mockMvc.perform(get("/secrets/resource/not-a-uuid"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.header.message")
+                        .value("The resource identifier should be a valid UUID."));
     }
 
     @Test
@@ -145,6 +158,29 @@ class SecretControllerTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(Map.of("data", "new data"))))
                 .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void testUpdateSecret_WithoutAnyPermission_NotFound() throws Exception {
+        // No access at all → 404 (not 403): update must not confirm the
+        // resource exists to a caller who cannot see it.
+        permissionRepository.deleteAll();
+
+        mockMvc.perform(put("/secrets/resource/" + testResource.getId())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(Map.of("data", "new data"))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.header.message").value("The secret does not exist."));
+    }
+
+    @Test
+    void testUpdateSecret_MalformedUuid_BadRequest() throws Exception {
+        mockMvc.perform(put("/secrets/resource/not-a-uuid")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(Map.of("data", "x"))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.header.message")
+                        .value("The resource identifier should be a valid UUID."));
     }
 
     @Test

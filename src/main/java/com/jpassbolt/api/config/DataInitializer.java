@@ -68,9 +68,10 @@ import java.util.UUID;
  * Two ACTIVE users with DISTINCT real keypairs so cross-user sharing can be
  * exercised end-to-end in a real browser:
  * <ul>
- *   <li><b>ada@passbolt.com</b> (admin) — holds the committed dev SERVER key
- *       (login with {@code src/main/resources/gpg/server_private.asc} +
- *       passphrase {@code password});</li>
+ *   <li><b>ada@passbolt.com</b> (admin) — holds her OWN dev keypair, distinct
+ *       from the server identity key (login with
+ *       {@code src/main/resources/gpg/ada_private.asc} + passphrase
+ *       {@code password});</li>
  *   <li><b>betty@passbolt.com</b> (user) — holds the canonical Passbolt test
  *       key (login with the {@code betty_private.key} fixture + passphrase
  *       {@code betty@passbolt.com}); her public key + true fingerprint are
@@ -80,8 +81,8 @@ import java.util.UUID;
  *
  * <p>
  * It also seeds a v5 cross-user metadata demo: an active shared metadata key
- * (the server keypair is reused as the shared metadata key for the demo) with a
- * per-user encrypted private-key copy for BOTH ada and betty, and flips the
+ * (a DEDICATED demo metadata keypair, distinct from the server and user keys)
+ * with a per-user encrypted private-key copy for BOTH ada and betty, and flips the
  * organization metadata-types settings to enable v5 resource creation. With this
  * in place the (already shipped) frontend transparent layer creates v5 resources
  * automatically and both users can decrypt the encrypted metadata. The server
@@ -118,6 +119,7 @@ public class DataInitializer implements CommandLineRunner {
     private final FavoriteRepository favoriteRepository;
     private final OrganizationSettingRepository organizationSettingRepository;
     private final AccountSettingRepository accountSettingRepository;
+    private final SettingsProperties settingsProperties;
 
     /** Canonical Passbolt test key for betty@passbolt.com (40-hex fingerprint). */
     private static final String BETTY_FINGERPRINT = "A754860C3ADE5AB04599025ED3F1FE4BE61D7009";
@@ -177,22 +179,24 @@ public class DataInitializer implements CommandLineRunner {
         adaProfile.setLastName("Lovelace");
         profileRepository.save(adaProfile);
 
-        // Use the server's own public key as the user's GPG key
-        // This way, the server can decrypt the auth nonce during GPG login.
-        // To log in via the browser, paste the server's PRIVATE key file
-        // and use passphrase: "password"
-        String serverPublicKey = gpgService.getServerPublicKey();
-        String fingerprint = gpgService.getServerKeyFingerprint();
-        String keyId = fingerprint.substring(fingerprint.length() - 16);
+        // ada 使用一对【独立的】开发用户钥(ada_public.asc / ada_private.asc),
+        // 与服务器身份钥彻底分离。服务器钥只负责 GpgAuth 服务端身份(stage0 用它
+        // 自己解 nonce),不再充当任何用户/元数据钥——这样在本机以 ada 登录后导出
+        // 备份得到的是 ada 自己的私钥,而不是服务器私钥。
+        // 浏览器/E2E 登录 ada:导入 src/main/resources/gpg/ada_private.asc,passphrase:"password"。
+        String adaPublicKey = readClasspath("classpath:gpg/ada_public.asc");
+        GpgKeyParserService.GpgKeyMetadata adaMeta = gpgKeyParserService.parse(adaPublicKey);
 
         GpgKey gpgKey = new GpgKey();
         gpgKey.setUserId(testUser.getId());
-        gpgKey.setArmoredKey(serverPublicKey);
-        gpgKey.setFingerprint(fingerprint);
-        gpgKey.setKeyId(keyId);
-        gpgKey.setUid("Ada Lovelace <ada@passbolt.com>");
-        gpgKey.setType("RSA");
-        gpgKey.setBits(4096);
+        gpgKey.setArmoredKey(adaPublicKey);
+        gpgKey.setFingerprint(adaMeta.getFingerprint());
+        gpgKey.setKeyId(adaMeta.getKeyId());
+        gpgKey.setUid(adaMeta.getUid());
+        gpgKey.setType(adaMeta.getType());
+        gpgKey.setBits(adaMeta.getBits());
+        gpgKey.setKeyCreated(adaMeta.getKeyCreated());
+        gpgKey.setExpires(adaMeta.getExpires());
         gpgKey.setDeleted(false);
         gpgKeyRepository.save(gpgKey);
 
@@ -212,10 +216,10 @@ public class DataInitializer implements CommandLineRunner {
 
         // NOTE: admin@passbolt.com intentionally has NO gpgkey. The gpgkeys table
         // is not uniquely constrained on fingerprint, and GPGAuth stage-1 looks up
-        // the user BY fingerprint — giving two users the same server key made that
-        // lookup return 2 rows ("Query did not return a unique result"), which
-        // silently broke browser login. ada@passbolt.com is the single server-key
-        // holder (and is an admin), so login is unambiguous. admin@passbolt.com
+        // the user BY fingerprint — giving two users the same key made that lookup
+        // return 2 rows ("Query did not return a unique result"), which silently
+        // broke browser login. Every seeded user now holds a DISTINCT keypair
+        // (ada = ada_*.asc, betty = betty key, …), so no key is shared. admin@passbolt.com
         // remains as a keyless directory entry.
 
         seedResourceTypes();
@@ -273,13 +277,12 @@ public class DataInitializer implements CommandLineRunner {
         regToken.setActive(true);
         authenticationTokenRepository.save(regToken);
 
-        // v5 cross-user metadata demo (shared metadata key + per-user private
+        // v5 cross-user metadata demo (独立的演示元数据钥 + per-user private
         // copies for ada & betty, settings flipped to enable v5).
-        seedV5CrossUserDemo(testUser.getId(), betty.getId(), serverPublicKey,
-                fingerprint, bettyPublicKey);
+        seedV5CrossUserDemo(testUser.getId(), betty.getId(), adaPublicKey, bettyPublicKey);
 
         log.info("=== LOCAL TEST DATA SEEDED ===");
-        log.info("ada@passbolt.com (admin) — login with server_private.asc, passphrase: password");
+        log.info("ada@passbolt.com (admin) — login with ada_private.asc, passphrase: password");
         log.info("betty@passbolt.com (user) — login with betty_private.key, passphrase: betty@passbolt.com");
         log.info("admin@passbolt.com — keyless directory entry");
         log.info("Setup URL: /setup/start/{}/d4c0c497-be4f-47c5-8f50-cb618a4a1d32.json", pending.getId());
@@ -342,10 +345,22 @@ public class DataInitializer implements CommandLineRunner {
         // recovery for this email — with SMTP configured, the link is delivered
         // as real mail.
         if (userRepository.findByUsername("anbulang1@gmail.com").isEmpty()) {
-            User anbulang = createUserWithProfile("anbulang1@gmail.com", userRole.getId(), true,
-                    "Anbulang", "Tester");
-            seedGpgKeyFromClasspath(anbulang.getId(), "classpath:gpg/fixtures/frances_public.asc");
-            log.info("[demo] anbulang1@gmail.com seeded (active, loginable) — recovery E2E: import frances_private.key, passphrase frances@passbolt.com");
+            // The frances fixture key may already belong to another account
+            // (e.g. someone completed setup with it). Seeding it anyway would
+            // create the one-key-two-users ambiguity, so the whole demo user
+            // is skipped — an account without a key would be unusable anyway.
+            String francesFingerprint = gpgKeyParserService
+                    .parse(readClasspath("classpath:gpg/fixtures/frances_public.asc"))
+                    .getFingerprint();
+            if (!gpgKeyRepository.findAllByFingerprint(francesFingerprint).isEmpty()) {
+                log.warn("[demo] skip anbulang1@gmail.com: frances fixture fingerprint {} "
+                        + "is already registered to an existing account", francesFingerprint);
+            } else {
+                User anbulang = createUserWithProfile("anbulang1@gmail.com", userRole.getId(), true,
+                        "Anbulang", "Tester");
+                seedGpgKeyFromClasspath(anbulang.getId(), "classpath:gpg/fixtures/frances_public.asc");
+                log.info("[demo] anbulang1@gmail.com seeded (active, loginable) — recovery E2E: import frances_private.key, passphrase frances@passbolt.com");
+            }
         }
 
         // ② ruth — inactive (setup not finished) + register token: verify the
@@ -428,7 +443,9 @@ public class DataInitializer implements CommandLineRunner {
             String typeId = resourceTypeRepository.findBySlug(ResourceType.SLUG_PASSWORD_AND_DESCRIPTION)
                     .orElseThrow()
                     .getId();
-            String adaPublicKey = gpgService.getServerPublicKey();
+            // ada 现在持有独立开发钥:密文必须加密到 ada 自己的公钥,否则她用
+            // ada_private.asc 登录后无法解出这些演示资源的密码。
+            String adaPublicKey = readClasspath("classpath:gpg/ada_public.asc");
             String bettyPublicKey = readClasspath("classpath:gpg/betty_public.asc");
             String damePublicKey = readClasspath("classpath:gpg/fixtures/dame_public.asc");
 
@@ -441,6 +458,13 @@ public class DataInitializer implements CommandLineRunner {
             String sharedCleartext = secretCleartext("demo-shared-password", "Shared ada -> betty (READ)");
             saveSecret(shared.getId(), adaId, gpgService.encrypt(sharedCleartext, adaPublicKey));
             saveSecret(shared.getId(), betty.getId(), gpgService.encrypt(sharedCleartext, bettyPublicKey));
+            // Every user who can SEE a resource must have a folders_relations row in
+            // their own tree (root = null parent) — the same invariant the real API
+            // upholds (ResourceService.createResource for the creator, PermissionService
+            // for share recipients). Without it the move endpoint 404s
+            // ("The object to move does not exist"). Seed both viewers here.
+            saveFoldersRelation(FoldersRelation.FOREIGN_MODEL_RESOURCE, shared.getId(), adaId, null);
+            saveFoldersRelation(FoldersRelation.FOREIGN_MODEL_RESOURCE, shared.getId(), betty.getId(), null);
 
             // resource 2: ada OWNER, shared UPDATE with the Board group — every
             // member (ada, betty, dame) gets their own encrypted secret copy.
@@ -453,6 +477,10 @@ public class DataInitializer implements CommandLineRunner {
             saveSecret(wiki.getId(), adaId, gpgService.encrypt(wikiCleartext, adaPublicKey));
             saveSecret(wiki.getId(), betty.getId(), gpgService.encrypt(wikiCleartext, bettyPublicKey));
             saveSecret(wiki.getId(), dame.getId(), gpgService.encrypt(wikiCleartext, damePublicKey));
+            // Root folders_relations row for all three group viewers (see note above).
+            saveFoldersRelation(FoldersRelation.FOREIGN_MODEL_RESOURCE, wiki.getId(), adaId, null);
+            saveFoldersRelation(FoldersRelation.FOREIGN_MODEL_RESOURCE, wiki.getId(), betty.getId(), null);
+            saveFoldersRelation(FoldersRelation.FOREIGN_MODEL_RESOURCE, wiki.getId(), dame.getId(), null);
 
             // resource 3: ada-only, filed under Ops > Servers in ada's tree.
             Resource rootPwd = saveResource("Server Root", "root",
@@ -495,8 +523,13 @@ public class DataInitializer implements CommandLineRunner {
             saveOrganizationSetting(MfaService.MFA_PROPERTY, "organization.setting.mfa",
                     writeJson(orgMfa), adaId);
 
-            String provisioningUri = "otpauth://totp/localhost8080:dame%40passbolt.com"
-                    + "?issuer=localhost8080&secret=" + MFA_DEMO_TOTP_SECRET;
+            // Issuer derives from the configured public origin (scheme stripped,
+            // ':' dropped — it is the otpauth label separator), e.g. localhost8090.
+            String totpIssuer = settingsProperties.getFullBaseUrl()
+                    .replaceFirst("^[a-zA-Z][a-zA-Z0-9+.-]*://", "")
+                    .replaceAll("[^A-Za-z0-9.\\-]", "");
+            String provisioningUri = "otpauth://totp/" + totpIssuer + ":dame%40passbolt.com"
+                    + "?issuer=" + totpIssuer + "&secret=" + MFA_DEMO_TOTP_SECRET;
             Map<String, Object> accountMfa = new LinkedHashMap<>();
             accountMfa.put("providers", List.of(MfaService.PROVIDER_TOTP));
             accountMfa.put("totp", Map.of(
@@ -539,6 +572,23 @@ public class DataInitializer implements CommandLineRunner {
     private void seedGpgKeyFromClasspath(String userId, String location) {
         String armoredKey = readClasspath(location);
         GpgKeyParserService.GpgKeyMetadata metadata = gpgKeyParserService.parse(armoredKey);
+        // Fingerprint uniqueness is an application-level invariant (PHP
+        // GpgkeysTable isUnique(['fingerprint']); the official schema has no
+        // DB unique index, so EVERY write path must guard it). SetupService
+        // guards the API path; this guards the seeding path. Without it, a
+        // fixture key already claimed by some account would be seeded onto a
+        // second one and a single private key could then log in as two users.
+        List<GpgKey> existing = gpgKeyRepository.findAllByFingerprint(metadata.getFingerprint());
+        if (!existing.isEmpty()) {
+            boolean ownedBySomeoneElse = existing.stream()
+                    .anyMatch(k -> !userId.equals(k.getUserId()));
+            if (ownedBySomeoneElse) {
+                log.error("[seed] REFUSING to seed {} for user {}: fingerprint {} already "
+                        + "belongs to another account — one key must never map to two users",
+                        location, userId, metadata.getFingerprint());
+            }
+            return; // same-user rows only: idempotent re-run, nothing to do
+        }
         GpgKey key = new GpgKey();
         key.setUserId(userId);
         key.setArmoredKey(armoredKey);
@@ -647,34 +697,41 @@ public class DataInitializer implements CommandLineRunner {
      * Seed the v5 cross-user metadata demo.
      *
      * <p>
-     * For demo simplicity the SERVER keypair is reused as the shared metadata
-     * key: its public half becomes {@code metadata_keys.armored_key}; the
-     * cleartext {@code PASSBOLT_METADATA_PRIVATE_KEY} JSON wraps the server
-     * PRIVATE key (passphrase {@code password}). That JSON is encrypted ONCE PER
-     * USER to their own public key (ada == server key, betty == betty's key) via
+     * A DEDICATED demo metadata keypair (demo_metadata_public.asc /
+     * demo_metadata_private.asc) is used as the shared metadata key — it is
+     * NEITHER the server identity key NOR any user key, so decrypting a shared
+     * metadata private-key copy never leaks the server private key. The demo
+     * key's public half becomes {@code metadata_keys.armored_key}; the cleartext
+     * {@code PASSBOLT_METADATA_PRIVATE_KEY} JSON wraps its PRIVATE half
+     * (passphrase {@code password}). That JSON is encrypted ONCE PER USER to
+     * their own public key (ada -> ada key, betty -> betty key) via
      * {@link GpgService#encrypt} and stored in {@code metadata_private_keys.data}.
-     * Both users can therefore recover the shared private key in-browser (two-hop
-     * decrypt) and read/write v5 metadata. The server never decrypts any of it.
+     * Both users can therefore recover the shared metadata private key in-browser
+     * (two-hop decrypt) and read/write v5 metadata. The server never decrypts any
+     * of it.
      * </p>
      */
-    private void seedV5CrossUserDemo(String adaId, String bettyId, String serverPublicKey,
-            String serverFingerprint, String bettyPublicKey) {
-        // 1. Active shared metadata key (reuse the server public key for the demo).
+    private void seedV5CrossUserDemo(String adaId, String bettyId, String adaPublicKey,
+            String bettyPublicKey) {
+        // 1. Active shared metadata key = 独立的演示元数据钥(非服务器钥、非用户钥)。
+        String metadataPublicKey = readClasspath("classpath:gpg/demo_metadata_public.asc");
+        String metadataFingerprint = gpgKeyParserService.parse(metadataPublicKey).getFingerprint();
+
         MetadataKey metadataKey = new MetadataKey();
-        metadataKey.setFingerprint(serverFingerprint);
-        metadataKey.setArmoredKey(serverPublicKey);
+        metadataKey.setFingerprint(metadataFingerprint);
+        metadataKey.setArmoredKey(metadataPublicKey);
         metadataKey.setCreatedBy(adaId);
         metadataKey.setModifiedBy(adaId);
         metadataKeyRepository.save(metadataKey);
 
         // 2. Cleartext PASSBOLT_METADATA_PRIVATE_KEY blob (the inner armored_key is
-        //    the SHARED metadata PRIVATE key = the server private key here).
-        String serverPrivateKey = readClasspath("classpath:gpg/server_private.asc");
+        //    the SHARED metadata PRIVATE key = the demo metadata private key).
+        String metadataPrivateKey = readClasspath("classpath:gpg/demo_metadata_private.asc");
         Map<String, Object> cleartext = new LinkedHashMap<>();
         cleartext.put("object_type", "PASSBOLT_METADATA_PRIVATE_KEY");
-        cleartext.put("domain", "http://localhost:8080");
-        cleartext.put("fingerprint", serverFingerprint);
-        cleartext.put("armored_key", serverPrivateKey);
+        cleartext.put("domain", settingsProperties.getFullBaseUrl());
+        cleartext.put("fingerprint", metadataFingerprint);
+        cleartext.put("armored_key", metadataPrivateKey);
         cleartext.put("passphrase", "password");
         String cleartextJson;
         try {
@@ -686,7 +743,7 @@ public class DataInitializer implements CommandLineRunner {
         // 3. Per-user encrypted copies (zero-knowledge: encrypt to each user's
         //    public key via Bouncy Castle; the server never keeps the cleartext).
         saveMetadataPrivateKey(metadataKey.getId(), adaId,
-                gpgService.encrypt(cleartextJson, serverPublicKey), adaId);
+                gpgService.encrypt(cleartextJson, adaPublicKey), adaId);
         saveMetadataPrivateKey(metadataKey.getId(), bettyId,
                 gpgService.encrypt(cleartextJson, bettyPublicKey), adaId);
 

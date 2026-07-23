@@ -9,10 +9,13 @@ import com.jpassbolt.api.repository.GpgKeyRepository;
 import com.jpassbolt.api.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.regex.Pattern;
@@ -37,12 +40,23 @@ public class AuthService {
             "^gpgauthv1\\.3\\.0\\|36\\|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\|gpgauthv1\\.3\\.0$",
             Pattern.CASE_INSENSITIVE);
 
+    /** PHP AuthenticationToken::TYPE_LOGIN — the only type stage 2 accepts. */
+    private static final String TOKEN_TYPE_LOGIN = "login";
+
     private final GpgService gpgService;
     private final UserService userService;
     private final GpgKeyRepository gpgKeyRepository;
     private final AuthenticationTokenRepository tokenRepository;
     private final JwtService jwtService;
     private final UserRepository userRepository;
+
+    /**
+     * Login-challenge lifetime. The table has no expiry column: expiry =
+     * created + N (PHP default {@code passbolt.auth.token.login.expiry =
+     * '5 minutes'}, config/default.php:59-61).
+     */
+    @Value("${jpassbolt.auth.login-token-expiry-minutes:5}")
+    private long loginTokenExpiryMinutes;
 
     /**
      * Get the server's public GPG key.
@@ -143,11 +157,23 @@ public class AuthService {
      * Stage 2: Complete authentication.
      * User sends back the decrypted nonce to prove their identity.
      *
-     * @param userTokenResult The decrypted nonce from the user
+     * <p>The nonce alone is NOT a bearer credential — it only proves the
+     * presenter could decrypt what stage 1 encrypted to {@code presenter}'s
+     * public key. The token is therefore looked up scoped to
+     * {@code (uuid, presenter, type=login, active)} and must not have expired,
+     * and the JWT is minted for {@code presenter} — never for the token row's
+     * owner (PHP {@code AuthenticationTokensTable::isValid($uuid, $userId,
+     * TYPE_LOGIN)}). An unscoped {@code findByToken(uuid)} would let anyone
+     * holding ANY of a victim's active token UUIDs — the register and recover
+     * UUIDs travel in plain-text email links — mint the victim's JWT without
+     * ever possessing their private key.
+     *
+     * @param userTokenResult the decrypted nonce from the user
+     * @param presenter       the user identified by the keyid of THIS request
      * @return JWT token on successful authentication
      */
     @Transactional
-    public String loginStage2(String userTokenResult) {
+    public String loginStage2(String userTokenResult, User presenter) {
         // The userTokenResult should be the decrypted nonce in format:
         // gpgauthv1.3.0|36|{UUID}|gpgauthv1.3.0
         String decryptedNonce;
@@ -159,9 +185,12 @@ public class AuthService {
             decryptedNonce = userTokenResult;
         }
 
-        // Validate nonce format
+        // Validate nonce format. NEVER echo decryptedNonce back to the caller:
+        // this value may be the server private key's decryption of ATTACKER-
+        // SUPPLIED ciphertext, so echoing it turns login into a decryption
+        // oracle for anything encrypted to the server key (whitepaper p.25).
         if (!isValidNonce(decryptedNonce)) {
-            throw new PassboltApiException(HttpStatus.BAD_REQUEST, "Invalid nonce format: " + decryptedNonce);
+            throw new PassboltApiException(HttpStatus.BAD_REQUEST, "Invalid nonce format.");
         }
 
         // Extract UUID from nonce
@@ -170,25 +199,34 @@ public class AuthService {
             throw new PassboltApiException(HttpStatus.BAD_REQUEST, "Could not extract UUID from nonce");
         }
 
-        // Find and validate the token
-        AuthenticationToken token = tokenRepository.findByToken(uuid)
-                .orElseThrow(() -> new PassboltApiException(HttpStatus.UNAUTHORIZED, "Token not found: " + uuid));
+        // Scoped lookup: this exact login token, belonging to the presenter,
+        // still active. A recover/register/refresh token of ANY user, or a
+        // login token of a DIFFERENT user, must not authenticate anyone.
+        AuthenticationToken token = tokenRepository
+                .findByTokenAndUserIdAndTypeAndActiveTrue(uuid, presenter.getId(), TOKEN_TYPE_LOGIN)
+                .orElseThrow(() -> new PassboltApiException(HttpStatus.UNAUTHORIZED,
+                        "The authentication token is not valid."));
 
-        if (!token.getActive()) {
-            throw new PassboltApiException(HttpStatus.UNAUTHORIZED, "Token is no longer active");
+        // PHP AuthenticationToken::isExpired — login tokens live 5 minutes.
+        // `created` is written in UTC (BaseEntity.onCreate), so compare in UTC.
+        // Unlike PHP we do NOT flip active=false here: this method is
+        // @Transactional and throwing would roll the write back anyway. An
+        // expired token is inert regardless — every lookup re-checks the window.
+        if (token.getCreated() == null
+                || token.getCreated().isBefore(
+                        LocalDateTime.now(ZoneOffset.UTC).minusMinutes(loginTokenExpiryMinutes))) {
+            throw new PassboltApiException(HttpStatus.UNAUTHORIZED,
+                    "The authentication token is not valid.");
         }
 
-        // Get the user
-        User user = userService.getUserById(token.getUserId());
-
-        // Invalidate the token
+        // Invalidate the token (single use, no replay)
         token.setActive(false);
         tokenRepository.save(token);
 
-        log.info("Stage 2: User {} authenticated successfully", user.getUsername());
+        log.info("Stage 2: User {} authenticated successfully", presenter.getUsername());
 
         // Generate JWT (RS256, sub = user UUID — aligned with the PHP JWT plugin)
-        return jwtService.generateToken(user.getId());
+        return jwtService.generateToken(presenter.getId());
     }
 
     /**
