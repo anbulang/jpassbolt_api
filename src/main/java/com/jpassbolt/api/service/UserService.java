@@ -290,10 +290,11 @@ public class UserService {
             if (!profileErrors.isEmpty()) {
                 errors.put("profile", profileErrors);
             }
-            // NOTE: profile.avatar is accepted but intentionally ignored on
-            // this JSON patch path — avatar file upload/storage is handled by
-            // AvatarController (multipart), not here. Closed boundary, not a
-            // pending task.
+            // NOTE: profile.avatar is accepted but ignored. There is no avatar
+            // upload path anywhere in JPassbolt — AvatarController only serves
+            // GET /avatars/view/{id}/{format} and no MultipartFile handler
+            // exists. The official multipart profile.avatar upload lives in
+            // UsersEditController.php and has not been ported yet.
         }
 
         if (!errors.isEmpty()) {

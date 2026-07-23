@@ -21,6 +21,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
@@ -365,7 +366,8 @@ public class RecoverService {
                 .orElseThrow(() -> new PassboltApiException(HttpStatus.BAD_REQUEST,
                         "The authentication token is not valid."));
         if (token.getCreated() != null
-                && token.getCreated().plusDays(recoverTokenExpiryDays).isBefore(LocalDateTime.now())) {
+                && token.getCreated().plusDays(recoverTokenExpiryDays)
+                        .isBefore(LocalDateTime.now(ZoneOffset.UTC))) {
             throw new PassboltApiException(HttpStatus.BAD_REQUEST,
                     "The authentication token is not valid.");
         }

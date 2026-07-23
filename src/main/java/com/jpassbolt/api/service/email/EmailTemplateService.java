@@ -81,7 +81,7 @@ public class EmailTemplateService {
         }
         // Globals available to every template; do not override a caller-supplied value.
         model.putIfAbsent("appName", appName);
-        model.putIfAbsent("appBaseUrl", baseUrlResolver.resolve());
+        model.putIfAbsent("appBaseUrl", baseUrlResolver.emailBaseUrl());
         context.setVariables(model);
         return emailTemplateEngine.process(templateName, context);
     }
@@ -89,15 +89,16 @@ public class EmailTemplateService {
     /**
      * Build an absolute deep link on the trusted server domain from a path (e.g.
      * {@code "/app/passwords/view/" + id}). Resolved through the SAME
-     * {@link PublicBaseUrlResolver} that {@link MailService} uses, so every email
-     * — recovery and every redactor notification — points at one consistent
-     * origin (request-derived + Host-injection-gated when on a request thread,
-     * else the configured {@code full-base-url}), never the retired SPA URL.
+     * {@link PublicBaseUrlResolver#emailBaseUrl()} that {@link MailService} uses,
+     * so every email — recovery and every redactor notification — points at ONE
+     * deterministic origin (official {@code App.fullBaseUrl} semantics). Redactors
+     * run on the async mail executor with no request context, so request-derived
+     * origins must never be part of this path.
      *
      * @param path an absolute path beginning with {@code /}
-     * @return {@code resolve() + path}; the resolver already trims trailing slashes
+     * @return {@code emailBaseUrl() + path}; the resolver already trims trailing slashes
      */
     public String link(String path) {
-        return baseUrlResolver.resolve() + (path == null ? "" : path);
+        return baseUrlResolver.emailBaseUrl() + (path == null ? "" : path);
     }
 }

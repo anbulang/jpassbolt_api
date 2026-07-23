@@ -56,12 +56,17 @@ public class UserDto {
         private String lastName;
 
         /**
-         * Accepted but ignored on the user edit path — real avatar
-         * upload/storage is owned by AvatarController (multipart upload),
-         * NOT by this JSON profile patch (PHP likewise treats an avatar
-         * object without file as a delete/no-op here). NOTE: intentional
-         * boundary, not a pending task — avatar file handling lives in the
-         * avatars cluster.
+         * Accepted but ignored on the user edit path (PHP likewise treats an
+         * avatar object without a file as a delete/no-op here).
+         *
+         * <p>
+         * NOT YET IMPLEMENTED: JPassbolt has no avatar upload endpoint at all.
+         * AvatarController exposes only GET /avatars/view/{id}/{format}, and no
+         * MultipartFile handler exists anywhere in the codebase. The official
+         * upload is the multipart {@code profile.avatar} field handled by
+         * {@code UsersEditController.php}; porting it is out of scope for now,
+         * so avatars can be read but never created.
+         * </p>
          */
         private Object avatar;
     }

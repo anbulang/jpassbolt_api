@@ -2,14 +2,17 @@ package com.jpassbolt.api.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jpassbolt.api.dto.AuthDto;
+import com.jpassbolt.api.model.AuthenticationToken;
 import com.jpassbolt.api.model.GpgKey;
 import com.jpassbolt.api.model.User;
+import com.jpassbolt.api.repository.AuthenticationTokenRepository;
 import com.jpassbolt.api.repository.GpgKeyRepository;
 import com.jpassbolt.api.repository.ResourceRepository;
 import com.jpassbolt.api.repository.SecretRepository;
 import com.jpassbolt.api.repository.UserRepository;
 import com.jpassbolt.api.service.AuthService;
 import com.jpassbolt.api.service.GpgService;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -62,8 +65,15 @@ class AuthControllerTest {
     @Autowired
     private com.jpassbolt.api.repository.PermissionRepository permissionRepository;
 
+    @Autowired
+    private AuthenticationTokenRepository authenticationTokenRepository;
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+
     @BeforeEach
     void setUp() {
+        authenticationTokenRepository.deleteAll();
         permissionRepository.deleteAll();
         secretRepository.deleteAll();
         resourceRepository.deleteAll();
@@ -240,5 +250,154 @@ class AuthControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(header().string("X-GPGAuth-Error", "true"))
                 .andExpect(jsonPath("$.header.status").value("error"));
+    }
+
+    // ------------------------------------------------------------------
+    // Stage 2 token scoping — regressions for an account-takeover bypass:
+    // findByToken(uuid) used to accept ANY user's token of ANY type and mint a
+    // JWT for the TOKEN's owner, so a victim's register/recover UUID (handed
+    // out in a plain-text email link) authenticated as the victim without ever
+    // possessing their private key.
+    // ------------------------------------------------------------------
+
+    /** Post a stage-2 nonce carrying {@code uuid}, presenting testUser's keyid. */
+    private MvcResult stage2WithNonce(String uuid) throws Exception {
+        AuthDto.LoginRequest request = new AuthDto.LoginRequest();
+        AuthDto.DataWrapper data = new AuthDto.DataWrapper();
+        AuthDto.GpgAuth gpgAuth = new AuthDto.GpgAuth();
+        gpgAuth.setKeyid(testFingerprint);
+        gpgAuth.setUserTokenResult("gpgauthv1.3.0|36|" + uuid + "|gpgauthv1.3.0");
+        data.setGpgAuth(gpgAuth);
+        request.setData(data);
+
+        return mockMvc.perform(post("/auth/login.json")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+                .andExpect(header().string("X-GPGAuth-Authenticated", "false"))
+                .andExpect(header().doesNotExist("Authorization"))
+                .andExpect(jsonPath("$.header.status").value("error"))
+                .andReturn();
+    }
+
+    private User createVictim() {
+        User victim = new User();
+        victim.setUsername("victim@example.com");
+        victim.setRoleId("user");
+        victim.setActive(true);
+        victim.setDeleted(false);
+        return userRepository.save(victim);
+    }
+
+    private AuthenticationToken saveToken(String userId, String type) {
+        AuthenticationToken token = new AuthenticationToken();
+        token.setUserId(userId);
+        token.setToken(java.util.UUID.randomUUID().toString());
+        token.setType(type);
+        token.setActive(true);
+        return authenticationTokenRepository.save(token);
+    }
+
+    @Test
+    void testStage2_VictimsRecoverToken_CannotMintAJwt() throws Exception {
+        // The recover UUID travels in a plain email link. Presenting it with
+        // the ATTACKER's own keyid must not authenticate anyone.
+        User victim = createVictim();
+        AuthenticationToken recoverToken = saveToken(victim.getId(), "recover");
+
+        stage2WithNonce(recoverToken.getToken());
+
+        // and the victim's token is untouched (no silent consumption)
+        assertThat(authenticationTokenRepository.findById(recoverToken.getId())
+                .orElseThrow().getActive()).isTrue();
+    }
+
+    @Test
+    void testStage2_VictimsLoginToken_CannotMintAJwt() throws Exception {
+        // Even a token of the RIGHT type must belong to the presenter.
+        User victim = createVictim();
+        AuthenticationToken victimLogin = saveToken(victim.getId(), "login");
+
+        stage2WithNonce(victimLogin.getToken());
+
+        assertThat(authenticationTokenRepository.findById(victimLogin.getId())
+                .orElseThrow().getActive()).isTrue();
+    }
+
+    @Test
+    void testStage2_OwnRegisterToken_IsNotALoginCredential() throws Exception {
+        // Type scoping: the presenter's OWN register token is not a login token.
+        AuthenticationToken ownRegister = saveToken(testUser.getId(), "register");
+
+        stage2WithNonce(ownRegister.getToken());
+
+        assertThat(authenticationTokenRepository.findById(ownRegister.getId())
+                .orElseThrow().getActive()).isTrue();
+    }
+
+    @Test
+    void testStage2_ExpiredLoginToken_Rejected() throws Exception {
+        // PHP login token expiry = 5 minutes (config/default.php).
+        AuthenticationToken loginToken = saveToken(testUser.getId(), "login");
+        // created is stored in UTC (BaseEntity.onCreate) — age it in UTC too,
+        // or a non-UTC test machine writes a "future" timestamp and nothing expires.
+        jdbcTemplate.update("UPDATE authentication_tokens SET created = ? WHERE id = ?",
+                java.sql.Timestamp.valueOf(
+                        java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).minusMinutes(10)),
+                loginToken.getId());
+
+        // Authentication is refused (asserted inside stage2WithNonce: no JWT).
+        // The row stays active=true — the rejection throws inside the
+        // @Transactional service, so any flag write would be rolled back. An
+        // expired token is inert anyway: the window is re-checked every lookup.
+        stage2WithNonce(loginToken.getToken());
+    }
+
+    @Test
+    void testStage2_NonceReplay_Rejected() throws Exception {
+        // A consumed login token must not authenticate a second time.
+        AuthenticationToken loginToken = saveToken(testUser.getId(), "login");
+        String nonce = "gpgauthv1.3.0|36|" + loginToken.getToken() + "|gpgauthv1.3.0";
+
+        AuthDto.LoginRequest ok = new AuthDto.LoginRequest();
+        AuthDto.DataWrapper okData = new AuthDto.DataWrapper();
+        AuthDto.GpgAuth okAuth = new AuthDto.GpgAuth();
+        okAuth.setKeyid(testFingerprint);
+        okAuth.setUserTokenResult(nonce);
+        okData.setGpgAuth(okAuth);
+        ok.setData(okData);
+
+        mockMvc.perform(post("/auth/login.json")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(ok)))
+                .andExpect(header().string("X-GPGAuth-Authenticated", "true"))
+                .andExpect(header().exists("Authorization"));
+
+        stage2WithNonce(loginToken.getToken()); // replay → error, no JWT
+    }
+
+    @Test
+    void testStage2_MalformedNonce_DoesNotEchoDecryptedPlaintext() throws Exception {
+        // The stage-2 input is decrypted with the SERVER private key before the
+        // format check, so echoing it would make login a decryption oracle for
+        // anything encrypted to the server key (whitepaper p.25).
+        String secret = "TOP-SECRET-SERVER-DECRYPTED-PLAINTEXT";
+        String ciphertext = gpgService.encrypt(secret, gpgService.getServerPublicKey());
+
+        AuthDto.LoginRequest request = new AuthDto.LoginRequest();
+        AuthDto.DataWrapper data = new AuthDto.DataWrapper();
+        AuthDto.GpgAuth gpgAuth = new AuthDto.GpgAuth();
+        gpgAuth.setKeyid(testFingerprint);
+        gpgAuth.setUserTokenResult(ciphertext);
+        data.setGpgAuth(gpgAuth);
+        request.setData(data);
+
+        MvcResult result = mockMvc.perform(post("/auth/login.json")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+                .andExpect(jsonPath("$.header.status").value("error"))
+                .andExpect(header().doesNotExist("Authorization"))
+                .andReturn();
+
+        assertThat(result.getResponse().getContentAsString()).doesNotContain(secret);
     }
 }

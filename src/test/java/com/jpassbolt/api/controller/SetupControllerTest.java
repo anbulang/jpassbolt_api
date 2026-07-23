@@ -67,6 +67,9 @@ class SetupControllerTest {
     private GpgService gpgService;
 
     @Autowired
+    private com.jpassbolt.api.service.GpgKeyParserService gpgKeyParserService;
+
+    @Autowired
     private AuthenticationTokenRepository authenticationTokenRepository;
 
     @Autowired
@@ -142,6 +145,17 @@ class SetupControllerTest {
         return objectMapper.writeValueAsString(Map.of(
                 "authentication_token", Map.of("token", token),
                 "gpgkey", Map.of("armored_key", armoredKey)));
+    }
+
+    /**
+     * A valid NON-server public key for registration: completeSetup now
+     * rejects the server key itself (PHP IsNotServerKeyFingerprintRule), so
+     * success-path tests must register a distinct fixture key.
+     */
+    private String fixtureKey() throws Exception {
+        try (var in = getClass().getResourceAsStream("/gpg/fixtures/frances_public.asc")) {
+            return new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+        }
     }
 
     /**
@@ -241,8 +255,8 @@ class SetupControllerTest {
 
     @Test
     void testComplete_Success_ActivatesUserAndStoresKey() throws Exception {
-        String armoredKey = gpgService.getServerPublicKey();
-        String expectedFingerprint = gpgService.getServerKeyFingerprint();
+        String armoredKey = fixtureKey();
+        String expectedFingerprint = gpgKeyParserService.parse(armoredKey).getFingerprint();
 
         mockMvc.perform(put(completeUrl(pendingUser.getId()))
                 .contentType(MediaType.APPLICATION_JSON)
@@ -268,7 +282,7 @@ class SetupControllerTest {
         // PHP registers PUT|POST on the same path (routes.php L334).
         mockMvc.perform(post(completeUrl(pendingUser.getId()))
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(completePayload(registerToken.getToken(), gpgService.getServerPublicKey())))
+                .content(completePayload(registerToken.getToken(), fixtureKey())))
                 .andExpect(status().isOk());
     }
 
@@ -278,7 +292,7 @@ class SetupControllerTest {
         // "authentication_token".
         String body = objectMapper.writeValueAsString(Map.of(
                 "authenticationtoken", Map.of("token", registerToken.getToken()),
-                "gpgkey", Map.of("armored_key", gpgService.getServerPublicKey())));
+                "gpgkey", Map.of("armored_key", fixtureKey())));
 
         mockMvc.perform(put(completeUrl(pendingUser.getId()))
                 .contentType(MediaType.APPLICATION_JSON)
@@ -347,6 +361,53 @@ class SetupControllerTest {
     @Test
     void testComplete_DuplicateFingerprint_BadRequest() throws Exception {
         // Another (non-deleted) user already registered this fingerprint.
+        seedOtherUserWithFixtureKey(false);
+
+        mockMvc.perform(put(completeUrl(pendingUser.getId()))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(completePayload(registerToken.getToken(), fixtureKey())))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.header.message").value(
+                        "The OpenPGP key fingerprint is already in use."));
+    }
+
+    @Test
+    void testComplete_SoftDeletedFingerprint_BadRequest() throws Exception {
+        // PHP GpgkeysTable isUnique(['fingerprint']) does NOT exclude
+        // soft-deleted rows: a fingerprint once registered is burned forever,
+        // even after its owner was deleted. Regression for the historical
+        // deleted=false-only check that let one key map to two accounts.
+        seedOtherUserWithFixtureKey(true);
+
+        mockMvc.perform(put(completeUrl(pendingUser.getId()))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(completePayload(registerToken.getToken(), fixtureKey())))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.header.message").value(
+                        "The OpenPGP key fingerprint is already in use."));
+
+        // And no second row appeared for that fingerprint.
+        String fingerprint = gpgKeyParserService.parse(fixtureKey()).getFingerprint();
+        assertThat(gpgKeyRepository.findAllByFingerprint(fingerprint)).hasSize(1);
+        assertThat(userRepository.findById(pendingUser.getId()).orElseThrow().getActive()).isFalse();
+    }
+
+    @Test
+    void testComplete_ServerKey_BadRequest() throws Exception {
+        // PHP GpgkeysTable IsNotServerKeyFingerprintRule: a user may never
+        // register the server's own key.
+        mockMvc.perform(put(completeUrl(pendingUser.getId()))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(completePayload(registerToken.getToken(), gpgService.getServerPublicKey())))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.header.message").value(
+                        "You cannot reuse the server keys."));
+
+        assertThat(userRepository.findById(pendingUser.getId()).orElseThrow().getActive()).isFalse();
+    }
+
+    /** Register the frances fixture key on a second account (optionally soft-deleted). */
+    private void seedOtherUserWithFixtureKey(boolean deleted) throws Exception {
         User other = new User();
         other.setUsername("other@example.com");
         other.setRoleId(userRole.getId());
@@ -354,24 +415,18 @@ class SetupControllerTest {
         other.setDeleted(false);
         userRepository.save(other);
 
-        String fingerprint = gpgService.getServerKeyFingerprint();
+        String armored = fixtureKey();
+        var meta = gpgKeyParserService.parse(armored);
         GpgKey existing = new GpgKey();
         existing.setUserId(other.getId());
-        existing.setArmoredKey(gpgService.getServerPublicKey());
+        existing.setArmoredKey(armored);
         existing.setUid("Other <other@example.com>");
-        existing.setKeyId(GpgTestHelper.fingerprintToKeyId(fingerprint));
-        existing.setFingerprint(fingerprint);
-        existing.setType("RSA");
-        existing.setBits(4096);
-        existing.setDeleted(false);
+        existing.setKeyId(meta.getKeyId());
+        existing.setFingerprint(meta.getFingerprint());
+        existing.setType(meta.getType());
+        existing.setBits(meta.getBits());
+        existing.setDeleted(deleted);
         gpgKeyRepository.save(existing);
-
-        mockMvc.perform(put(completeUrl(pendingUser.getId()))
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(completePayload(registerToken.getToken(), gpgService.getServerPublicKey())))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.header.message").value(
-                        "The OpenPGP key fingerprint is already in use."));
     }
 
     @Test

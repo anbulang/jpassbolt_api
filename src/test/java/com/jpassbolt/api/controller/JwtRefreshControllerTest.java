@@ -99,9 +99,17 @@ class JwtRefreshControllerTest {
         AuthenticationToken consumed = tokenRepository.findByToken(oldToken.getToken()).orElseThrow();
         assertThat(consumed.getActive()).isFalse();
 
-        // The rotated refresh token travels back via the Set-Cookie header
+        // The rotated refresh token travels back via the Set-Cookie header.
+        // It is a bearer credential in cookie form: HttpOnly + Secure (always,
+        // matching PHP createHttpOnlySecureCookie) + SameSite=Lax so a
+        // cross-site POST can never silently rotate/steal it.
+        String setCookie = result.getResponse().getHeader("Set-Cookie");
+        assertThat(setCookie).contains("HttpOnly").contains("Secure").contains("SameSite=Lax");
+
         Cookie cookie = result.getResponse().getCookie("refresh_token");
         assertThat(cookie).isNotNull();
+        assertThat(cookie.isHttpOnly()).isTrue();
+        assertThat(cookie.getSecure()).isTrue();
         var newRow = tokenRepository.findByTokenAndType(cookie.getValue(), JwtAuthService.TYPE_REFRESH_TOKEN);
         assertThat(newRow).isPresent();
         assertThat(newRow.get().getActive()).isTrue();

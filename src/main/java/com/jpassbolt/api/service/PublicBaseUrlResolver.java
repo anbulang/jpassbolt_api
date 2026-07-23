@@ -1,6 +1,7 @@
 package com.jpassbolt.api.service;
 
 import com.jpassbolt.api.config.SettingsProperties;
+import com.jpassbolt.api.util.HttpRequestSecurity;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
@@ -66,6 +67,26 @@ public class PublicBaseUrlResolver {
     @Value("${jpassbolt.app.trusted-hosts:}")
     private String trustedHostsCsv;
 
+    /**
+     * Deterministic base URL for OUTBOUND EMAIL links — official
+     * {@code Router::url($path, true)} / {@code App.fullBaseUrl} semantics:
+     * the explicit {@code public-base-url} override when set, else the
+     * configured {@code full-base-url}. The request-derived origin is
+     * deliberately NOT consulted here: notification redactors run on the
+     * async mail executor where no request context exists, and a link must
+     * not depend on which thread happened to send it (the register email
+     * used to silently fall back to a stale default while the recover email
+     * — sent synchronously — picked up the request origin).
+     *
+     * @return scheme://host[:port] with no trailing slash
+     */
+    public String emailBaseUrl() {
+        if (override != null && !override.isBlank()) {
+            return trimTrailingSlash(override.trim());
+        }
+        return trimTrailingSlash(settingsProperties.getFullBaseUrl());
+    }
+
     /** @return scheme://host[:port] with no trailing slash. */
     public String resolve() {
         if (override != null && !override.isBlank()) {
@@ -84,14 +105,14 @@ public class PublicBaseUrlResolver {
             return null;
         }
         HttpServletRequest req = attrs.getRequest();
-        String scheme = safeScheme(req);
+        String scheme = HttpRequestSecurity.safeScheme(req);
 
         String hostname;
         String hostWithPort;
         String forwardedHost = req.getHeader("X-Forwarded-Host");
         if (forwardedHost != null && !forwardedHost.isBlank()) {
             hostWithPort = forwardedHost.split(",")[0].trim();
-            hostname = stripPort(hostWithPort);
+            hostname = HttpRequestSecurity.stripPort(hostWithPort);
         } else {
             hostname = req.getServerName();
             int port = req.getServerPort();
@@ -121,51 +142,16 @@ public class PublicBaseUrlResolver {
         if (host == null || host.isBlank()) {
             return false;
         }
-        String h = host.toLowerCase(Locale.ROOT);
-        // strip an IPv6 bracket form like [::1]
-        if (h.startsWith("[") && h.endsWith("]")) {
-            h = h.substring(1, h.length() - 1);
-        }
+        String h = HttpRequestSecurity.normalizeHost(host);
         if (trustedHosts().contains(h)) {
             return true;
         }
         // Auto-trust ONLY hosts the victim's own browser resolves to ITS OWN
-        // machine, so a link built from them can never reach a remote attacker:
-        //   - the exact loopback names / IPv6 loopback;
-        //   - a strict 127.0.0.0/8 IPv4 LITERAL. NOT startsWith("127."), which
-        //     would trust the attacker-registrable domain "127.0.0.1.evil.example"
-        //     (a real, resolvable public hostname) and poison the recovery link;
-        //   - *.localhost (RFC 6761 forces browsers to resolve it to loopback).
-        // ".local" (mDNS / RFC 6762) is deliberately NOT auto-trusted: it can
-        // resolve to an arbitrary host on the LAN (mDNS spoofing, legacy internal
-        // AD suffixes), so a production box must add it to trusted-hosts explicitly.
-        return h.equals("localhost")
-                || h.equals("::1")
-                || isLoopbackIpv4Literal(h)
-                || h.endsWith(".localhost");
-    }
-
-    /** True iff {@code h} is a dotted-quad 127.0.0.0/8 literal, e.g. 127.0.0.1. */
-    private static boolean isLoopbackIpv4Literal(String h) {
-        String[] parts = h.split("\\.", -1);
-        if (parts.length != 4 || !"127".equals(parts[0])) {
-            return false;
-        }
-        for (String p : parts) {
-            if (p.isEmpty() || p.length() > 3) {
-                return false;
-            }
-            for (int i = 0; i < p.length(); i++) {
-                char c = p.charAt(i);
-                if (c < '0' || c > '9') {   // ASCII-only: reject Unicode digits
-                    return false;
-                }
-            }
-            if (Integer.parseInt(p) > 255) {
-                return false;
-            }
-        }
-        return true;
+        // machine, so a link built from them can never reach a remote attacker.
+        // The exact rule (and why ".local" / a "127." prefix match are refused)
+        // lives in HttpRequestSecurity#isLoopbackHost — the skeleton page's
+        // unsafe-mode banner must agree with it.
+        return HttpRequestSecurity.isLoopbackHost(h);
     }
 
     private Set<String> trustedHosts() {
@@ -179,36 +165,6 @@ public class PublicBaseUrlResolver {
             }
         }
         return out;
-    }
-
-    private static String stripPort(String hostMaybePort) {
-        if (hostMaybePort.startsWith("[")) {
-            // [ipv6]:port — keep through the closing bracket.
-            int close = hostMaybePort.indexOf(']');
-            return close >= 0 ? hostMaybePort.substring(0, close + 1) : hostMaybePort;
-        }
-        int colon = hostMaybePort.indexOf(':');
-        return colon >= 0 ? hostMaybePort.substring(0, colon) : hostMaybePort;
-    }
-
-    /**
-     * Scheme for the outbound link. {@code X-Forwarded-Proto} is attacker
-     * controllable and not validated upstream, so accept ONLY a clean
-     * {@code http}/{@code https} token (the first value of a possibly
-     * comma-joined multi-proxy header); anything else — a spoofed
-     * {@code "javascript:…"} or a malformed {@code "https, http"} — falls back
-     * to the servlet's own scheme. Stops a {@code javascript:} scheme from ever
-     * reaching an email {@code href}.
-     */
-    private static String safeScheme(HttpServletRequest req) {
-        String xfp = req.getHeader("X-Forwarded-Proto");
-        if (xfp != null && !xfp.isBlank()) {
-            String first = xfp.split(",")[0].trim().toLowerCase(Locale.ROOT);
-            if ("http".equals(first) || "https".equals(first)) {
-                return first;
-            }
-        }
-        return "https".equalsIgnoreCase(req.getScheme()) ? "https" : "http";
     }
 
     /** Wrap a bare IPv6 literal in [] for URI authority use; leave anything else as-is. */

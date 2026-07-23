@@ -28,7 +28,7 @@ jpassbolt:
       public-location: classpath:gpg/server_public.asc
       passphrase: password
   settings:
-    full-base-url: http://localhost:8080
+    full-base-url: http://localhost:8090
     edition: ce
     version-number: "5.7.2"
     version-name: "Gnossienne No. 1"

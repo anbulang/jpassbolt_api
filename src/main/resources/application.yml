@@ -1,5 +1,8 @@
 server:
-  port: 8080
+  # 8090 is the canonical local port (the 8080 era predates the dual-context
+  # skeleton pages); override with SERVER_PORT. Keep full-base-url below in
+  # sync — email links and the JWT issuer derive from it, not from the request.
+  port: ${SERVER_PORT:8090}
   # Bind loopback only by default: local dev servers must not be reachable from
   # the network (security-baseline requirement). Production deployments behind
   # a reverse proxy override this with the SERVER_ADDRESS environment variable.
@@ -102,7 +105,11 @@ jpassbolt:
     preferred-key-size: ""
     preferred-key-curve: curve25519_legacy+ed25519_legacy
   settings:
-    full-base-url: http://localhost:8080
+    # The ONE public origin (official App.fullBaseUrl semantics, same env var
+    # name). Every outbound email link is built from this value — deliberately
+    # NOT from the request Host — so async redactor emails and CLI contexts
+    # produce identical links. Changing it invalidates issued RS256 JWTs (iss).
+    full-base-url: ${APP_FULL_BASE_URL:http://localhost:8090}
     edition: ce
     # Web-extension (webapp) version reported by GET /settings.json — the
     # version the plugin checks for its own UI/compatibility. Intentionally

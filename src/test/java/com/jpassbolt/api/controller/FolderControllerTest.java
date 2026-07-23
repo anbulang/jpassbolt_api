@@ -251,6 +251,25 @@ class FolderControllerTest {
                                 .andExpect(jsonPath("$.header.status").value("error"));
         }
 
+        @Test
+        void testFolderEndpoints_MalformedUuid_BadRequest() throws Exception {
+                // The isUuid guard on get/update/delete must reject a malformed id
+                // with 400 before it ever reaches the data layer.
+                String msg = "The folder identifier should be a valid UUID.";
+                mockMvc.perform(get("/folders/not-a-uuid.json"))
+                                .andExpect(status().isBadRequest())
+                                .andExpect(jsonPath("$.header.message").value(msg));
+                mockMvc.perform(put("/folders/not-a-uuid.json")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsString(
+                                                FolderDto.UpdateRequest.builder().name("x").build())))
+                                .andExpect(status().isBadRequest())
+                                .andExpect(jsonPath("$.header.message").value(msg));
+                mockMvc.perform(delete("/folders/not-a-uuid.json"))
+                                .andExpect(status().isBadRequest())
+                                .andExpect(jsonPath("$.header.message").value(msg));
+        }
+
         // ---------------------------------------------------------------
         // POST /folders.json
         // ---------------------------------------------------------------

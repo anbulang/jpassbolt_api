@@ -29,6 +29,15 @@ public class GpgKey extends BaseEntity {
     @Column(name = "key_id", nullable = false, length = 16)
     private String keyId;
 
+    /**
+     * Whole-table unique BY APPLICATION RULE, soft-deleted rows included —
+     * one key pair maps to one account, ever (login verifies the challenge
+     * against the claimed user's stored key, so a duplicate fingerprint would
+     * let one private key authenticate as two users). The official schema has
+     * NO DB unique index here (V162 migration: plain index only) and schema
+     * parity forbids adding one, so EVERY write path must enforce uniqueness
+     * itself: SetupService (API) and DataInitializer (seeding) do.
+     */
     @Column(name = "fingerprint", nullable = false, length = 51)
     private String fingerprint;
 

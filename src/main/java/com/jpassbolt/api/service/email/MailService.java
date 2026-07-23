@@ -91,13 +91,21 @@ public class MailService {
     private String from;
 
     /**
-     * Account recovery: the emailed link opens {domain}/setup/recover/start/{userId}/{token}
-     * on the trusted server domain (request-derived), so the browser extension's content
-     * script attaches and drives the recover flow — official-Passbolt shape.
+     * Account recovery: the emailed link opens
+     * {domain}/setup/recover/start/{userId}/{token}?case={case} on the configured
+     * trusted domain ({@code emailBaseUrl()}, official App.fullBaseUrl semantics),
+     * so the browser extension's content script attaches and drives the recover
+     * flow — official-Passbolt shape (user_recover.php).
      */
     public void sendRecoverEmail(String toEmail, String userId, String token, String recoveryCase) {
         Locale locale = localeFor(userId);
-        String link = clientUrl("/setup/recover/start/" + userId + "/" + token);
+        // Official templates/email/html/AN/user_recover.php appends ?case={case}
+        // (default | lost-passphrase); the plugin picks its recover wording from
+        // it. Controlled vocabulary only — sanitize instead of URL-encoding.
+        String caseParam = (recoveryCase == null || recoveryCase.isBlank())
+                ? "default" : recoveryCase.replaceAll("[^a-z-]", "");
+        String link = clientUrl("/setup/recover/start/" + userId + "/" + token
+                + "?case=" + caseParam);
         String subject = msg("email.recover.subject", locale, toEmail);
         String html = wrap(locale, msg("email.recover.title", locale),
                 "<p>" + msg("email.recover.intro", locale) + "</p>"
@@ -137,7 +145,7 @@ public class MailService {
     }
 
     private String clientUrl(String path) {
-        return baseUrlResolver.resolve() + path;
+        return baseUrlResolver.emailBaseUrl() + path;
     }
 
     private void send(String to, String subject, String html, String logFallback) {

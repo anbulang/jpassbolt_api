@@ -127,6 +127,39 @@ public class ResourceDto {
         // "favorite": null) to match PHP contain semantics — the spec allows it
         // (favorite is not in the resource schema's required list).
         private FavoriteDto.Response favorite;
+
+        // contain[permission]=1 — the current user's HIGHEST permission on this
+        // resource (singular; the plural "permissions" array is a different
+        // contain and not implemented). Kept at Jackson default, mirroring the
+        // favorite decision above: permission is not in the resource schema's
+        // required list, so "permission": null is spec-legal.
+        private PermissionResponse permission;
+    }
+
+    /**
+     * OpenAPI permissionIndexAndView — the 8 required fields, transport only.
+     * Deliberately duplicated from FolderDto.PermissionResponse rather than
+     * shared: DTOs stay partitioned per endpoint domain in this codebase.
+     */
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class PermissionResponse {
+        private String id;
+        private String aco;
+
+        @JsonProperty("aco_foreign_key")
+        private String acoForeignKey;
+
+        private String aro;
+
+        @JsonProperty("aro_foreign_key")
+        private String aroForeignKey;
+
+        private Integer type;
+        private LocalDateTime created;
+        private LocalDateTime modified;
     }
 
     @Data

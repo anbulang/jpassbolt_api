@@ -68,7 +68,10 @@ public class UserRegisterEmailRedactor {
         boolean hasAdmin = adminName != null && !adminName.isBlank();
         String firstName = (event.firstName() == null || event.firstName().isBlank())
                 ? to.fullName() : event.firstName();
-        String link = templates.link("/setup/" + event.userId() + "/" + event.token());
+        // Official invite shape (RegisterUserCommand.php:271, user_register_admin.php):
+        // /setup/start/{userId}/{token} — the extension's guest-path matcher and the
+        // official plugin both require the "start" segment.
+        String link = templates.link("/setup/start/" + event.userId() + "/" + event.token());
 
         delivery.deliver(List.of(to), recipient -> {
             Map<String, Object> vars = new HashMap<>();

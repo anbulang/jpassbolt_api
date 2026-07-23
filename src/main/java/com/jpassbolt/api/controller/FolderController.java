@@ -47,11 +47,19 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class FolderController {
 
+    /** Path identifiers must be well-formed UUIDs before they reach the data layer. */
+    private static final java.util.regex.Pattern UUID_PATTERN = java.util.regex.Pattern.compile(
+            "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$");
+
     private final FolderService folderService;
     private final FoldersRelationRepository foldersRelationRepository;
     private final PermissionRepository permissionRepository;
     private final ResourceRepository resourceRepository;
     private final UserRepository userRepository;
+
+    private static boolean isUuid(String value) {
+        return value != null && UUID_PATTERN.matcher(value).matches();
+    }
 
     /**
      * GET /folders.json
@@ -99,6 +107,11 @@ public class FolderController {
         String userId = getCurrentUserId();
         String url = "/folders/" + id + ".json";
 
+        if (!isUuid(id)) {
+            return ResponseEntity.badRequest()
+                    .body(createResponse("error", "The folder identifier should be a valid UUID.", null, url));
+        }
+
         if (!folderService.userHasFolderAccess(id, userId, Permission.READ)) {
             return ResponseEntity.status(404)
                     .body(createResponse("error", "The folder does not exist.", null, url));
@@ -138,6 +151,11 @@ public class FolderController {
             @PathVariable String id,
             @RequestBody FolderDto.UpdateRequest request) {
         String userId = getCurrentUserId();
+        if (!isUuid(id)) {
+            return ResponseEntity.badRequest()
+                    .body(createResponse("error", "The folder identifier should be a valid UUID.", null,
+                            "/folders/" + id + ".json"));
+        }
         Folder folder = folderService.updateFolder(id, request, userId);
         return ResponseEntity.ok(createResponse("success", "The folder has been updated successfully.",
                 toResponseDto(folder, userId, false, false, false), "/folders/" + id + ".json"));
@@ -153,6 +171,11 @@ public class FolderController {
             @PathVariable String id,
             @RequestParam(name = "cascade", required = false) String cascade) {
         String userId = getCurrentUserId();
+        if (!isUuid(id)) {
+            return ResponseEntity.badRequest()
+                    .body(createResponse("error", "The folder identifier should be a valid UUID.", null,
+                            "/folders/" + id + ".json"));
+        }
         boolean cascadeFlag = "1".equals(cascade) || "true".equalsIgnoreCase(cascade);
         folderService.deleteFolder(id, cascadeFlag, userId);
         // PHP FoldersDeleteController returns $this->success() with no data, i.e.

@@ -22,10 +22,15 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.Comparator;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.function.BinaryOperator;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
@@ -42,34 +47,135 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class ResourceController {
 
+        /** Path identifiers must be well-formed UUIDs before they reach the data layer. */
+        private static final java.util.regex.Pattern UUID_PATTERN = java.util.regex.Pattern.compile(
+                        "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$");
+
         private final ResourceService resourceService;
         private final FavoriteService favoriteService;
         private final UserRepository userRepository;
         private final PermissionRepository permissionRepository;
         private final SecretAccessService secretAccessService;
 
+        private static boolean isUuid(String value) {
+                return value != null && UUID_PATTERN.matcher(value).matches();
+        }
+
         /**
          * GET /resources.json
-         * Returns all non-deleted resources the current user has READ access to.
-         * Supports filter[is-favorite] (OpenAPI filterIsFavorite) and
-         * contain[favorite] (OpenAPI containFavorite, enum [0,1]).
+         * Returns all non-deleted resources the current user has READ access to
+         * (directly or through a group). Supports the OpenAPI-declared filters
+         * filter[is-favorite], filter[is-owned-by-me], filter[is-shared-with-me],
+         * filter[is-shared-with-group] and the contains contain[favorite],
+         * contain[permission] (both integer enum [0,1]).
+         *
+         * <p>
+         * Filters compose with AND, exactly as PHP accumulates independent
+         * where() clauses in ResourcesFindersTrait::findIndex. The accessible
+         * set (READ and up, group-inclusive) is always the base — every filter
+         * only ever narrows it, so none of them can widen access.
+         * </p>
          */
         @GetMapping({ "/resources", "/resources.json" })
         public ResponseEntity<Map<String, Object>> getAllResources(
                         @RequestParam(name = "filter[is-favorite]", required = false) Boolean isFavorite,
-                        @RequestParam(name = "contain[favorite]", required = false) Integer containFavorite) {
+                        @RequestParam(name = "filter[is-owned-by-me]", required = false) Boolean isOwnedByMe,
+                        @RequestParam(name = "filter[is-shared-with-me]", required = false) Boolean isSharedWithMe,
+                        @RequestParam(name = "filter[is-shared-with-group]", required = false) String isSharedWithGroup,
+                        @RequestParam(name = "contain[favorite]", required = false) Integer containFavorite,
+                        @RequestParam(name = "contain[permission]", required = false) Integer containPermission) {
                 String userId = getCurrentUserId();
+
+                // PHP QueryStringComponent::validateFilterGroup rejects a
+                // non-UUID group id before the finder ever runs; the message is
+                // assembled by validateQueryItems as 'Invalid filter. ' + the
+                // CakeException text. Mirrored verbatim.
+                if (isSharedWithGroup != null && !isUuid(isSharedWithGroup)) {
+                        return ResponseEntity.badRequest()
+                                        .body(createResponse("error", "Invalid filter. \"" + isSharedWithGroup
+                                                        + "\" is not a valid group id for filter is-shared-with-group.",
+                                                        null, "/resources.json"));
+                }
+
                 List<Resource> resources = resourceService.getAccessibleResources(userId);
 
-                Map<String, Favorite> favMap = (Boolean.TRUE.equals(isFavorite)
+                Map<String, Favorite> favMap = (isFavorite != null
                                 || Integer.valueOf(1).equals(containFavorite))
                                                 ? favoriteService.getFavoritesByResourceId(userId)
                                                 : Map.of();
-                if (Boolean.TRUE.equals(isFavorite)) {
+                // Value-tested, unlike the two below: PHP guards this with
+                // isset() but then branches on the VALUE — `=1` keeps only
+                // favorites (innerJoinWith('Favorites')), `=0` EXCLUDES them
+                // (notMatching('Favorites')). Omitting the parameter is the
+                // only way not to filter. Both directions merely narrow the
+                // accessible set, so neither can widen access.
+                if (isFavorite != null) {
+                        final boolean keepFavorites = isFavorite;
                         resources = resources.stream()
-                                        .filter(r -> favMap.containsKey(r.getId()))
+                                        .filter(r -> favMap.containsKey(r.getId()) == keepFavorites)
                                         .collect(Collectors.toList());
                 }
+
+                // is-owned-by-me / is-shared-with-me are exact complements over
+                // the same owner set, so ONE query feeds both.
+                //
+                // Presence-, not value-tested on purpose: PHP guards these two
+                // with isset($options['filter']['is-owned-by-me']), and isset()
+                // is true for a literal false — QueryStringComponent has already
+                // normalised the raw string to a real boolean by then. So
+                // `?filter[is-owned-by-me]=0` applies the filter identically to
+                // `=1` upstream. (Contrast filter[is-favorite] just above, which
+                // PHP value-tests: there =0 means "exclude favorites".) The
+                // official plugin only ever sends =1, so this quirk is
+                // unobservable in practice — but we match the reference rather
+                // than the more intuitive reading.
+                if (isOwnedByMe != null || isSharedWithMe != null) {
+                        // findAccessibleResourceIdsIncludingGroups(_, OWNER) is
+                        // exactly PHP findAcosByAroIsOwner(checkGroupsUsers=true):
+                        // its `type >= OWNER` and PHP's `type = OWNER` coincide
+                        // because OWNER(15) is the top of the 1/7/15 ladder.
+                        // Ownership here is a permission fact, unrelated to
+                        // created_by, and it counts groups the user belongs to.
+                        Set<String> ownedIds = new HashSet<>(permissionRepository
+                                        .findAccessibleResourceIdsIncludingGroups(userId, Permission.OWNER));
+                        if (isOwnedByMe != null) {
+                                resources = resources.stream()
+                                                .filter(r -> ownedIds.contains(r.getId()))
+                                                .collect(Collectors.toList());
+                        }
+                        if (isSharedWithMe != null) {
+                                // "Accessible AND not owner (directly or via a
+                                // group)" — PHP _filterQuerySharedWithUser is a
+                                // bare NOT IN over the same owner subquery, with
+                                // the base accessible filter supplying the
+                                // "accessible" half.
+                                resources = resources.stream()
+                                                .filter(r -> !ownedIds.contains(r.getId()))
+                                                .collect(Collectors.toList());
+                        }
+                }
+
+                if (isSharedWithGroup != null) {
+                        // Group's own permission rows, any type, group NOT
+                        // expanded to members (see findResourceIdsSharedWithAro).
+                        // No membership check exists in PHP either: intersecting
+                        // with the caller's accessible base set is what keeps an
+                        // arbitrary group id from leaking anything.
+                        Set<String> sharedWithGroupIds = new HashSet<>(
+                                        permissionRepository.findResourceIdsSharedWithAro(isSharedWithGroup));
+                        resources = resources.stream()
+                                        .filter(r -> sharedWithGroupIds.contains(r.getId()))
+                                        .collect(Collectors.toList());
+                }
+
+                // contain[permission] resolves AFTER filtering so the lookup only
+                // covers rows that will actually be rendered. Unlike PHP — where
+                // the contain doubles as an INNER-join access filter — this can
+                // never add or drop a row: the base set is already READ-and-up,
+                // which spans every permission level.
+                final Map<String, Permission> highestPermissions = Integer.valueOf(1).equals(containPermission)
+                                ? findHighestPermissions(userId, resources)
+                                : Map.of();
 
                 List<ResourceDto.Response> responseList = resources.stream()
                                 .map(r -> {
@@ -88,12 +194,51 @@ public class ResourceController {
                                                                         .build());
                                                 }
                                         }
+                                        if (Integer.valueOf(1).equals(containPermission)) {
+                                                Permission p = highestPermissions.get(r.getId());
+                                                if (p != null) {
+                                                        dto.setPermission(toPermissionDto(p));
+                                                }
+                                        }
                                         return dto;
                                 })
                                 .collect(Collectors.toList());
 
                 return ResponseEntity.ok(createResponse("success", "The operation was successful.",
                                 responseList, "/resources.json"));
+        }
+
+        /**
+         * The caller's highest permission per resource — PHP
+         * findHighestByAcoAndAro (ORDER BY type DESC LIMIT 1) batched into a
+         * single query. The winner may be a 'Group' row when a group grants more
+         * than the user's own row. Ties (same type from two AROs) are unordered
+         * in PHP too, so no tie-break is invented here.
+         */
+        private Map<String, Permission> findHighestPermissions(String userId, List<Resource> resources) {
+                if (resources.isEmpty()) {
+                        // JPQL `IN :emptyCollection` is not portable — short-circuit.
+                        return Map.of();
+                }
+                List<String> resourceIds = resources.stream()
+                                .map(Resource::getId)
+                                .collect(Collectors.toList());
+                return permissionRepository.findUserAndGroupPermissionsForResources(userId, resourceIds).stream()
+                                .collect(Collectors.toMap(Permission::getAcoForeignKey, Function.identity(),
+                                                BinaryOperator.maxBy(Comparator.comparingInt(Permission::getType))));
+        }
+
+        private ResourceDto.PermissionResponse toPermissionDto(Permission permission) {
+                return ResourceDto.PermissionResponse.builder()
+                                .id(permission.getId())
+                                .aco(permission.getAco())
+                                .acoForeignKey(permission.getAcoForeignKey())
+                                .aro(permission.getAro())
+                                .aroForeignKey(permission.getAroForeignKey())
+                                .type(permission.getType())
+                                .created(permission.getCreated())
+                                .modified(permission.getModified())
+                                .build();
         }
 
         /**
@@ -104,10 +249,18 @@ public class ResourceController {
         public ResponseEntity<Map<String, Object>> getResource(@PathVariable String id) {
                 String userId = getCurrentUserId();
 
-                // Check READ permission
+                if (!isUuid(id)) {
+                        return ResponseEntity.badRequest()
+                                        .body(createResponse("error", "The resource identifier should be a valid UUID.",
+                                                        null, "/resources/" + id + ".json"));
+                }
+
+                // No READ access answers exactly like "does not exist" — PHP
+                // ResourcesViewController throws only NotFoundException, so a 403
+                // here would let anyone probe which resource UUIDs are real.
                 if (!permissionRepository.userHasAccessIncludingGroups(id, userId, Permission.READ)) {
-                        return ResponseEntity.status(403)
-                                        .body(createResponse("error", "You are not authorized to access this resource.",
+                        return ResponseEntity.status(404)
+                                        .body(createResponse("error", "The resource does not exist.",
                                                         null, "/resources/" + id + ".json"));
                 }
 
@@ -127,7 +280,7 @@ public class ResourceController {
                                                                         response, "/resources/" + id + ".json"));
                                 })
                                 .orElse(ResponseEntity.status(404)
-                                                .body(createResponse("error", "Resource not found.", null,
+                                                .body(createResponse("error", "The resource does not exist.", null,
                                                                 "/resources/" + id + ".json")));
         }
 
@@ -168,11 +321,24 @@ public class ResourceController {
                         @RequestBody ResourceDto.UpdateRequest request) {
                 String userId = getCurrentUserId();
 
-                // Check UPDATE permission
-                if (!permissionRepository.userHasAccessIncludingGroups(id, userId, Permission.UPDATE)) {
-                        return ResponseEntity.status(403)
-                                        .body(createResponse("error", "You are not authorized to update this resource.",
+                if (!isUuid(id)) {
+                        return ResponseEntity.badRequest()
+                                        .body(createResponse("error", "The resource identifier should be a valid UUID.",
                                                         null, "/resources/" + id + ".json"));
+                }
+
+                // Same 403/404 split as delete: a caller with no access at all must
+                // not learn whether the resource exists.
+                if (!permissionRepository.userHasAccessIncludingGroups(id, userId, Permission.UPDATE)) {
+                        if (permissionRepository.userHasAccessIncludingGroups(id, userId, Permission.READ)) {
+                                return ResponseEntity.status(403)
+                                                .body(createResponse("error",
+                                                                "You are not authorized to update this resource.",
+                                                                null, "/resources/" + id + ".json"));
+                        }
+                        return ResponseEntity.status(404)
+                                        .body(createResponse("error", "The resource does not exist.", null,
+                                                        "/resources/" + id + ".json"));
                 }
 
                 return resourceService.updateResource(id, request, userId)
@@ -182,7 +348,7 @@ public class ResourceController {
                                                         response, "/resources/" + id + ".json"));
                                 })
                                 .orElse(ResponseEntity.status(404)
-                                                .body(createResponse("error", "Resource not found.", null,
+                                                .body(createResponse("error", "The resource does not exist.", null,
                                                                 "/resources/" + id + ".json")));
         }
 
@@ -194,11 +360,27 @@ public class ResourceController {
         public ResponseEntity<Map<String, Object>> deleteResource(@PathVariable String id) {
                 String userId = getCurrentUserId();
 
-                // Check OWNER permission
-                if (!permissionRepository.userHasAccessIncludingGroups(id, userId, Permission.OWNER)) {
-                        return ResponseEntity.status(403)
-                                        .body(createResponse("error", "You are not authorized to delete this resource.",
+                if (!isUuid(id)) {
+                        return ResponseEntity.badRequest()
+                                        .body(createResponse("error", "The resource identifier should be a valid UUID.",
                                                         null, "/resources/" + id + ".json"));
+                }
+
+                // Deleting needs UPDATE, not OWNER (PHP ResourcesTable::softDelete
+                // asserts Permission::UPDATE). When the caller falls short, PHP
+                // ResourcesDeleteController::_handleDeleteError splits the answer:
+                // any access at all -> 403, none -> 404, so a bare 403 would leak
+                // the existence of resources the caller cannot see.
+                if (!permissionRepository.userHasAccessIncludingGroups(id, userId, Permission.UPDATE)) {
+                        if (permissionRepository.userHasAccessIncludingGroups(id, userId, Permission.READ)) {
+                                return ResponseEntity.status(403)
+                                                .body(createResponse("error",
+                                                                "You do not have the permission to delete this resource.",
+                                                                null, "/resources/" + id + ".json"));
+                        }
+                        return ResponseEntity.status(404)
+                                        .body(createResponse("error", "The resource does not exist.", null,
+                                                        "/resources/" + id + ".json"));
                 }
 
                 boolean deleted = resourceService.deleteResource(id, userId);
@@ -207,7 +389,7 @@ public class ResourceController {
                                         null, "/resources/" + id + ".json"));
                 } else {
                         return ResponseEntity.status(404)
-                                        .body(createResponse("error", "Resource not found.", null,
+                                        .body(createResponse("error", "The resource does not exist.", null,
                                                         "/resources/" + id + ".json"));
                 }
         }

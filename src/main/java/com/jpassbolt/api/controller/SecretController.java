@@ -31,10 +31,18 @@ import java.util.Optional;
 @RequiredArgsConstructor
 public class SecretController {
 
+        /** Path identifiers must be well-formed UUIDs before they reach the data layer. */
+        private static final java.util.regex.Pattern UUID_PATTERN = java.util.regex.Pattern.compile(
+                        "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$");
+
         private final SecretRepository secretRepository;
         private final UserRepository userRepository;
         private final PermissionRepository permissionRepository;
         private final SecretAccessService secretAccessService;
+
+        private static boolean isUuid(String value) {
+                return value != null && UUID_PATTERN.matcher(value).matches();
+        }
 
         /**
          * GET /secrets/resource/{resourceId}.json
@@ -44,10 +52,18 @@ public class SecretController {
         public ResponseEntity<Map<String, Object>> getSecretByResource(@PathVariable String resourceId) {
                 String userId = getCurrentUserId();
 
-                // Check READ permission
+                if (!isUuid(resourceId)) {
+                        return ResponseEntity.badRequest()
+                                        .body(createResponse("error", "The resource identifier should be a valid UUID.",
+                                                        null, "/secrets/resource/" + resourceId + ".json"));
+                }
+
+                // No READ access is answered as "does not exist" (PHP
+                // SecretsViewController raises NotFound): a 403 would confirm the
+                // resource is real to a caller who cannot see it.
                 if (!permissionRepository.userHasAccessIncludingGroups(resourceId, userId, Permission.READ)) {
-                        return ResponseEntity.status(403)
-                                        .body(createResponse("error", "You are not authorized to access this secret.",
+                        return ResponseEntity.status(404)
+                                        .body(createResponse("error", "The secret does not exist.",
                                                         null, "/secrets/resource/" + resourceId + ".json"));
                 }
 
@@ -87,10 +103,23 @@ public class SecretController {
                         @RequestBody Map<String, String> request) {
                 String userId = getCurrentUserId();
 
-                // Check UPDATE permission
+                if (!isUuid(resourceId)) {
+                        return ResponseEntity.badRequest()
+                                        .body(createResponse("error", "The resource identifier should be a valid UUID.",
+                                                        null, "/secrets/resource/" + resourceId + ".json"));
+                }
+
+                // 403 only for callers who can already see the resource; otherwise
+                // 404, so update cannot be used to probe for existence either.
                 if (!permissionRepository.userHasAccessIncludingGroups(resourceId, userId, Permission.UPDATE)) {
-                        return ResponseEntity.status(403)
-                                        .body(createResponse("error", "You are not authorized to update this secret.",
+                        if (permissionRepository.userHasAccessIncludingGroups(resourceId, userId, Permission.READ)) {
+                                return ResponseEntity.status(403)
+                                                .body(createResponse("error",
+                                                                "You are not authorized to update this secret.",
+                                                                null, "/secrets/resource/" + resourceId + ".json"));
+                        }
+                        return ResponseEntity.status(404)
+                                        .body(createResponse("error", "The secret does not exist.",
                                                         null, "/secrets/resource/" + resourceId + ".json"));
                 }
 

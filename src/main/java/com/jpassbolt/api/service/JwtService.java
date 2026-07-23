@@ -71,7 +71,7 @@ public class JwtService {
     private boolean allowEphemeralDevKey;
 
     /** iss claim — PHP Router::url('/', true). Reuses the settings cluster's full-base-url. */
-    @Value("${jpassbolt.settings.full-base-url:http://localhost:8080}")
+    @Value("${jpassbolt.settings.full-base-url:http://localhost:8090}")
     private String fullBaseUrl;
 
     private RSAPrivateKey privateKey;

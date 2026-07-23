@@ -65,6 +65,16 @@ public class JwtAuthController {
     /** PHP RefreshTokenAbstractService::REFRESH_TOKEN_COOKIE */
     private static final String REFRESH_TOKEN_COOKIE = "refresh_token";
 
+    /**
+     * The refresh token is a bearer credential in cookie form, so it must not
+     * ride along on a cross-site request. Lax (not Strict) because the cookie
+     * is also read on a top-level navigation back into the app after an email
+     * link, and Lax already blocks the only dangerous shape — a cross-site POST
+     * to /auth/jwt/refresh.json. Set and cleared identically so the expiry
+     * actually overwrites the live cookie.
+     */
+    private static final String REFRESH_TOKEN_SAME_SITE = "Lax";
+
     private final JwtAuthService jwtAuthService;
     private final JwtService jwtService;
     private final UserRepository userRepository;
@@ -112,12 +122,14 @@ public class JwtAuthController {
             result = jwtAuthService.refreshWithCookie(cookieToken);
         }
 
-        // Secure + HttpOnly matches PHP createHttpOnlySecureCookie. Over
-        // plain http (local dev) browsers will not send it back — the
-        // payload mode (user_id + refresh_token in body) is unaffected.
+        // Secure + HttpOnly matches PHP createHttpOnlySecureCookie (which is
+        // unconditionally secure, unlike the MFA cookie). Over plain http (local
+        // dev) browsers will not send it back — the payload mode (user_id +
+        // refresh_token in body) is unaffected.
         ResponseCookie cookie = ResponseCookie.from(REFRESH_TOKEN_COOKIE, result.refreshToken())
                 .httpOnly(true)
                 .secure(true)
+                .sameSite(REFRESH_TOKEN_SAME_SITE)
                 .path("/")
                 .maxAge(Duration.ofDays(result.refreshTokenExpiryDays()))
                 .build();
@@ -153,10 +165,13 @@ public class JwtAuthController {
 
         jwtAuthService.logout(userId, refreshToken);
 
-        // Remove the refresh token cookie (PHP removeRefreshTokenFromCookies)
+        // Remove the refresh token cookie (PHP removeRefreshTokenFromCookies).
+        // Attributes must mirror the ones used when setting it, or some browsers
+        // refuse to overwrite the existing cookie.
         ResponseCookie expired = ResponseCookie.from(REFRESH_TOKEN_COOKIE, "")
                 .httpOnly(true)
                 .secure(true)
+                .sameSite(REFRESH_TOKEN_SAME_SITE)
                 .path("/")
                 .maxAge(0)
                 .build();

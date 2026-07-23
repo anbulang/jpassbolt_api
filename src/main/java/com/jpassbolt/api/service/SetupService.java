@@ -16,6 +16,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.regex.Pattern;
 
 /**
@@ -45,6 +46,7 @@ public class SetupService {
     private final AuthenticationTokenRepository authenticationTokenRepository;
     private final GpgKeyRepository gpgKeyRepository;
     private final GpgKeyParserService gpgKeyParserService;
+    private final GpgService gpgService;
 
     /**
      * Register token lifetime in days. The authentication_tokens table has
@@ -113,10 +115,21 @@ public class SetupService {
             throw new PassboltApiException(HttpStatus.BAD_REQUEST, e.getMessage());
         }
 
-        // Fingerprint must be unique among non-deleted keys, otherwise two
-        // users would share one key and GpgAuth stage 1 (lookup by
-        // fingerprint) becomes ambiguous.
-        if (gpgKeyRepository.findByFingerprintAndDeletedFalse(metadata.getFingerprint()).isPresent()) {
+        // PHP GpgkeysTable::buildRules IsNotServerKeyFingerprintRule: a user
+        // may never register the server's own key.
+        String serverFingerprint = gpgService.getServerKeyFingerprint();
+        if (serverFingerprint != null
+                && serverFingerprint.equalsIgnoreCase(metadata.getFingerprint())) {
+            throw new PassboltApiException(HttpStatus.BAD_REQUEST,
+                    "You cannot reuse the server keys.");
+        }
+
+        // PHP GpgkeysTable::buildRules isUnique(['fingerprint']): whole-table
+        // uniqueness, soft-deleted rows INCLUDED. One key = one account, ever;
+        // otherwise two users would share one key — the same private key could
+        // log in as both (JWT login verifies against the claimed user's stored
+        // key) and GpgAuth stage 1 (lookup by fingerprint) becomes ambiguous.
+        if (gpgKeyRepository.existsByFingerprint(metadata.getFingerprint())) {
             throw new PassboltApiException(HttpStatus.BAD_REQUEST,
                     "The OpenPGP key fingerprint is already in use.");
         }
@@ -189,7 +202,8 @@ public class SetupService {
                 .orElseThrow(() -> new PassboltApiException(HttpStatus.BAD_REQUEST,
                         "The authentication token is not valid."));
         if (token.getCreated() != null
-                && token.getCreated().plusDays(registerTokenExpiryDays).isBefore(LocalDateTime.now())) {
+                && token.getCreated().plusDays(registerTokenExpiryDays)
+                        .isBefore(LocalDateTime.now(ZoneOffset.UTC))) {
             throw new PassboltApiException(HttpStatus.BAD_REQUEST,
                     "The authentication token is not valid.");
         }

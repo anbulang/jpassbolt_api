@@ -135,9 +135,15 @@ public class SetupControllerContractTest extends OpenApiComplianceTest {
 
     @Test
     public void testSetupCompleteContract() throws Exception {
+        // A distinct fixture key — completeSetup rejects the server key itself
+        // (IsNotServerKeyFingerprintRule) since the one-key-two-users fix.
+        String armoredKey;
+        try (var in = getClass().getResourceAsStream("/gpg/fixtures/frances_public.asc")) {
+            armoredKey = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+        }
         String body = objectMapper.writeValueAsString(Map.of(
                 "authentication_token", Map.of("token", registerToken.getToken()),
-                "gpgkey", Map.of("armored_key", gpgService.getServerPublicKey())));
+                "gpgkey", Map.of("armored_key", armoredKey)));
 
         mockMvc.perform(put("/setup/complete/" + pendingUser.getId() + ".json")
                 .contentType(MediaType.APPLICATION_JSON)

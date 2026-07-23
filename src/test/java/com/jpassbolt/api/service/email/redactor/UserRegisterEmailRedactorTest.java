@@ -99,7 +99,7 @@ class UserRegisterEmailRedactorTest {
         assertThat(message.recipient()).isEqualTo("newbie@passbolt.com");
         assertThat(message.subject()).isEqualTo("欢迎使用 JPassbolt，New！");
         assertThat(message.html())
-                .contains("/setup/" + invitedId + "/tok-12345")
+                .contains("/setup/start/" + invitedId + "/tok-12345")
                 .contains("Ada Lovelace"); // admin attribution line present
     }
 
@@ -121,7 +121,7 @@ class UserRegisterEmailRedactorTest {
 
         EmailMessage message = captor.getValue();
         assertThat(message.html())
-                .contains("/setup/" + invitedId + "/tok-99999")
+                .contains("/setup/start/" + invitedId + "/tok-99999")
                 .doesNotContain("Ada Lovelace"); // no admin attribution on the self-driven branch
     }
 
