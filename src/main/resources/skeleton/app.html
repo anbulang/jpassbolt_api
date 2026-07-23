@@ -203,6 +203,9 @@
   // 只放行 http/https 的法务 URL;javascript:/data: 等伪协议或解析失败返回空串,
   // 防止被攻陷的管理员在 organization_settings 里塞伪协议造成点击型 XSS。
   function safeHttpUrl(s) {
+    // 空/空白必须先返回 ''——new URL('', base) 不抛异常而是解析成 base 本身
+    // (http://host/,truthy),会把"未配置法务 URL"误判成已配置、强制弹勾选框。
+    if (!s || !String(s).trim()) return '';
     try {
       var u = new URL(String(s), location.origin);
       return (u.protocol === 'http:' || u.protocol === 'https:') ? u.href : '';
