@@ -224,6 +224,17 @@ public class AuthController {
             // ciphertext this server cannot decrypt, which is caller input, not
             // a server fault. Revisit if the official client turns out to
             // expect otherwise.
+            //
+            // Reviewed and kept deliberately (Codex P2, PR #5): the suggestion
+            // was to answer 500 when the decrypt itself blew up, on the grounds
+            // that it signals a broken server key. That distinction cannot be
+            // drawn here — AuthService.stage0ServerVerify() collapses BOTH a bad
+            // client ciphertext and a server-side GPG failure into `null` — and
+            // splitting it would misreport ordinary bad input as 500 just as
+            // often as the reverse. Official Passbolt does not distinguish them
+            // either (hence the missing status assertion), and a genuinely
+            // missing/broken server key fails at startup via config validation,
+            // long before this path. Deliberate no-change, not an oversight.
             return createErrorResponse(headers, HttpStatus.BAD_REQUEST, "Decryption failed");
         }
     }
@@ -293,10 +304,15 @@ public class AuthController {
             headers = new HttpHeaders();
         }
         headers.add("X-GPGAuth-Error", "true");
+        // header.code must track the transport status, not stay pinned at 200:
+        // official Passbolt fills the envelope's code with the actual error code
+        // (AppController::_error -> 'code' => $errorCode). Leaving it at 200 next
+        // to a 400/500 response would tell envelope-reading clients "success"
+        // while the transport says otherwise.
         return ResponseEntity.status(status)
                 .headers(headers)
                 .body(createResponse("error", message, null, "d54c1605-9e69-4d63-9828-090c80c0f80e",
-                        "/auth/login.json"));
+                        "/auth/login.json", status.value()));
     }
 
     /**
@@ -340,9 +356,25 @@ public class AuthController {
     /**
      * Create a response body
      */
+    /** Success-path envelope (header.code = 200). */
     private Map<String, Object> createResponse(String status, String message, Object body, String action, String url) {
-        // 迁移到共享信封工具：保留显式 action 与 code=200（GpgAuth 既有偏差，含 error 分支也为 200），body null→{}。
-        return ApiResponse.withExplicitAction(status, message, body != null ? body : new LinkedHashMap<>(), 200,
+        return createResponse(status, message, body, action, url, 200);
+    }
+
+    /**
+     * Envelope with an explicit {@code header.code}.
+     *
+     * <p>
+     * Error paths MUST pass their real transport status: official Passbolt sets
+     * the envelope code from the error code itself
+     * ({@code AppController::_error -> 'code' => $errorCode}), so a 400/500
+     * response carrying {@code code: 200} would contradict its own status line.
+     * </p>
+     */
+    private Map<String, Object> createResponse(String status, String message, Object body, String action, String url,
+            int code) {
+        // 迁移到共享信封工具：保留显式 action，body null→{}。
+        return ApiResponse.withExplicitAction(status, message, body != null ? body : new LinkedHashMap<>(), code,
                 action != null ? action : "d54c1605-9e69-4d63-9828-090c80c0f80e",
                 url != null ? url : "/auth/login.json");
     }
