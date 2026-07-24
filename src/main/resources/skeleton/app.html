@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>JPassbolt</title>
+<link rel="icon" type="image/png" href="__JP_BRAND_ICON__">
 <style>
   /* ---- aegis light palette (mirrors jpassbolt_frontend/src/index.css) ---- */
   :root {
@@ -43,8 +44,7 @@
   .top { padding: 20px 28px 0; }
   .brand { display: flex; align-items: center; gap: 10px; }
   .brand .lg {
-    width: 30px; height: 30px; border-radius: 8px; background: var(--accent);
-    color: #fff; display: grid; place-items: center; font-weight: 700; font-size: 13px;
+    width: 30px; height: 30px; border-radius: 8px; display: block;
   }
   .brand .bn { font-size: 14px; font-weight: 600; letter-spacing: -0.01em; }
   .brand .lang { margin-left: auto; display: flex; gap: 2px; }
@@ -282,7 +282,7 @@
   }
 
   function brand() {
-    return '<div class="top"><div class="brand"><div class="lg">JP</div><div class="bn">JPassbolt</div>'
+    return '<div class="top"><div class="brand"><img class="lg" src="__JP_BRAND_ICON__" alt=""><div class="bn">JPassbolt</div>'
       + '<div class="lang">'
       + '<button type="button" data-loc="zh" class="' + (LOCALE === 'zh' ? 'on' : '') + '">中文</button>'
       + '<button type="button" data-loc="en" class="' + (LOCALE === 'en' ? 'on' : '') + '">EN</button>'
