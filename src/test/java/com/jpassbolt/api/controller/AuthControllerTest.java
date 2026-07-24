@@ -244,10 +244,14 @@ class AuthControllerTest {
         data.setGpgAuth(gpgAuth);
         request.setData(data);
 
+        // 400, not 200: official Passbolt answers an unknown key with a 400
+        // (AuthLoginControllerTest:96). A 200 here reads as success to any
+        // client that keys off the status code, including the official
+        // extension.
         mockMvc.perform(post("/auth/login.json")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(request)))
-                .andExpect(status().isOk())
+                .andExpect(status().isBadRequest())
                 .andExpect(header().string("X-GPGAuth-Error", "true"))
                 .andExpect(jsonPath("$.header.status").value("error"));
     }
@@ -273,6 +277,10 @@ class AuthControllerTest {
         return mockMvc.perform(post("/auth/login.json")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(request)))
+                // Official Passbolt rejects a bad stage-2 user_token with 400
+                // (AuthLoginControllerTest:511) — NOT 401: the session did not
+                // expire, the login attempt itself was refused.
+                .andExpect(status().isBadRequest())
                 .andExpect(header().string("X-GPGAuth-Authenticated", "false"))
                 .andExpect(header().doesNotExist("Authorization"))
                 .andExpect(jsonPath("$.header.status").value("error"))

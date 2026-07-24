@@ -89,7 +89,8 @@ public class AuthController {
 
         // Check for required data
         if (gpgAuth == null) {
-            return createErrorResponse(headers, "Missing gpg_auth data");
+            // PHP: a malformed gpg_auth block is a 400 (AuthLoginControllerTest:192).
+            return createErrorResponse(headers, HttpStatus.BAD_REQUEST, "Missing gpg_auth data");
         }
 
         String keyId = gpgAuth.getKeyid();
@@ -106,14 +107,19 @@ public class AuthController {
 
             // Validate keyId is present for Stage 1 and 2
             if (keyId == null || keyId.isEmpty()) {
-                return createErrorResponse(headers, "Missing key ID");
+                // PHP debug text for this case is "…No key id set." — 400 (:192).
+                return createErrorResponse(headers, HttpStatus.BAD_REQUEST, "Missing key ID");
             }
 
             // Verify user exists for this key
             Optional<User> userOpt = authService.findUserByKeyIdentifier(keyId);
             if (userOpt.isEmpty()) {
+                // PHP answers 400 here (:96) — deleted and disabled users take the
+                // same path and are deliberately indistinguishable from "unknown
+                // key", so this must not leak a different status per case.
                 headers.add("X-GPGAuth-Debug", "There is no user associated with this key.");
-                return createErrorResponse(headers, "There is no user associated with this key.");
+                return createErrorResponse(headers, HttpStatus.BAD_REQUEST,
+                        "There is no user associated with this key.");
             }
 
             // Stage 2: Complete authentication
@@ -128,7 +134,7 @@ public class AuthController {
 
         } catch (Exception e) {
             log.error("Authentication error", e);
-            return createErrorResponse(headers, e.getMessage());
+            return createErrorResponse(headers, gpgAuthErrorStatus(e), e.getMessage());
         }
     }
 
@@ -138,8 +144,9 @@ public class AuthController {
      *
      * The PHP routes (config/routes.php) map POST /auth/verify onto
      * AuthLogin::loginPost — the exact same Stage 0 logic as
-     * /auth/login.json. Errors keep HTTP 200 + error envelope +
-     * X-GPGAuth-Error header, as the existing login Stage 0 does.
+     * /auth/login.json, so it shares that action's error statuses
+     * (see createErrorResponse / gpgAuthErrorStatus) plus the
+     * X-GPGAuth-Error header.
      */
     @PostMapping("/verify.json")
     public ResponseEntity<?> verifyPost(@RequestBody AuthDto.LoginRequest request) {
@@ -151,12 +158,12 @@ public class AuthController {
             gpgAuth = request.getData().getGpgAuth();
         }
         if (gpgAuth == null) {
-            return createErrorResponse(headers, "Missing gpg_auth data");
+            return createErrorResponse(headers, HttpStatus.BAD_REQUEST, "Missing gpg_auth data");
         }
 
         String serverVerifyToken = gpgAuth.getServerVerifyToken();
         if (serverVerifyToken == null || serverVerifyToken.isEmpty()) {
-            return createErrorResponse(headers, "Missing server verify token");
+            return createErrorResponse(headers, HttpStatus.BAD_REQUEST, "Missing server verify token");
         }
 
         return handleStage0(headers, serverVerifyToken);
@@ -210,7 +217,14 @@ public class AuthController {
                     .headers(headers)
                     .body(createSuccessResponse("Stage 0: Server verified"));
         } else {
-            return createErrorResponse(headers, "Decryption failed");
+            // INFERRED, not copied: the official Stage 0 wrong-key test
+            // (AuthLoginControllerTest:337) asserts only the headers, never a
+            // status code, so there is no authority to match here. 400 follows
+            // the same responsibility rule as the rest — the caller handed us
+            // ciphertext this server cannot decrypt, which is caller input, not
+            // a server fault. Revisit if the official client turns out to
+            // expect otherwise.
+            return createErrorResponse(headers, HttpStatus.BAD_REQUEST, "Decryption failed");
         }
     }
 
@@ -264,17 +278,55 @@ public class AuthController {
     }
 
     /**
-     * Create an error response
+     * Create a GpgAuth error response.
+     *
+     * <p>
+     * The status code matters for compatibility: official Passbolt answers
+     * these with 400/500 (never 200), and a client that keys off the status —
+     * including the official browser extension — misreads a 200 as success.
+     * The {@code X-GPGAuth-Error} header is set either way, so header-based
+     * clients keep working across both.
+     * </p>
      */
-    private ResponseEntity<?> createErrorResponse(HttpHeaders headers, String message) {
+    private ResponseEntity<?> createErrorResponse(HttpHeaders headers, HttpStatus status, String message) {
         if (headers == null) {
             headers = new HttpHeaders();
         }
         headers.add("X-GPGAuth-Error", "true");
-        return ResponseEntity.ok()
+        return ResponseEntity.status(status)
                 .headers(headers)
                 .body(createResponse("error", message, null, "d54c1605-9e69-4d63-9828-090c80c0f80e",
                         "/auth/login.json"));
+    }
+
+    /**
+     * Map a GpgAuth failure onto the HTTP status official Passbolt answers with.
+     *
+     * <p>
+     * The official split is by RESPONSIBILITY, not by error kind: every failure
+     * caused by what the CALLER sent is a 400 — unknown key
+     * ({@code AuthLoginControllerTest:96}), missing key id ({@code :192}), bad
+     * {@code user_token} ({@code :511}) — and only the server's own GnuPG
+     * configuration being broken is a 500 ({@code :136}, {@code :149}).
+     * </p>
+     *
+     * <p>
+     * {@link AuthService} instead models these with HTTP-semantic codes (404
+     * unknown user, 400 bad nonce, 401 invalid/expired token), so they are
+     * folded back onto the official code here rather than surfaced as-is. Note
+     * this deliberately turns the token-invalid case from 401 into 400: a 401
+     * would tell clients "your session died" when in fact the login attempt
+     * itself was rejected.
+     * </p>
+     */
+    private HttpStatus gpgAuthErrorStatus(Throwable e) {
+        if (e instanceof PassboltApiException pae) {
+            HttpStatus status = pae.getStatus();
+            // A server-side status stays as-is; everything else is caller input.
+            return status.is5xxServerError() ? status : HttpStatus.BAD_REQUEST;
+        }
+        // GPG runtime failures / misconfiguration are the server's fault.
+        return HttpStatus.INTERNAL_SERVER_ERROR;
     }
 
     /**
