@@ -185,6 +185,33 @@ class AuthControllerTest {
     }
 
     @Test
+    void testLoginStage1_NonceIsSignedByServerKey() throws Exception {
+        // The classic GpgAuth Stage 1 challenge must be encrypt+sign (server identity),
+        // not encrypt-only. decryptVerify enforces a valid signature against the given
+        // key and throws InvalidSignatureException otherwise — so this would fail on the
+        // old encrypt-only code and passes now (signed with the server key).
+        AuthDto.LoginRequest request = new AuthDto.LoginRequest();
+        AuthDto.DataWrapper data = new AuthDto.DataWrapper();
+        AuthDto.GpgAuth gpgAuth = new AuthDto.GpgAuth();
+        gpgAuth.setKeyid(testFingerprint);
+        data.setGpgAuth(gpgAuth);
+        request.setData(data);
+
+        MvcResult result = mockMvc.perform(post("/auth/login.json")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        String encodedToken = result.getResponse().getHeader("X-GPGAuth-User-Auth-Token");
+        String encryptedNonce = java.net.URLDecoder.decode(encodedToken, java.nio.charset.StandardCharsets.UTF_8);
+
+        // Verify against the server public key (the signer). Throws if unsigned.
+        String verified = gpgService.decryptVerify(encryptedNonce, gpgService.getServerPublicKey());
+        assertThat(verified).matches("gpgauthv1\\.3\\.0\\|36\\|[0-9a-f-]+\\|gpgauthv1\\.3\\.0");
+    }
+
+    @Test
     void testLoginStage1_UnknownKeyAndDisabledAccount_AreIndistinguishable() throws Exception {
         // Unknown key: well-formed fingerprint not present in the database
         AuthDto.LoginRequest unknownRequest = new AuthDto.LoginRequest();

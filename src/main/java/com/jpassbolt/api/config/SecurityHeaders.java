@@ -72,6 +72,58 @@ public final class SecurityHeaders {
     /** Upper case: the token is case-insensitive, this is what Spring Security writes. */
     public static final String X_FRAME_OPTIONS_VALUE = "SAMEORIGIN";
 
+    public static final String CONTENT_SECURITY_POLICY = "Content-Security-Policy";
+
+    /**
+     * The official Passbolt default CSP, verbatim from
+     * {@code passbolt_api_ref/src/Middleware/ContentSecurityPolicyMiddleware.php}
+     * (the {@code $defaultCsp} array joined with "; "). This is what the browser
+     * extension is built against, so mirroring it exactly is the safest choice —
+     * note {@code frame-src} does NOT list {@code chrome-extension:} yet the
+     * extension's injected {@code app.html} iframe still loads, because Chrome
+     * exempts extension-injected frames from the embedding page's CSP.
+     *
+     * <p>Applied as-is to every API ({@code /api}) response: JSON carries no
+     * inline script/style/image, so the strict {@code 'self'} directives are
+     * free of cost. The self-contained skeleton page needs two relaxations —
+     * see {@link #skeletonContentSecurityPolicy(String)}.</p>
+     */
+    public static final String CONTENT_SECURITY_POLICY_VALUE =
+            "default-src 'self'; "
+            + "script-src 'self'; "
+            + "style-src 'self' 'unsafe-inline'; "
+            + "img-src 'self'; "
+            + "frame-src 'self' https://*.duosecurity.com; "
+            + "frame-ancestors 'none'; "
+            + "form-action 'self' https://*.duosecurity.com";
+
+    /**
+     * CSP for the self-contained skeleton page. It differs from the API policy
+     * ({@link #CONTENT_SECURITY_POLICY_VALUE}) in exactly two directives:
+     * <ul>
+     *   <li>{@code script-src} gains a per-request {@code 'nonce-...'} so the
+     *       page's single inline bootstrap {@code <script>} runs while arbitrary
+     *       injected inline script stays blocked (the shell embeds its whole JS
+     *       inline by design — official Passbolt serves it as external files);</li>
+     *   <li>{@code img-src} gains {@code data:} for the brand icon, which the
+     *       shell embeds as a {@code data:image/png} URI rather than an asset
+     *       route.</li>
+     * </ul>
+     * Everything else (same-origin {@code fetch} to {@code /api}, inline
+     * {@code <style>}) is covered by {@code default-src}/{@code style-src}.
+     *
+     * @param scriptNonce a fresh, unpredictable per-request nonce (base64)
+     */
+    public static String skeletonContentSecurityPolicy(String scriptNonce) {
+        return "default-src 'self'; "
+                + "script-src 'self' 'nonce-" + scriptNonce + "'; "
+                + "style-src 'self' 'unsafe-inline'; "
+                + "img-src 'self' data:; "
+                + "frame-src 'self' https://*.duosecurity.com; "
+                + "frame-ancestors 'none'; "
+                + "form-action 'self' https://*.duosecurity.com";
+    }
+
     private SecurityHeaders() {
     }
 

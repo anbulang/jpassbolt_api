@@ -184,8 +184,12 @@ public class SettingsProperties {
         // Pure client-side capabilities (no server endpoint in the reference
         // either) — advertised so the extension enables its in-form menu.
         defaults.put("inFormIntegration", true);
-        // Publicly visible flag in CE; feature not implemented yet.
-        defaults.put("accountRecoveryRequestHelp", false);
+        // Publicly visible help flag in CE (config/default.php hardcodes it true,
+        // whiteListPublic=['enabled']). Pure advertised boolean — no server endpoint,
+        // no other consumer — so it aligns the value with CE without wiring a backend;
+        // the extension surfaces the account-recovery help affordance. NOT the EE
+        // accountRecovery policy plugin (absent here).
+        defaults.put("accountRecoveryRequestHelp", true);
         // Not implemented yet — must stay false until their clusters land.
         // export/import stay false as well: the reference plugins are the
         // server-side kdbx/csv endpoints, which the self-built frontend

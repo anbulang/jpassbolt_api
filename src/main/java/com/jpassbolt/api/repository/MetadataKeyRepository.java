@@ -45,6 +45,13 @@ public interface MetadataKeyRepository extends JpaRepository<MetadataKey, String
     long countByDeletedIsNullAndExpiredIsNull();
 
     /**
+     * All not-deleted keys, including expired ones (PHP
+     * {@code MetadataKeysSettingsSetService::shouldCreateMetadataPrivateKey}
+     * counts {@code deleted IS NULL}). Distinct from the active-only count above.
+     */
+    long countByDeletedIsNull();
+
+    /**
      * Fingerprint uniqueness check (the DB also has a UNIQUE index, but the
      * service rejects reuse before insert to return a clean 400).
      */

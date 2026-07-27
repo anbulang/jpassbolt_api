@@ -4,6 +4,7 @@ import com.jpassbolt.api.dto.MetadataSettingsDto;
 import com.jpassbolt.api.model.Role;
 import com.jpassbolt.api.model.User;
 import com.jpassbolt.api.repository.MetadataKeyRepository;
+import com.jpassbolt.api.repository.MetadataPrivateKeyRepository;
 import com.jpassbolt.api.repository.OrganizationSettingRepository;
 import com.jpassbolt.api.repository.RoleRepository;
 import com.jpassbolt.api.repository.UserRepository;
@@ -63,6 +64,9 @@ class MetadataSettingsControllerContractTest extends OpenApiComplianceTest {
 
     @Autowired
     private MetadataKeyRepository metadataKeyRepository;
+
+    @Autowired
+    private MetadataPrivateKeyRepository metadataPrivateKeyRepository;
 
     private Role adminRole;
     private Role userRole;
@@ -215,6 +219,66 @@ class MetadataSettingsControllerContractTest extends OpenApiComplianceTest {
                 .andExpect(jsonPath("$.body.default_resource_types").value("v4"))
                 .andExpect(jsonPath("$.body.allow_v4_v5_upgrade").value(false))
                 .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
+    }
+
+    // ------------------------------------------------------------------
+    // onboarding probes: getting-started / setup settings (admin only)
+    // isValid disabled — these paths are not in the bundled plugin-redoc-0.yaml.
+    // ------------------------------------------------------------------
+
+    @Test
+    void testGettingStartedTrueOnPristineInstance() throws Exception {
+        // seed() cleared org settings, metadata keys and users (1 admin re-added);
+        // clear any private keys so the instance is fully pristine.
+        metadataPrivateKeyRepository.deleteAll();
+
+        mockMvc.perform(get("/metadata/settings/getting-started.json")
+                .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.header.status").value("success"))
+                .andExpect(jsonPath("$.body.enabled").value(true));
+    }
+
+    @Test
+    @WithMockUser(username = "nonadmin@passbolt.com", roles = { "USER" })
+    void testGettingStartedNonAdminForbidden() throws Exception {
+        User plain = new User();
+        plain.setUsername("nonadmin@passbolt.com");
+        plain.setRoleId(userRole.getId());
+        plain.setActive(true);
+        plain.setDeleted(false);
+        userRepository.save(plain);
+
+        mockMvc.perform(get("/metadata/settings/getting-started.json")
+                .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.header.status").value("error"));
+    }
+
+    @Test
+    void testSetupSettingsTrueOnFreshInstall() throws Exception {
+        // seed() leaves exactly one active admin -> fresh install.
+        mockMvc.perform(get("/metadata/setup/settings.json")
+                .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.header.status").value("success"))
+                .andExpect(jsonPath("$.body.enable_encrypted_metadata_on_install").value(true));
+    }
+
+    @Test
+    void testSetupSettingsFalseWhenMoreThanOneUser() throws Exception {
+        // A second user means this is no longer a fresh install.
+        User second = new User();
+        second.setUsername("second@passbolt.com");
+        second.setRoleId(userRole.getId());
+        second.setActive(true);
+        second.setDeleted(false);
+        userRepository.save(second);
+
+        mockMvc.perform(get("/metadata/setup/settings.json")
+                .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.body.enable_encrypted_metadata_on_install").value(false));
     }
 
     @Test

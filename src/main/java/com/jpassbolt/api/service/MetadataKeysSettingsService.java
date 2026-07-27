@@ -2,9 +2,12 @@ package com.jpassbolt.api.service;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.jpassbolt.api.dto.MetadataKeyDto;
 import com.jpassbolt.api.dto.MetadataSettingsDto;
 import com.jpassbolt.api.exception.PassboltApiException;
 import com.jpassbolt.api.model.OrganizationSetting;
+import com.jpassbolt.api.repository.MetadataKeyRepository;
+import com.jpassbolt.api.repository.MetadataPrivateKeyRepository;
 import com.jpassbolt.api.repository.OrganizationSettingRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -14,6 +17,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -54,6 +58,9 @@ public class MetadataKeysSettingsService {
 
     private final OrganizationSettingRepository organizationSettingRepository;
     private final ObjectMapper objectMapper;
+    private final MetadataKeyService metadataKeyService;
+    private final MetadataKeyRepository metadataKeyRepository;
+    private final MetadataPrivateKeyRepository metadataPrivateKeyRepository;
 
     /**
      * Read the metadata keys settings, falling back to defaults when the
@@ -106,8 +113,62 @@ public class MetadataKeysSettingsService {
                 .zeroKnowledgeKeyShare(request.getZeroKnowledgeKeyShare())
                 .build();
 
+        // When zero-knowledge mode is being turned OFF and the server holds shared
+        // metadata keys but no server-copy private key yet, the payload MUST carry
+        // the server metadata private key copies; persist them (user_id=null server
+        // copies) before saving the toggles. PHP MetadataKeysSettingsSetService.
+        MetadataSettingsDto.KeysSettings current = getKeysSettings();
+        if (isDisablingZeroKnowledge(request, current)
+                && shouldCreateMetadataPrivateKey(settings, request)) {
+            List<MetadataKeyDto.CreatePrivatesRequest> entries = request.getMetadataPrivateKeys().stream()
+                    .map(e -> MetadataKeyDto.CreatePrivatesRequest.builder()
+                            .metadataKeyId(e.getMetadataKeyId())
+                            .userId(e.getUserId()) // may be null -> server copy
+                            .data(e.getData())
+                            .build())
+                    .toList();
+            metadataKeyService.createPrivateKeys(entries, userId);
+        }
+
         upsert(serialize(settings), userId);
         return settings;
+    }
+
+    /**
+     * Are we turning zero-knowledge mode OFF? False when the current DB settings
+     * are already user-friendly (zero-knowledge already off — includes the
+     * default) or the payload omits the flag. PHP {@code isDisablingZeroKnowledge}.
+     */
+    private boolean isDisablingZeroKnowledge(
+            MetadataSettingsDto.KeysSettingsUpdate data, MetadataSettingsDto.KeysSettings settingsInDB) {
+        if (!Boolean.TRUE.equals(settingsInDB.getZeroKnowledgeKeyShare())) {
+            return false; // already user-friendly (or default)
+        }
+        if (data.getZeroKnowledgeKeyShare() == null) {
+            return false;
+        }
+        return !data.getZeroKnowledgeKeyShare();
+    }
+
+    /**
+     * When shared metadata keys exist and we are entering user-friendly mode, the
+     * server needs a server-copy (user_id IS NULL) private key. If none exists yet
+     * the payload must supply it (else 400); returns true when the payload's copies
+     * should be persisted. PHP {@code shouldCreateMetadataPrivateKey}.
+     */
+    private boolean shouldCreateMetadataPrivateKey(
+            MetadataSettingsDto.KeysSettings dto, MetadataSettingsDto.KeysSettingsUpdate data) {
+        boolean userFriendly = !Boolean.TRUE.equals(dto.getZeroKnowledgeKeyShare());
+        if (metadataKeyRepository.countByDeletedIsNull() > 0 && userFriendly) {
+            if (metadataPrivateKeyRepository.countByUserIdIsNull() == 0) {
+                if (data.getMetadataPrivateKeys() == null || data.getMetadataPrivateKeys().isEmpty()) {
+                    throw new PassboltApiException(HttpStatus.BAD_REQUEST,
+                            "The server metadata private key is required to enable these settings.");
+                }
+                return true;
+            }
+        }
+        return false;
     }
 
     // ---------------------------------------------------------------------

@@ -40,6 +40,8 @@ public class SettingsControllerContractTest extends OpenApiComplianceTest {
                 .andExpect(jsonPath("$.body.app.url").exists())
                 .andExpect(jsonPath("$.body.passbolt.edition").exists())
                 .andExpect(jsonPath("$.body.passbolt.plugins.jwtAuthentication.enabled").value(true))
+                // CE hardcodes this help flag true (config/default.php).
+                .andExpect(jsonPath("$.body.passbolt.plugins.accountRecoveryRequestHelp.enabled").value(true))
                 .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
     }
 
@@ -56,6 +58,9 @@ public class SettingsControllerContractTest extends OpenApiComplianceTest {
                 .andExpect(jsonPath("$.body.app.url").exists())
                 .andExpect(jsonPath("$.body.passbolt.edition").exists())
                 .andExpect(jsonPath("$.body.app.version").doesNotExist())
+                // accountRecoveryRequestHelp is a public flag (whiteListPublic) and
+                // is advertised to guests too.
+                .andExpect(jsonPath("$.body.passbolt.plugins.accountRecoveryRequestHelp.enabled").value(true))
                 .andExpect(openApi().isValid(CONTRACT_VALIDATOR));
     }
 }

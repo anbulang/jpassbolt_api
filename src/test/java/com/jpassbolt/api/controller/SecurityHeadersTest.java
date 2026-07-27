@@ -61,6 +61,19 @@ class SecurityHeadersTest {
     }
 
     /**
+     * The strict official CSP (ContentSecurityPolicyMiddleware default) rides on
+     * every API response. JSON has no inline anything, so 'self' is free — the
+     * skeleton page relaxes it with a nonce, covered by SkeletonPageServletTest.
+     */
+    @Test
+    void testApiResponse_CarriesStrictOfficialCsp() throws Exception {
+        mockMvc.perform(get("/settings.json"))
+                .andExpect(status().isOk())
+                .andExpect(header().string(SecurityHeaders.CONTENT_SECURITY_POLICY,
+                        SecurityHeaders.CONTENT_SECURITY_POLICY_VALUE));
+    }
+
+    /**
      * A 401 produced by the authentication entry point still goes through
      * HeaderWriterFilter (which writes in a finally block), so an error response
      * is not a hole in the header set.

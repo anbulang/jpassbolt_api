@@ -71,6 +71,7 @@ public class RecoverService {
     private final GpgKeyParserService gpgKeyParserService;
     private final ProfileRepository profileRepository;
     private final MailService mailService;
+    private final EmailNotificationSettingsService emailNotificationSettingsService;
     private final ApplicationEventPublisher eventPublisher;
 
     /**
@@ -157,8 +158,14 @@ public class RecoverService {
         // best-effort: when email is disabled/unconfigured it logs the link instead,
         // so this never breaks the (already-committed) token issuance.
         if (TOKEN_TYPE_RECOVER.equals(tokenType)) {
-            mailService.sendRecoverEmail(user.getUsername(), user.getId(), token.getToken(),
-                    request.getRecoveryCase());
+            // Gated by send.user.recover (default true): this is the only remaining
+            // direct (non-redactor) send, so the org toggle is honored here rather
+            // than inside MailService. When off, the token is still issued; only the
+            // notification is suppressed (mirrors the redactor gating pattern).
+            if (emailNotificationSettingsService.isEnabled("send.user.recover")) {
+                mailService.sendRecoverEmail(user.getUsername(), user.getId(), token.getToken(),
+                        request.getRecoveryCase());
+            }
         } else {
             // Not-yet-active user restarting setup (register token): emit the same
             // invite notification as admin-create (UserRegisterEmailRedactor),

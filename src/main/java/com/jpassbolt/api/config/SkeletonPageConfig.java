@@ -15,6 +15,8 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
+import java.security.SecureRandom;
+import java.util.Base64;
 import java.util.Objects;
 
 /**
@@ -36,8 +38,10 @@ import java.util.Objects;
  * Because there is no {@code HeaderWriterFilter} here, the servlet writes the
  * official Passbolt security headers itself (see {@link SecurityHeaders}), and
  * because the page must warn the user when it is being served over plain http
- * on a non-loopback host, the HTML carries one server-substituted flag (see
- * {@link SkeletonPageServlet#UNSAFE_MODE_TOKEN}).
+ * on a non-loopback host, the HTML carries a server-substituted flag (see
+ * {@link SkeletonPageServlet#UNSAFE_MODE_TOKEN}). The canonical brand icon is
+ * likewise embedded from a classpath PNG as a data URI so the standalone root
+ * context does not need an extra public asset route.
  */
 @Configuration
 public class SkeletonPageConfig {
@@ -76,7 +80,7 @@ public class SkeletonPageConfig {
     static final class SkeletonPageServlet extends HttpServlet {
 
         /**
-         * The single template variable of the page. {@code app.html} contains
+         * The request-dependent template variable of the page. {@code app.html} contains
          * {@code var UNSAFE_MODE = ('__JP_UNSAFE_MODE__' === 'true');} — the
          * quoted form keeps the file valid JavaScript when it is opened
          * directly (un-substituted it just evaluates to {@code false}), and the
@@ -84,14 +88,37 @@ public class SkeletonPageConfig {
          * so no injection surface is opened.
          */
         static final String UNSAFE_MODE_TOKEN = "__JP_UNSAFE_MODE__";
+        static final String BRAND_ICON_TOKEN = "__JP_BRAND_ICON__";
+        /** Replaced per request with the CSP script nonce (see {@code app.html} {@code <script nonce>}). */
+        static final String CSP_NONCE_TOKEN = "__JP_CSP_NONCE__";
+
+        private static final SecureRandom NONCE_RNG = new SecureRandom();
+
+        /** A fresh, unpredictable per-request base64 nonce for the inline bootstrap script. */
+        private static String newCspNonce() {
+            byte[] bytes = new byte[16];
+            NONCE_RNG.nextBytes(bytes);
+            return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
+        }
 
         private final String html = loadSkeleton();
+        private final String brandIconDataUri = loadBrandIconDataUri();
 
         private static String loadSkeleton() {
             try (InputStream in = Objects.requireNonNull(
                     SkeletonPageServlet.class.getResourceAsStream("/skeleton/app.html"),
                     "missing classpath resource /skeleton/app.html")) {
                 return new String(in.readAllBytes(), StandardCharsets.UTF_8);
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+        }
+
+        private static String loadBrandIconDataUri() {
+            try (InputStream in = Objects.requireNonNull(
+                    SkeletonPageServlet.class.getResourceAsStream("/skeleton/icon-128.png"),
+                    "missing classpath resource /skeleton/icon-128.png")) {
+                return "data:image/png;base64," + Base64.getEncoder().encodeToString(in.readAllBytes());
             } catch (IOException e) {
                 throw new UncheckedIOException(e);
             }
@@ -139,8 +166,11 @@ public class SkeletonPageConfig {
         @Override
         protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
             // Written first so they also ride on the 302 and the 404 — this
-            // context has no Spring Security HeaderWriterFilter to do it.
+            // context has no Spring Security HeaderWriterFilter to do it. The
+            // strict CSP is the baseline for the redirect/404 (no body); the 200
+            // HTML branch overrides it below with a nonce-bearing variant.
             SecurityHeaders.applyTo(resp);
+            resp.setHeader(SecurityHeaders.CONTENT_SECURITY_POLICY, SecurityHeaders.CONTENT_SECURITY_POLICY_VALUE);
 
             String path = req.getRequestURI();
             if (!isBrowserPageUrl(path)) {
@@ -157,8 +187,18 @@ public class SkeletonPageConfig {
                 resp.setHeader("Location", "/auth/login?redirect=%2F");
                 return;
             }
+            // The one inline bootstrap <script> is allowed by a per-request nonce
+            // carried in both the CSP header and the tag, so the strict policy can
+            // block any other inline script. img-src also gains data: for the
+            // embedded brand icon (skeletonContentSecurityPolicy).
+            String cspNonce = newCspNonce();
+            resp.setHeader(SecurityHeaders.CONTENT_SECURITY_POLICY,
+                    SecurityHeaders.skeletonContentSecurityPolicy(cspNonce));
+
             byte[] page = html
                     .replace(UNSAFE_MODE_TOKEN, Boolean.toString(isUnsafeMode(req)))
+                    .replace(BRAND_ICON_TOKEN, brandIconDataUri)
+                    .replace(CSP_NONCE_TOKEN, cspNonce)
                     .getBytes(StandardCharsets.UTF_8);
 
             resp.setStatus(HttpServletResponse.SC_OK);

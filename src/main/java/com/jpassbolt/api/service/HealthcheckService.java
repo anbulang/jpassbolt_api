@@ -52,6 +52,7 @@ public class HealthcheckService {
     private final SettingsProperties settingsProperties;
     private final SelfRegistrationService selfRegistrationService;
     private final SmtpSettingsService smtpSettingsService;
+    private final EmailNotificationSettingsService emailNotificationSettingsService;
 
     @Value("${jpassbolt.version:4.9.0}")
     private String currentVersion;
@@ -309,7 +310,20 @@ public class HealthcheckService {
         application.put("registrationClosed", registrationClosed);
         application.put("hostAvailabilityCheckEnabled", false);
         application.put("jsProd", true);
-        application.put("emailNotificationEnabled", false);
+        // Live value (was hardcoded false). PHP EmailNotificationEnabledApplicationHealthcheck:
+        // status = !preg_match('/false/', json_encode(EmailNotificationSettings::get('send'))),
+        // i.e. true only when EVERY send.* toggle is enabled. Reflects real settings, so an
+        // admin disabling any send.* flips it to false (CE default is already false because
+        // send_password_create defaults to false). Mirror PHP's catch-all: any failure -> false.
+        boolean allSendEnabled;
+        try {
+            allSendEnabled = emailNotificationSettingsService.get().entrySet().stream()
+                    .filter(e -> e.getKey().startsWith("send_"))
+                    .allMatch(e -> Boolean.TRUE.equals(e.getValue()));
+        } catch (Exception e) {
+            allSendEnabled = false;
+        }
+        application.put("emailNotificationEnabled", allSendEnabled);
         application.put("schema", true);
         return application;
     }

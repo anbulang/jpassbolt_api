@@ -99,6 +99,30 @@ public class MetadataSettingsDto {
     }
 
     /**
+     * Response of {@code GET /metadata/settings/getting-started.json}
+     * (PHP {@code MetadataSettingsGetStartedDto}, key {@code enabled}). True on a
+     * pristine instance where an admin can still opt into encrypted metadata.
+     */
+    @Data
+    @AllArgsConstructor
+    public static class GettingStarted {
+        private boolean enabled;
+    }
+
+    /**
+     * Response of {@code GET /metadata/setup/settings.json} (PHP
+     * {@code MetadataSettingsSetupDto}, key {@code enable_encrypted_metadata_on_install}).
+     * True when a fresh install (sole active admin) should enable encrypted
+     * metadata during setup.
+     */
+    @Data
+    @AllArgsConstructor
+    public static class SetupSettings {
+        @JsonProperty("enable_encrypted_metadata_on_install")
+        private boolean enableEncryptedMetadataOnInstall;
+    }
+
+    /**
      * Response + request body for {@code /metadata/types/settings.json}
      * (OpenAPI {@code metadataTypesSettingsIndexAndView}). All 14 fields are
      * required by the spec.

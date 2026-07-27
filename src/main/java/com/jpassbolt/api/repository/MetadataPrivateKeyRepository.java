@@ -40,4 +40,11 @@ public interface MetadataPrivateKeyRepository extends JpaRepository<MetadataPriv
 
     /** All private-key copies owned by a user (e.g. user-deletion cleanup). */
     List<MetadataPrivateKey> findByUserId(String userId);
+
+    /**
+     * Number of server-copy private keys (user_id IS NULL). Used when disabling
+     * zero-knowledge mode to decide whether the payload must supply the server
+     * metadata private key (PHP {@code shouldCreateMetadataPrivateKey}).
+     */
+    long countByUserIdIsNull();
 }
