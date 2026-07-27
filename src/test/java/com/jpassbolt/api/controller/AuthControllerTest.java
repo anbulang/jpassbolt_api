@@ -260,7 +260,11 @@ class AuthControllerTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(header().string("X-GPGAuth-Error", "true"))
                 .andExpect(jsonPath("$.header.status").value("error"))
-                .andExpect(jsonPath("$.header.code").value(400));
+                .andExpect(jsonPath("$.header.code").value(400))
+                // body is the empty STRING, not {}: the OpenAPI badRequest schema
+                // declares body as type:string (plugin-redoc-0.yaml). A {} here
+                // fails OpenAPI validation despite the correct status/code.
+                .andExpect(jsonPath("$.body").value(""));
     }
 
     // ------------------------------------------------------------------

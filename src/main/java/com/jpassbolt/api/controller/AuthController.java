@@ -309,9 +309,15 @@ public class AuthController {
         // (AppController::_error -> 'code' => $errorCode). Leaving it at 200 next
         // to a 400/500 response would tell envelope-reading clients "success"
         // while the transport says otherwise.
+        //
+        // body is the EMPTY STRING, not null: the OpenAPI `badRequest` schema
+        // declares body as `type: string` with example `body: ''`
+        // (plugin-redoc-0.yaml). createResponse would otherwise normalize null
+        // to `{}` (an object), which an OpenAPI-validating client rejects even
+        // though the status and envelope code are now correct.
         return ResponseEntity.status(status)
                 .headers(headers)
-                .body(createResponse("error", message, null, "d54c1605-9e69-4d63-9828-090c80c0f80e",
+                .body(createResponse("error", message, "", "d54c1605-9e69-4d63-9828-090c80c0f80e",
                         "/auth/login.json", status.value()));
     }
 

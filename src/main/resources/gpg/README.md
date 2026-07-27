@@ -8,22 +8,33 @@ dev/test fixture。它们的 passphrase 同样公开，不保护任何真实数�
 
 ## 为什么可以公开
 
-1. **只在 `local` profile 生效**。播种这些密钥的 `DataInitializer` 上有
-   `@Profile("local")`（见 `config/DataInitializer.java`），仅对 H2 内存库生效。
-   默认 / `mysql` profile 连接的远程测试库**不会**创建这些账号，因此拿到私钥的人
-   无法用它登录任何真实环境。
+1. **只种进嵌入式 H2 库**。播种这些密钥的 `DataInitializer` 上有
+   `@Profile("local")`，但**光看 profile 名不足以保证安全** —— 若以
+   `SPRING_PROFILES_ACTIVE=local,mysql` 启动，`local` 仍会激活该初始化器，而
+   `mysql` 会把数据源切到真实（可能远程）库，于是 ada admin（私钥+passphrase 已
+   公开入库）会被种进真实库，等于把 admin 登录送给任何拿到本仓的人。
+   因此 `DataInitializer.run()` 开头有一道**构造级守卫**：运行时检查实际连接，
+   只有 URL 为 `jdbc:h2:` 才播种，否则大声告警并跳过（`config/DataInitializer.java`）。
+   安全属性由此守卫保证，而非仅靠 profile 名。
 2. **不保护任何真实机密**。它们加密的只有 `DataInitializer` 写入的演示资源。
 3. **与官方 Passbolt 做法一致**。上游 `passbolt_api_ref` 的 TestData 同样附带
    公开的 betty / dame / frances 等测试密钥，且约定 passphrase 即用户邮箱。
 
 ## 铁律：生产环境绝不使用
 
-生产部署的服务端 GPG 私钥与 JWT 私钥**必须**经环境变量 / 外部路径注入，绝不入库：
+生产部署的服务端 GPG 私钥与 JWT 私钥**必须**经环境变量 / 外部路径注入，绝不入库。
+默认 profile 下 GPG 加密私钥需 passphrase 才能解出，且 RS256 JWT 密钥对不再随仓
+附带、缺失即启动失败（`application.yml` 的 jwt / gpg 段），故生产**至少**需要以下五项：
 
 ```
 JPASSBOLT_GPG_PRIVATE_KEY_LOCATION=file:/secure/path/server_private.asc
 JPASSBOLT_GPG_PUBLIC_KEY_LOCATION=file:/secure/path/server_public.asc
+JPASSBOLT_GPG_PASSPHRASE=<服务端 GPG 私钥的 passphrase>
+JPASSBOLT_JWT_PRIVATE_KEY_LOCATION=file:/secure/path/jwt_private.pem
+JPASSBOLT_JWT_PUBLIC_KEY_LOCATION=file:/secure/path/jwt_public.pem
 ```
+
+（`allow-ephemeral-dev-key` 仅 local/test profile 可开；生产严禁。）
 
 ## 文件清单
 

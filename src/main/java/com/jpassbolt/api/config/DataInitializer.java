@@ -120,6 +120,7 @@ public class DataInitializer implements CommandLineRunner {
     private final OrganizationSettingRepository organizationSettingRepository;
     private final AccountSettingRepository accountSettingRepository;
     private final SettingsProperties settingsProperties;
+    private final javax.sql.DataSource dataSource;
 
     /** Canonical Passbolt test key for betty@passbolt.com (40-hex fingerprint). */
     private static final String BETTY_FINGERPRINT = "A754860C3ADE5AB04599025ED3F1FE4BE61D7009";
@@ -142,6 +143,36 @@ public class DataInitializer implements CommandLineRunner {
 
     @Override
     public void run(String... args) {
+        // SAFETY GUARD — seed ONLY against an embedded H2 database.
+        //
+        // @Profile("local") activates this initializer whenever `local` is in the
+        // active set, but the effective datasource is NOT implied by that: with
+        // SPRING_PROFILES_ACTIVE=local,mysql the later `mysql` profile selects a
+        // real (possibly remote) database while `local` still switches this bean
+        // on. Seeding then writes the ada@passbolt.com ADMIN account — whose
+        // private key + passphrase ("password") are committed to this public
+        // repo — into that real database, handing an admin login to anyone with
+        // the repository.
+        //
+        // So the safety property ("committed dev keys cannot reach a real
+        // environment") is enforced here by construction, not merely by the
+        // profile name: if the live connection is not embedded H2, seeding is
+        // skipped loudly. See src/main/resources/gpg/README.md.
+        String dbUrl;
+        try (java.sql.Connection c = dataSource.getConnection()) {
+            dbUrl = c.getMetaData().getURL();
+        } catch (java.sql.SQLException e) {
+            log.error("[seed] could not inspect the datasource; refusing to seed dev fixtures", e);
+            return;
+        }
+        if (dbUrl == null || !dbUrl.startsWith("jdbc:h2:")) {
+            log.warn("[seed] datasource is not embedded H2 ({}) — SKIPPING dev fixture seeding. "
+                    + "The committed dev keys (ada@passbolt.com admin, passphrase 'password') must never "
+                    + "reach a real database; this guard fires e.g. under SPRING_PROFILES_ACTIVE=local,mysql.",
+                    dbUrl);
+            return;
+        }
+
         // Create roles
         Role userRole = new Role();
         userRole.setName("user");
