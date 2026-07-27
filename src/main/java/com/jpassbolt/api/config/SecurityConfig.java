@@ -57,7 +57,14 @@ public class SecurityConfig {
                                                                 SecurityHeaders.X_DOWNLOAD_OPTIONS_VALUE))
                                                 .addHeaderWriter(new StaticHeadersWriter(
                                                                 SecurityHeaders.X_PERMITTED_CROSS_DOMAIN_POLICIES,
-                                                                SecurityHeaders.X_PERMITTED_CROSS_DOMAIN_POLICIES_VALUE)))
+                                                                SecurityHeaders.X_PERMITTED_CROSS_DOMAIN_POLICIES_VALUE))
+                                                // Official Passbolt ContentSecurityPolicyMiddleware,
+                                                // strict default (JSON needs no inline anything). The
+                                                // skeleton page relaxes two directives with a nonce —
+                                                // see SkeletonPageConfig.
+                                                .addHeaderWriter(new StaticHeadersWriter(
+                                                                SecurityHeaders.CONTENT_SECURITY_POLICY,
+                                                                SecurityHeaders.CONTENT_SECURITY_POLICY_VALUE)))
                                 .sessionManagement(session -> session
                                                 .sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                                 .authorizeHttpRequests(auth -> auth

@@ -63,11 +63,42 @@ class SkeletonPageServletTest {
         assertThat(redirect.getHeader("Location")).isEqualTo("/auth/login?redirect=%2F");
         assertThat(redirect.getHeader(SecurityHeaders.REFERRER_POLICY)).isEqualTo("same-origin");
         assertThat(redirect.getHeader(SecurityHeaders.X_DOWNLOAD_OPTIONS)).isEqualTo("noopen");
+        // The redirect/404 (no body) carry the strict CSP baseline.
+        assertThat(redirect.getHeader(SecurityHeaders.CONTENT_SECURITY_POLICY))
+                .isEqualTo(SecurityHeaders.CONTENT_SECURITY_POLICY_VALUE);
 
         MockHttpServletResponse notFound = serve(request("/favicon.ico", "localhost", false));
         assertThat(notFound.getStatus()).isEqualTo(404);
         assertThat(notFound.getHeader(SecurityHeaders.REFERRER_POLICY)).isEqualTo("same-origin");
         assertThat(notFound.getHeader(SecurityHeaders.X_FRAME_OPTIONS)).isEqualTo("SAMEORIGIN");
+    }
+
+    /**
+     * The served HTML carries one inline bootstrap script, allowed by a
+     * per-request CSP nonce that must appear in BOTH the header and the tag; the
+     * policy also grants {@code img-src data:} for the embedded brand icon. A
+     * fresh nonce is minted per response.
+     */
+    @Test
+    void testSkeletonHtml_CspNonceMatchesInlineScriptTag() throws Exception {
+        MockHttpServletResponse response = serve(request("/auth/login", "localhost", false));
+        String csp = response.getHeader(SecurityHeaders.CONTENT_SECURITY_POLICY);
+        String page = response.getContentAsString();
+
+        assertThat(csp).contains("script-src 'self' 'nonce-");
+        assertThat(csp).contains("img-src 'self' data:");
+
+        // Extract the nonce from the header and assert the <script> tag carries it.
+        int start = csp.indexOf("'nonce-") + "'nonce-".length();
+        String nonce = csp.substring(start, csp.indexOf("'", start));
+        assertThat(nonce).isNotBlank();
+        assertThat(page).contains("<script nonce=\"" + nonce + "\">");
+        assertThat(page).doesNotContain(SkeletonPageConfig.SkeletonPageServlet.CSP_NONCE_TOKEN);
+
+        // A second request gets a different nonce (per-request, not static).
+        String csp2 = serve(request("/auth/login", "localhost", false))
+                .getHeader(SecurityHeaders.CONTENT_SECURITY_POLICY);
+        assertThat(csp2).isNotEqualTo(csp);
     }
 
     // ------------------------------------------------------------------

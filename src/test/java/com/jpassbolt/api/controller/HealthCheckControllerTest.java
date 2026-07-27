@@ -139,6 +139,10 @@ class HealthCheckControllerTest {
                                 // the spec example's "applications" is a known typo.
                                 .andExpect(jsonPath("$.body.application").exists())
                                 .andExpect(jsonPath("$.body.applications").doesNotExist())
+                                // Live value derived from email notification settings (PHP:
+                                // true only when every send.* is on). CE default is false
+                                // because send_password_create defaults to false.
+                                .andExpect(jsonPath("$.body.application.emailNotificationEnabled").value(false))
                                 .andExpect(jsonPath("$.body.database").exists())
                                 // jwt domain is excluded (PHP getDomainsIgnore()).
                                 .andExpect(jsonPath("$.body.jwt").doesNotExist())

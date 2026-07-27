@@ -5,6 +5,7 @@ import com.jpassbolt.api.exception.PassboltApiException;
 import com.jpassbolt.api.model.User;
 import com.jpassbolt.api.repository.UserRepository;
 import com.jpassbolt.api.service.MetadataKeysSettingsService;
+import com.jpassbolt.api.service.MetadataSetupSettingsService;
 import com.jpassbolt.api.service.MetadataTypesSettingsService;
 import com.jpassbolt.api.service.UserService;
 import com.jpassbolt.api.util.ApiResponse;
@@ -64,6 +65,7 @@ public class MetadataSettingsController {
 
     private final MetadataKeysSettingsService metadataKeysSettingsService;
     private final MetadataTypesSettingsService metadataTypesSettingsService;
+    private final MetadataSetupSettingsService metadataSetupSettingsService;
     private final UserService userService;
     private final UserRepository userRepository;
 
@@ -145,6 +147,48 @@ public class MetadataSettingsController {
                 metadataTypesSettingsService.setTypesSettings(request, userId);
         return ResponseEntity.ok(ApiResponse.success(
                 "The operation was successful.", settings, url));
+    }
+
+    // ---------------------------------------------------------------------
+    // onboarding probes (admin only, mirror PHP assertIsAdmin)
+    // ---------------------------------------------------------------------
+
+    /**
+     * GET /metadata/settings/getting-started.json — true on a pristine instance
+     * where an admin can still opt into encrypted metadata (PHP
+     * {@code MetadataSettingsGetStartedController::get}, admin-only). Response
+     * body: {@code { "enabled": <bool> }}.
+     */
+    @GetMapping("/settings/getting-started.json")
+    public ResponseEntity<Map<String, Object>> getGettingStarted() {
+        String url = "/metadata/settings/getting-started.json";
+        getCurrentUserId();
+        ResponseEntity<Map<String, Object>> adminGuard = requireAdmin(url);
+        if (adminGuard != null) {
+            return adminGuard;
+        }
+        MetadataSettingsDto.GettingStarted dto =
+                new MetadataSettingsDto.GettingStarted(metadataSetupSettingsService.isGettingStartedEnabled());
+        return ResponseEntity.ok(ApiResponse.success("The operation was successful.", dto, url));
+    }
+
+    /**
+     * GET /metadata/setup/settings.json — the fresh-install default for encrypted
+     * metadata (PHP {@code Setup\MetadataSettingsSetupController::get},
+     * admin-only). Response body:
+     * {@code { "enable_encrypted_metadata_on_install": <bool> }}.
+     */
+    @GetMapping("/setup/settings.json")
+    public ResponseEntity<Map<String, Object>> getSetupSettings() {
+        String url = "/metadata/setup/settings.json";
+        getCurrentUserId();
+        ResponseEntity<Map<String, Object>> adminGuard = requireAdmin(url);
+        if (adminGuard != null) {
+            return adminGuard;
+        }
+        MetadataSettingsDto.SetupSettings dto = new MetadataSettingsDto.SetupSettings(
+                metadataSetupSettingsService.isEncryptedMetadataEnabledOnInstall());
+        return ResponseEntity.ok(ApiResponse.success("The operation was successful.", dto, url));
     }
 
     // ---------------------------------------------------------------------

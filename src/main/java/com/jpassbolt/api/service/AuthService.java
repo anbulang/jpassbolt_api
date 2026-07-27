@@ -146,8 +146,10 @@ public class AuthService {
         token.setActive(true);
         tokenRepository.save(token);
 
-        // Encrypt the nonce with the user's public key
-        String encryptedNonce = gpgService.encrypt(nonce, gpgKey.getArmoredKey());
+        // Encrypt the nonce with the user's public key AND sign it with the server
+        // key (PHP OpenPGPBackend::encryptSign). Signing proves server identity on the
+        // classic GpgAuth Stage 1 challenge — matching the JWT path (JwtAuthService.login).
+        String encryptedNonce = gpgService.encryptSign(nonce, gpgKey.getArmoredKey());
 
         log.debug("Stage 1: Generated encrypted nonce for user {}", user.getUsername());
         return encryptedNonce;

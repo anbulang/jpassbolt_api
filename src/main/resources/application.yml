@@ -7,6 +7,12 @@ server:
   # the network (security-baseline requirement). Production deployments behind
   # a reverse proxy override this with the SERVER_ADDRESS environment variable.
   address: ${SERVER_ADDRESS:127.0.0.1}
+  # Reverse-proxy client-IP / scheme resolution (official passbolt.security.proxies).
+  # OFF by default to match CE's proxies.active=false: X-Forwarded-* are only trusted
+  # when a deployment behind a controlled proxy sets this to "framework" (so
+  # getRemoteAddr() returns the real client IP that lands in notification emails).
+  # Never enable it unless every hop is a proxy YOU control, or clients can spoof it.
+  forward-headers-strategy: ${SERVER_FORWARD_HEADERS_STRATEGY:none}
   servlet:
     context-path: /api
 
@@ -69,7 +75,10 @@ jpassbolt:
     # Legacy HS256 secret — no longer used for signing (RS256 key pair below);
     # still read by HealthcheckService (core.salt). Inject via env, never commit.
     secret: ${JPASSBOLT_LEGACY_HMAC_SECRET:}
-    expiration: 3600000 # 1 hour
+    # Access token lifetime. Aligned to the official CE default of 5 minutes
+    # (PASSBOLT_AUTH_JWT_ACCESS_TOKEN '5 minutes') to shrink the stolen-token
+    # window; the refresh token (30 days below) transparently renews it.
+    expiration: 300000 # 5 minutes
     # RS256 key pair. NO key pair is bundled with the repository anymore (the
     # previously committed jwt.key/jwt.pem must be considered leaked and were
     # removed/rotated). Deployments MUST inject a deployment-specific pair via
@@ -96,6 +105,12 @@ jpassbolt:
   version: 4.9.0
   healthcheck:
     index-endpoint-enabled: true
+  # v5 metadata onboarding flags (official passbolt.plugins.metadata.*), consumed
+  # by the GET /metadata/settings/getting-started + /metadata/setup/settings probes.
+  # Both default true like CE; set false to suppress the encrypted-metadata prompts.
+  metadata:
+    enable-for-new-instances: ${PASSBOLT_PLUGINS_METADATA_ENABLE_FOR_NEW_INSTANCES:true}
+    enable-for-existing-instances: ${PASSBOLT_PLUGINS_METADATA_ENABLE_FOR_EXISTING_INSTANCES:true}
   # GET /user-key-policies/settings.json — preferred user key generation
   # parameters. Defaults mirror the official UserKeyPoliciesSettingsDto
   # constants (ECC). For RSA set preferred-key-type: rsa,
@@ -144,7 +159,7 @@ jpassbolt:
       healthcheckUi: true
       log: true
       inFormIntegration: true
-      accountRecoveryRequestHelp: false
+      accountRecoveryRequestHelp: true
       export: false
       import: false
       mobile: false
