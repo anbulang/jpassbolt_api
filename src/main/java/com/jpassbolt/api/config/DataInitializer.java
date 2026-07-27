@@ -159,17 +159,28 @@ public class DataInitializer implements CommandLineRunner {
         // profile name: if the live connection is not embedded H2, seeding is
         // skipped loudly. See src/main/resources/gpg/README.md.
         String dbUrl;
+        String dbProduct;
         try (java.sql.Connection c = dataSource.getConnection()) {
             dbUrl = c.getMetaData().getURL();
+            dbProduct = c.getMetaData().getDatabaseProductName();
         } catch (java.sql.SQLException e) {
             log.error("[seed] could not inspect the datasource; refusing to seed dev fixtures", e);
             return;
         }
-        if (dbUrl == null || !dbUrl.startsWith("jdbc:h2:")) {
-            log.warn("[seed] datasource is not embedded H2 ({}) — SKIPPING dev fixture seeding. "
-                    + "The committed dev keys (ada@passbolt.com admin, passphrase 'password') must never "
-                    + "reach a real database; this guard fires e.g. under SPRING_PROFILES_ACTIVE=local,mysql.",
-                    dbUrl);
+        // Allowlist genuine EMBEDDED H2 only. A bare "jdbc:h2:" prefix is NOT
+        // enough: H2 also speaks a networked server protocol — jdbc:h2:tcp: and
+        // jdbc:h2:ssl: point at a REMOTE H2 that is every bit as real as MySQL,
+        // so a prefix-only check would let the guard pass for a shared database
+        // and re-open exactly the hole it exists to close. Default-deny: require
+        // the driver to actually be H2 AND the URL to be an in-memory or local
+        // file database (case-insensitive), which rejects tcp:/ssl: and any
+        // future non-embedded URL variant.
+        if (!isEmbeddedH2(dbUrl, dbProduct)) {
+            log.warn("[seed] datasource is not embedded H2 (url={}, product={}) — SKIPPING dev fixture "
+                    + "seeding. The committed dev keys (ada@passbolt.com admin, passphrase 'password') must "
+                    + "never reach a real database; this guard fires under SPRING_PROFILES_ACTIVE=local,mysql "
+                    + "and for networked H2 (jdbc:h2:tcp:/ssl:).",
+                    dbUrl, dbProduct);
             return;
         }
 
@@ -351,6 +362,26 @@ public class DataInitializer implements CommandLineRunner {
      * (Bouncy Castle) — the server only ever stores ciphertext.
      * </p>
      */
+    /**
+     * True only for a genuine EMBEDDED H2 database (in-memory or local file).
+     *
+     * <p>
+     * Package-private + static so it can be unit-tested directly. The threat it
+     * guards against is seeding committed dev credentials into a real database;
+     * H2's networked modes ({@code jdbc:h2:tcp:} / {@code jdbc:h2:ssl:}) point at
+     * a remote server that is exactly such a database, so a bare
+     * {@code jdbc:h2:} prefix is insufficient. Default-deny: the JDBC product
+     * must be H2 AND the URL must name an in-memory or file database.
+     * </p>
+     */
+    static boolean isEmbeddedH2(String url, String product) {
+        if (!"H2".equalsIgnoreCase(product)) {
+            return false;
+        }
+        String u = url == null ? "" : url.trim().toLowerCase(java.util.Locale.ROOT);
+        return u.startsWith("jdbc:h2:mem:") || u.startsWith("jdbc:h2:file:");
+    }
+
     private void seedFeatureCoverageDemo() {
         Role userRole = roleRepository.findByName("user").orElseThrow();
         User ada = userRepository.findByUsername("ada@passbolt.com").orElseThrow();
