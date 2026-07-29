@@ -64,6 +64,25 @@ public class GpgServiceImpl implements GpgService {
             serverSecretKeyRing = secretKeyRings.iterator().next();
         }
 
+        // FAIL-FAST passphrase validation. The ring above is only PARSED; the
+        // configured JPASSBOLT_GPG_PASSPHRASE is not exercised until
+        // extractPrivateKey() runs, which otherwise happens lazily on the first
+        // GpgAuth request. A wrong passphrase would then boot cleanly and fail
+        // EVERY Stage 0 request, where AuthService.stage0ServerVerify() collapses
+        // the exception to null and the controller reports it as a 400 (bad
+        // client ciphertext) — masking an operator misconfiguration. Extracting
+        // every server secret key here turns that into a loud startup failure and
+        // keeps the request-path decrypt failure genuinely attributable to the
+        // caller (so Stage 0's 400 is correct).
+        char[] passphrase = gpgProperties.getServerKey().getPassphrase().toCharArray();
+        var keyDecryptor = new JcePBESecretKeyDecryptorBuilder()
+                .setProvider(BouncyCastleProvider.PROVIDER_NAME)
+                .build(passphrase);
+        java.util.Iterator<PGPSecretKey> secretKeys = serverSecretKeyRing.getSecretKeys();
+        while (secretKeys.hasNext()) {
+            secretKeys.next().extractPrivateKey(keyDecryptor);
+        }
+
         // Load public key
         try (InputStream publicKeyStream = resourceLoader.getResource(
                 gpgProperties.getServerKey().getPublicLocation()).getInputStream()) {
