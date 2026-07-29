@@ -14,7 +14,9 @@ dev/test fixture。它们的 passphrase 同样公开，不保护任何真实数�
    `mysql` 会把数据源切到真实（可能远程）库，于是 ada admin（私钥+passphrase 已
    公开入库）会被种进真实库，等于把 admin 登录送给任何拿到本仓的人。
    因此 `DataInitializer.run()` 开头有一道**构造级守卫**：运行时检查实际连接，
-   只有 URL 为 `jdbc:h2:` 才播种，否则大声告警并跳过（`config/DataInitializer.java`）。
+   只有驱动确为 H2 **且** URL 为 `jdbc:h2:mem:`（唯一保证进程内、重启即失的形态）
+   才播种；`file:`（持久、路径可能指向共享卷）、`tcp:`/`ssl:`（网络化远程 H2）
+   及一切非嵌入式一律大声告警并跳过（`config/DataInitializer.java`）。
    安全属性由此守卫保证，而非仅靠 profile 名。
 2. **不保护任何真实机密**。它们加密的只有 `DataInitializer` 写入的演示资源。
 3. **与官方 Passbolt 做法一致**。上游 `passbolt_api_ref` 的 TestData 同样附带

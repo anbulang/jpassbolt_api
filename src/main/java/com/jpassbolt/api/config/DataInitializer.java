@@ -156,8 +156,9 @@ public class DataInitializer implements CommandLineRunner {
         //
         // So the safety property ("committed dev keys cannot reach a real
         // environment") is enforced here by construction, not merely by the
-        // profile name: if the live connection is not embedded H2, seeding is
-        // skipped loudly. See src/main/resources/gpg/README.md.
+        // profile name: if the live connection is not IN-MEMORY H2 (the only
+        // guaranteed-ephemeral, process-local store), seeding is skipped loudly.
+        // See src/main/resources/gpg/README.md.
         String dbUrl;
         String dbProduct;
         try (java.sql.Connection c = dataSource.getConnection()) {
@@ -176,11 +177,13 @@ public class DataInitializer implements CommandLineRunner {
         // file database (case-insensitive), which rejects tcp:/ssl: and any
         // future non-embedded URL variant.
         if (!isEmbeddedH2(dbUrl, dbProduct)) {
-            log.warn("[seed] datasource is not embedded H2 (url={}, product={}) — SKIPPING dev fixture "
+            // URL is REDACTED: on this path it is a real, non-embedded datasource
+            // whose URL may embed the DB password (?password=…) — never log it raw.
+            log.warn("[seed] datasource is not in-memory H2 (url={}, product={}) — SKIPPING dev fixture "
                     + "seeding. The committed dev keys (ada@passbolt.com admin, passphrase 'password') must "
-                    + "never reach a real database; this guard fires under SPRING_PROFILES_ACTIVE=local,mysql "
-                    + "and for networked H2 (jdbc:h2:tcp:/ssl:).",
-                    dbUrl, dbProduct);
+                    + "never reach a real database; this guard fires under SPRING_PROFILES_ACTIVE=local,mysql, "
+                    + "for networked H2 (jdbc:h2:tcp:/ssl:), and for persistent jdbc:h2:file:.",
+                    redactJdbcUrl(dbUrl), dbProduct);
             return;
         }
 
@@ -378,8 +381,30 @@ public class DataInitializer implements CommandLineRunner {
         if (!"H2".equalsIgnoreCase(product)) {
             return false;
         }
+        // In-memory ONLY — deliberately NOT jdbc:h2:file: either. A file DB is
+        // persistent and its path could resolve to a shared or mounted volume,
+        // so it is not guaranteed to be the throwaway, process-local store the
+        // seed guarantee assumes; jdbc:h2:mem: is gone on restart and cannot be
+        // anything but ephemeral. The project's local + test profiles both use
+        // mem:, so this loses nothing.
         String u = url == null ? "" : url.trim().toLowerCase(java.util.Locale.ROOT);
-        return u.startsWith("jdbc:h2:mem:") || u.startsWith("jdbc:h2:file:");
+        return u.startsWith("jdbc:h2:mem:");
+    }
+
+    /**
+     * Reduce a JDBC URL to just its {@code jdbc:<subprotocol>:} scheme for safe
+     * logging. Everything after can carry a host, embedded credentials, or query
+     * properties such as {@code ?password=…}; the seed guard only ever logs on
+     * the misconfiguration path (a real, possibly credential-bearing URL), so the
+     * raw value must never reach centralized logs.
+     */
+    static String redactJdbcUrl(String url) {
+        if (url == null) {
+            return "null";
+        }
+        java.util.regex.Matcher m =
+                java.util.regex.Pattern.compile("^(jdbc:[a-zA-Z0-9]+:)").matcher(url.trim());
+        return m.find() ? m.group(1) + "***" : "***";
     }
 
     private void seedFeatureCoverageDemo() {

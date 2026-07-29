@@ -25,8 +25,10 @@ class DataInitializerGuardTest {
     }
 
     @Test
-    void embeddedFile_isAllowed() {
-        assertThat(DataInitializer.isEmbeddedH2("jdbc:h2:file:/var/data/dev", "H2")).isTrue();
+    void persistentFile_isRejected() {
+        // file: is persistent and its path could be a shared/mounted volume, so
+        // it is not the guaranteed-ephemeral store the seed guarantee assumes.
+        assertThat(DataInitializer.isEmbeddedH2("jdbc:h2:file:/var/data/dev", "H2")).isFalse();
     }
 
     @Test
@@ -60,5 +62,27 @@ class DataInitializerGuardTest {
     void nullsAreRejected() {
         assertThat(DataInitializer.isEmbeddedH2(null, "H2")).isFalse();
         assertThat(DataInitializer.isEmbeddedH2("jdbc:h2:mem:x", null)).isFalse();
+    }
+
+    // --- redactJdbcUrl: the reject-path log must never leak embedded credentials ---
+
+    @Test
+    void redact_stripsHostCredentialsAndQueryProps() {
+        // A MySQL URL with an embedded password must not survive into logs.
+        assertThat(DataInitializer.redactJdbcUrl(
+                "jdbc:mysql://user:s3cr3t@db.internal:3306/prod?password=s3cr3t"))
+                .isEqualTo("jdbc:mysql:***")
+                .doesNotContain("s3cr3t");
+    }
+
+    @Test
+    void redact_keepsOnlyScheme() {
+        assertThat(DataInitializer.redactJdbcUrl("jdbc:h2:tcp://host:9092/prod")).isEqualTo("jdbc:h2:***");
+    }
+
+    @Test
+    void redact_handlesNullAndGarbage() {
+        assertThat(DataInitializer.redactJdbcUrl(null)).isEqualTo("null");
+        assertThat(DataInitializer.redactJdbcUrl("not-a-jdbc-url")).isEqualTo("***");
     }
 }
