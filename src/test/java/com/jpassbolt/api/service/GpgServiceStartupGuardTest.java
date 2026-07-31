@@ -27,9 +27,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class GpgServiceStartupGuardTest {
 
     private GpgServiceImpl gpgServiceWith(String passphrase) {
+        return gpgServiceWith("classpath:gpg/ada_private.asc", "classpath:gpg/ada_public.asc", passphrase);
+    }
+
+    private GpgServiceImpl gpgServiceWith(String privateLocation, String publicLocation, String passphrase) {
         GpgProperties props = new GpgProperties();
-        props.getServerKey().setPrivateLocation("classpath:gpg/ada_private.asc");
-        props.getServerKey().setPublicLocation("classpath:gpg/ada_public.asc");
+        props.getServerKey().setPrivateLocation(privateLocation);
+        props.getServerKey().setPublicLocation(publicLocation);
         props.getServerKey().setPassphrase(passphrase);
         return new GpgServiceImpl(props, new DefaultResourceLoader());
     }
@@ -44,6 +48,17 @@ class GpgServiceStartupGuardTest {
         // The whole point: a wrong passphrase must blow up init(), not sail
         // through startup and surface only on the first GpgAuth request.
         assertThatThrownBy(() -> gpgServiceWith("definitely-not-the-passphrase").init())
+                .isInstanceOf(RuntimeException.class);
+    }
+
+    @Test
+    void mismatchedKeyrings_failAtStartupNotLater() {
+        // Private = ada's keypair, public = the demo_metadata keypair — both
+        // individually valid, but the advertised public encryption key has no
+        // matching private key. Without the correspondence check this boots and
+        // then reports every Stage 0 as a 400; it must fail at init() instead.
+        assertThatThrownBy(() -> gpgServiceWith(
+                "classpath:gpg/ada_private.asc", "classpath:gpg/demo_metadata_public.asc", "password").init())
                 .isInstanceOf(RuntimeException.class);
     }
 }

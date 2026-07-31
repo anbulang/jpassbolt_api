@@ -97,6 +97,33 @@ public class GpgServiceImpl implements GpgService {
                 gpgProperties.getServerKey().getPublicLocation()).getInputStream()) {
             serverPublicKeyArmored = new String(publicKeyStream.readAllBytes(), StandardCharsets.UTF_8);
         }
+
+        // FAIL-FAST keyring-correspondence check. The passphrase loop above only
+        // proves the private ring OPENS — not that it belongs to the ADVERTISED
+        // public ring. Two individually valid but MISMATCHED keyrings (different
+        // keypairs in the private- and public-location) otherwise pass startup,
+        // then break every request: clients encrypt Stage 0 to the advertised
+        // public key, findPrivateKey() cannot locate that key id in the private
+        // ring, and handleStage0() misreports the server-config failure as a 400.
+        // Require the advertised ENCRYPTION public key to have a matching private
+        // key, so a mismatch fails loudly at boot instead.
+        boolean encryptionKeyMatched = false;
+        java.util.Iterator<PGPPublicKey> publicKeys = serverPublicKeyRing.getPublicKeys();
+        while (publicKeys.hasNext()) {
+            PGPPublicKey pub = publicKeys.next();
+            if (pub.isEncryptionKey()) {
+                if (serverSecretKeyRing.getSecretKey(pub.getKeyID()) == null) {
+                    throw new PGPException("Server public encryption key "
+                            + Long.toHexString(pub.getKeyID())
+                            + " has no matching private key — the configured public and private GPG "
+                            + "keyrings are a mismatched pair.");
+                }
+                encryptionKeyMatched = true;
+            }
+        }
+        if (!encryptionKeyMatched) {
+            throw new PGPException("Server public keyring advertises no encryption key.");
+        }
     }
 
     @Override
