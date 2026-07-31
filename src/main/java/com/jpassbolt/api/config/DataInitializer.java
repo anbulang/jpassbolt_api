@@ -120,6 +120,7 @@ public class DataInitializer implements CommandLineRunner {
     private final OrganizationSettingRepository organizationSettingRepository;
     private final AccountSettingRepository accountSettingRepository;
     private final SettingsProperties settingsProperties;
+    private final javax.sql.DataSource dataSource;
 
     /** Canonical Passbolt test key for betty@passbolt.com (40-hex fingerprint). */
     private static final String BETTY_FINGERPRINT = "A754860C3ADE5AB04599025ED3F1FE4BE61D7009";
@@ -142,6 +143,50 @@ public class DataInitializer implements CommandLineRunner {
 
     @Override
     public void run(String... args) {
+        // SAFETY GUARD — seed ONLY against an embedded H2 database.
+        //
+        // @Profile("local") activates this initializer whenever `local` is in the
+        // active set, but the effective datasource is NOT implied by that: with
+        // SPRING_PROFILES_ACTIVE=local,mysql the later `mysql` profile selects a
+        // real (possibly remote) database while `local` still switches this bean
+        // on. Seeding then writes the ada@passbolt.com ADMIN account — whose
+        // private key + passphrase ("password") are committed to this public
+        // repo — into that real database, handing an admin login to anyone with
+        // the repository.
+        //
+        // So the safety property ("committed dev keys cannot reach a real
+        // environment") is enforced here by construction, not merely by the
+        // profile name: if the live connection is not IN-MEMORY H2 (the only
+        // guaranteed-ephemeral, process-local store), seeding is skipped loudly.
+        // See src/main/resources/gpg/README.md.
+        String dbUrl;
+        String dbProduct;
+        try (java.sql.Connection c = dataSource.getConnection()) {
+            dbUrl = c.getMetaData().getURL();
+            dbProduct = c.getMetaData().getDatabaseProductName();
+        } catch (java.sql.SQLException e) {
+            log.error("[seed] could not inspect the datasource; refusing to seed dev fixtures", e);
+            return;
+        }
+        // Allowlist genuine EMBEDDED H2 only. A bare "jdbc:h2:" prefix is NOT
+        // enough: H2 also speaks a networked server protocol — jdbc:h2:tcp: and
+        // jdbc:h2:ssl: point at a REMOTE H2 that is every bit as real as MySQL,
+        // so a prefix-only check would let the guard pass for a shared database
+        // and re-open exactly the hole it exists to close. Default-deny: require
+        // the driver to actually be H2 AND the URL to be an in-memory or local
+        // file database (case-insensitive), which rejects tcp:/ssl: and any
+        // future non-embedded URL variant.
+        if (!isEmbeddedH2(dbUrl, dbProduct)) {
+            // URL is REDACTED: on this path it is a real, non-embedded datasource
+            // whose URL may embed the DB password (?password=…) — never log it raw.
+            log.warn("[seed] datasource is not in-memory H2 (url={}, product={}) — SKIPPING dev fixture "
+                    + "seeding. The committed dev keys (ada@passbolt.com admin, passphrase 'password') must "
+                    + "never reach a real database; this guard fires under SPRING_PROFILES_ACTIVE=local,mysql, "
+                    + "for networked H2 (jdbc:h2:tcp:/ssl:), and for persistent jdbc:h2:file:.",
+                    redactJdbcUrl(dbUrl), dbProduct);
+            return;
+        }
+
         // Create roles
         Role userRole = new Role();
         userRole.setName("user");
@@ -320,6 +365,48 @@ public class DataInitializer implements CommandLineRunner {
      * (Bouncy Castle) — the server only ever stores ciphertext.
      * </p>
      */
+    /**
+     * True only for a genuine EMBEDDED H2 database (in-memory or local file).
+     *
+     * <p>
+     * Package-private + static so it can be unit-tested directly. The threat it
+     * guards against is seeding committed dev credentials into a real database;
+     * H2's networked modes ({@code jdbc:h2:tcp:} / {@code jdbc:h2:ssl:}) point at
+     * a remote server that is exactly such a database, so a bare
+     * {@code jdbc:h2:} prefix is insufficient. Default-deny: the JDBC product
+     * must be H2 AND the URL must name an in-memory or file database.
+     * </p>
+     */
+    static boolean isEmbeddedH2(String url, String product) {
+        if (!"H2".equalsIgnoreCase(product)) {
+            return false;
+        }
+        // In-memory ONLY — deliberately NOT jdbc:h2:file: either. A file DB is
+        // persistent and its path could resolve to a shared or mounted volume,
+        // so it is not guaranteed to be the throwaway, process-local store the
+        // seed guarantee assumes; jdbc:h2:mem: is gone on restart and cannot be
+        // anything but ephemeral. The project's local + test profiles both use
+        // mem:, so this loses nothing.
+        String u = url == null ? "" : url.trim().toLowerCase(java.util.Locale.ROOT);
+        return u.startsWith("jdbc:h2:mem:");
+    }
+
+    /**
+     * Reduce a JDBC URL to just its {@code jdbc:<subprotocol>:} scheme for safe
+     * logging. Everything after can carry a host, embedded credentials, or query
+     * properties such as {@code ?password=…}; the seed guard only ever logs on
+     * the misconfiguration path (a real, possibly credential-bearing URL), so the
+     * raw value must never reach centralized logs.
+     */
+    static String redactJdbcUrl(String url) {
+        if (url == null) {
+            return "null";
+        }
+        java.util.regex.Matcher m =
+                java.util.regex.Pattern.compile("^(jdbc:[a-zA-Z0-9]+:)").matcher(url.trim());
+        return m.find() ? m.group(1) + "***" : "***";
+    }
+
     private void seedFeatureCoverageDemo() {
         Role userRole = roleRepository.findByName("user").orElseThrow();
         User ada = userRepository.findByUsername("ada@passbolt.com").orElseThrow();

@@ -179,6 +179,15 @@ class AuthExtrasControllerTest {
                 .andExpect(header().string("X-GPGAuth-Verify-Response", nonce));
     }
 
+    // The three verify-error cases below expect 400, not 200. PHP routes
+    // POST /auth/verify.json onto the same AuthLogin::loginPost action as
+    // /auth/login.json, so they inherit that action's status codes — every
+    // caller-input failure is a 400 (AuthLoginControllerTest:96/:192/:511).
+    // Note the official Stage 0 wrong-key test (:337) asserts only headers and
+    // never a status, so 400 here follows the same responsibility rule rather
+    // than a copied assertion: the caller sent ciphertext this server cannot
+    // decrypt, which is caller input, not a server fault.
+
     @Test
     void testVerifyPostWithInvalidNonceFormat_ReturnsGpgAuthError() throws Exception {
         PGPPublicKey serverKey = GpgTestHelper.loadPublicKey(gpgService.getServerPublicKey());
@@ -188,7 +197,7 @@ class AuthExtrasControllerTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(
                         verifyBody(gpgService.getServerKeyFingerprint(), encryptedToken))))
-                .andExpect(status().isOk())
+                .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.header.status").value("error"))
                 .andExpect(header().string("X-GPGAuth-Error", "true"));
     }
@@ -199,7 +208,7 @@ class AuthExtrasControllerTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(
                         verifyBody(gpgService.getServerKeyFingerprint(), "-----BEGIN PGP MESSAGE-----\ngarbage"))))
-                .andExpect(status().isOk())
+                .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.header.status").value("error"))
                 .andExpect(header().string("X-GPGAuth-Error", "true"));
     }
@@ -210,7 +219,7 @@ class AuthExtrasControllerTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(
                         verifyBody(gpgService.getServerKeyFingerprint(), null))))
-                .andExpect(status().isOk())
+                .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.header.status").value("error"))
                 .andExpect(header().string("X-GPGAuth-Error", "true"));
     }

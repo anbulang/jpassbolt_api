@@ -45,8 +45,14 @@ src/main/resources/jwt/
 *.pem
 .env
 .env.*
-# 注意：dev/test 服务端 GPG 密钥 (src/main/resources/gpg/*.asc) 为有意提交（passphrase 公开，仅 dev/test），
-# 故此处不 blanket 忽略 *.asc；生产 GPG/JWT 私钥务必经 env 注入、绝不入库。
+# 注意：src/main/resources/gpg/*.asc 中的 dev/test 密钥为【有意提交】（passphrase 公开，
+# 且播种它们的 DataInitializer 带 @Profile("local")，只影响 H2 内存库），故此处不 blanket
+# 忽略 *.asc。完整清单与公开理由见 src/main/resources/gpg/README.md。
+#
+# 新增私钥前先判断："这把钥匙泄露后，攻击者能拿它做什么？"
+#   - 只在 @Profile("local") 播种、不影响真实环境 → 可提交，并登记进上述 README 表格
+#   - 服务端身份钥 / 生产钥 / 任何真实环境在用的钥 → 追加到下面的排除列表，经 env 注入
+# 生产 GPG/JWT 私钥务必经 env 注入、绝不入库。
 
-# dev GPG server private key — local only, never commit/publish
+# 服务端身份私钥 — 泄露即可冒充本服务完成 GpgAuth stage0，性质不同于用户钥，仅限本机
 src/main/resources/gpg/server_private.asc

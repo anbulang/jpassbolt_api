@@ -136,4 +136,13 @@ class SkeletonPageServletTest {
         assertThat(page).contains("unsafeMode: 'Unsafe mode");
         assertThat(page).doesNotContain(SkeletonPageConfig.SkeletonPageServlet.UNSAFE_MODE_TOKEN);
     }
+
+    @Test
+    void testBrandIcon_IsEmbeddedInHeaderAndFavicon() throws Exception {
+        String page = serve(request("/auth/login", "localhost", false)).getContentAsString();
+
+        assertThat(page).contains("<link rel=\"icon\" type=\"image/png\" href=\"data:image/png;base64,");
+        assertThat(page).contains("<img class=\"lg\" src=\"data:image/png;base64,");
+        assertThat(page).doesNotContain(SkeletonPageConfig.SkeletonPageServlet.BRAND_ICON_TOKEN);
+    }
 }

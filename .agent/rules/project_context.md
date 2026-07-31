@@ -10,8 +10,11 @@
 ### Monorepo 结构
 本项目属于 `jpassbolt` monorepo 的一部分：
 - `jpassbolt_api/` — **本项目**，Java 后端 API
-- `jpassbolt_frontend/` — React/TypeScript 新前端 (SPA)
-- `jpassbolt_api/passbolt_api_ref/` — 原始 PHP/CakePHP 参考代码
+- `jpassbolt_browser_extension/` — **活跃客户端**，Manifest V3 浏览器插件；密钥与加密操作位于 background service worker
+- `jpassbolt_frontend/` — **DEPRECATED**，已退役的 React/TypeScript 独立 SPA，仅作历史参考，不再承载新功能
+- `jpassbolt_api/passbolt_api_ref/` — 原始 PHP/CakePHP 参考代码，严禁修改
+
+当前交付架构为 **Java 后端 + 浏览器插件**。为对齐官方 Passbolt 的安全边界，独立 SPA 已退出交付链路；客户端功能应在浏览器插件中实现。
 
 ---
 
@@ -327,7 +330,7 @@ jpassbolt:
 - v5 Metadata 体系（26 端点）
 - EE Tags（3 端点）
 - resource-types 写端点（v5-only）
-- 前端页面扩展（目前仅 Login / Dashboard）
+- 浏览器插件能力扩展；已退役的独立 SPA 不再纳入路线图
 
 ---
 

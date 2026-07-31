@@ -64,6 +64,25 @@ public class GpgServiceImpl implements GpgService {
             serverSecretKeyRing = secretKeyRings.iterator().next();
         }
 
+        // FAIL-FAST passphrase validation. The ring above is only PARSED; the
+        // configured JPASSBOLT_GPG_PASSPHRASE is not exercised until
+        // extractPrivateKey() runs, which otherwise happens lazily on the first
+        // GpgAuth request. A wrong passphrase would then boot cleanly and fail
+        // EVERY Stage 0 request, where AuthService.stage0ServerVerify() collapses
+        // the exception to null and the controller reports it as a 400 (bad
+        // client ciphertext) — masking an operator misconfiguration. Extracting
+        // every server secret key here turns that into a loud startup failure and
+        // keeps the request-path decrypt failure genuinely attributable to the
+        // caller (so Stage 0's 400 is correct).
+        char[] passphrase = gpgProperties.getServerKey().getPassphrase().toCharArray();
+        var keyDecryptor = new JcePBESecretKeyDecryptorBuilder()
+                .setProvider(BouncyCastleProvider.PROVIDER_NAME)
+                .build(passphrase);
+        java.util.Iterator<PGPSecretKey> secretKeys = serverSecretKeyRing.getSecretKeys();
+        while (secretKeys.hasNext()) {
+            secretKeys.next().extractPrivateKey(keyDecryptor);
+        }
+
         // Load public key
         try (InputStream publicKeyStream = resourceLoader.getResource(
                 gpgProperties.getServerKey().getPublicLocation()).getInputStream()) {
@@ -77,6 +96,33 @@ public class GpgServiceImpl implements GpgService {
         try (InputStream publicKeyStream = resourceLoader.getResource(
                 gpgProperties.getServerKey().getPublicLocation()).getInputStream()) {
             serverPublicKeyArmored = new String(publicKeyStream.readAllBytes(), StandardCharsets.UTF_8);
+        }
+
+        // FAIL-FAST keyring-correspondence check. The passphrase loop above only
+        // proves the private ring OPENS — not that it belongs to the ADVERTISED
+        // public ring. Two individually valid but MISMATCHED keyrings (different
+        // keypairs in the private- and public-location) otherwise pass startup,
+        // then break every request: clients encrypt Stage 0 to the advertised
+        // public key, findPrivateKey() cannot locate that key id in the private
+        // ring, and handleStage0() misreports the server-config failure as a 400.
+        // Require the advertised ENCRYPTION public key to have a matching private
+        // key, so a mismatch fails loudly at boot instead.
+        boolean encryptionKeyMatched = false;
+        java.util.Iterator<PGPPublicKey> publicKeys = serverPublicKeyRing.getPublicKeys();
+        while (publicKeys.hasNext()) {
+            PGPPublicKey pub = publicKeys.next();
+            if (pub.isEncryptionKey()) {
+                if (serverSecretKeyRing.getSecretKey(pub.getKeyID()) == null) {
+                    throw new PGPException("Server public encryption key "
+                            + Long.toHexString(pub.getKeyID())
+                            + " has no matching private key — the configured public and private GPG "
+                            + "keyrings are a mismatched pair.");
+                }
+                encryptionKeyMatched = true;
+            }
+        }
+        if (!encryptionKeyMatched) {
+            throw new PGPException("Server public keyring advertises no encryption key.");
         }
     }
 

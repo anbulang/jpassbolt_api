@@ -244,12 +244,27 @@ class AuthControllerTest {
         data.setGpgAuth(gpgAuth);
         request.setData(data);
 
+        // 400, not 200: official Passbolt answers an unknown key with a 400
+        // (AuthLoginControllerTest:96). A 200 here reads as success to any
+        // client that keys off the status code, including the official
+        // extension.
+        //
+        // header.code is asserted alongside the status because the two used to
+        // disagree: createResponse pinned the envelope code at 200 while the
+        // transport said 400, so an envelope-reading client still saw success.
+        // Official Passbolt fills it from the error code itself
+        // (AppController::_error -> 'code' => $errorCode).
         mockMvc.perform(post("/auth/login.json")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(request)))
-                .andExpect(status().isOk())
+                .andExpect(status().isBadRequest())
                 .andExpect(header().string("X-GPGAuth-Error", "true"))
-                .andExpect(jsonPath("$.header.status").value("error"));
+                .andExpect(jsonPath("$.header.status").value("error"))
+                .andExpect(jsonPath("$.header.code").value(400))
+                // body is the empty STRING, not {}: the OpenAPI badRequest schema
+                // declares body as type:string (plugin-redoc-0.yaml). A {} here
+                // fails OpenAPI validation despite the correct status/code.
+                .andExpect(jsonPath("$.body").value(""));
     }
 
     // ------------------------------------------------------------------
@@ -273,9 +288,16 @@ class AuthControllerTest {
         return mockMvc.perform(post("/auth/login.json")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(request)))
+                // Official Passbolt rejects a bad stage-2 user_token with 400
+                // (AuthLoginControllerTest:511) — NOT 401: the session did not
+                // expire, the login attempt itself was refused.
+                .andExpect(status().isBadRequest())
                 .andExpect(header().string("X-GPGAuth-Authenticated", "false"))
                 .andExpect(header().doesNotExist("Authorization"))
                 .andExpect(jsonPath("$.header.status").value("error"))
+                // Envelope code must track the transport status — see
+                // testLoginWithInvalidKeyId_ReturnsError.
+                .andExpect(jsonPath("$.header.code").value(400))
                 .andReturn();
     }
 
