@@ -63,16 +63,17 @@ class EmailTemplateServiceTest {
                 .contains("A password was shared with you")  // English base-bundle title
                 .contains("Open in JPassbolt")
                 .contains("Ada Lovelace");
-        assertThat(templateService.subject("email.resource.share.subject", Locale.GERMAN, "Ada Lovelace"))
-                .isEqualTo("Ada Lovelace shared a password with you");
+        assertThat(templateService.subject("email.resource.share.subject.generic", Locale.GERMAN, "Ada"))
+                .isEqualTo("Ada shared a resource");
     }
 
     @Test
     void subjectIsLocalized() {
-        assertThat(templateService.subject("email.resource.share.subject", Locale.ENGLISH, "Ada Lovelace"))
-                .isEqualTo("Ada Lovelace shared a password with you");
-        assertThat(templateService.subject("email.resource.share.subject", Locale.SIMPLIFIED_CHINESE, "Ada Lovelace"))
-                .contains("与您共享了一个密码");
+        assertThat(templateService.subject("email.resource.share.subject.generic", Locale.ENGLISH, "Ada"))
+                .isEqualTo("Ada shared a resource");
+        assertThat(templateService.subject("email.resource.share.subject.generic",
+                Locale.SIMPLIFIED_CHINESE, "Ada"))
+                .contains("与您共享了一个资源");
     }
 
     @Test

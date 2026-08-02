@@ -130,6 +130,8 @@ class ShareEmailNotificationE2ETest {
                 .map(Object::toString)
                 .collect(Collectors.toSet());
         assertThat(recipients).containsExactlyInAnyOrder("alice-e2e@passbolt.com", "bob-e2e@passbolt.com");
-        assertThat(messages[0].getSubject()).isEqualTo("Grace Hopper 与您共享了一个密码");
+        // First name + named variant (PHP "{0} shared the resource {1}"), asserted
+        // end-to-end over SMTP so the MIME-encoded subject is covered too.
+        assertThat(messages[0].getSubject()).isEqualTo("Grace 与您共享了资源 Shared AWS root");
     }
 }

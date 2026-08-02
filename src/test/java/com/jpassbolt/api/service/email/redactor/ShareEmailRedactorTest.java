@@ -114,7 +114,11 @@ class ShareEmailRedactorTest {
         assertThat(recipients).containsExactlyInAnyOrder("alice@passbolt.com", "bob@passbolt.com");
 
         EmailMessage any = captor.getAllValues().get(0);
-        assertThat(any.subject()).isEqualTo("Grace Hopper 与您共享了一个密码");
+        // PHP: "{0} shared the resource {1}" with the operator's FIRST name — not
+        // the full name, and not the generic variant when the row carries a name.
+        // (The subject says "resource" while the body says "password": the
+        // reference's own wording split, mirrored deliberately.)
+        assertThat(any.subject()).isEqualTo("Grace 与您共享了资源 AWS root");
         assertThat(any.html())
                 .contains("AWS root")                                 // resource name (v4)
                 .contains("/app/passwords/view/res-1")                // SPA deep link
@@ -152,7 +156,7 @@ class ShareEmailRedactorTest {
     }
 
     @Test
-    void v5ResourceUsesNamelessIntro() {
+    void v5ResourceUsesNamelessSubjectAndIntro() {
         ResourceSharedEvent v5 = new ResourceSharedEvent(
                 "res-9", null, null, null, null, true, actorId,
                 new LinkedHashSet<>(List.of(aliceId)), Map.of());
@@ -161,8 +165,11 @@ class ShareEmailRedactorTest {
 
         ArgumentCaptor<EmailMessage> captor = ArgumentCaptor.forClass(EmailMessage.class);
         verify(mailService).send(captor.capture());
+        // v5 names live in encrypted metadata, so both the subject and the intro
+        // fall back to the generic wording (PHP: "{0} shared a resource").
+        assertThat(captor.getValue().subject()).isEqualTo("Grace 与您共享了一个资源");
         assertThat(captor.getValue().html())
-                .contains("Grace Hopper 与您共享了一个密码")   // nameless intro
-                .doesNotContain("shared the password");                 // not the named-intro variant
+                .contains("Grace 与您共享了一个密码")     // nameless intro
+                .doesNotContain("shared the password");             // not the named-intro variant
     }
 }
