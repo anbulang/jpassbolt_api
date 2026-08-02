@@ -357,7 +357,12 @@ public class FolderService {
                         .ifPresent(childFolder -> deleteFolderNode(childFolder, true, userId));
             } else if (FoldersRelation.FOREIGN_MODEL_RESOURCE.equals(childModel)) {
                 // Soft delete (reuses the favorites cascade) + drop tree rows.
-                resourceService.deleteResource(childId, userId);
+                // The cascade variant deliberately sends no password-delete mail:
+                // PHP's FoldersDeleteService::deleteResource bypasses
+                // ResourcesDeleteController, which is the only event
+                // ResourceDeleteEmailRedactor subscribes to. Recipients get the
+                // single folder-delete notice, not one mail per child.
+                resourceService.deleteResourceCascaded(childId, userId);
                 foldersRelationRepository.deleteByForeignId(childId);
             }
         }

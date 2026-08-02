@@ -11,12 +11,18 @@ import com.jpassbolt.api.repository.FoldersRelationRepository;
 import com.jpassbolt.api.repository.PermissionRepository;
 import com.jpassbolt.api.repository.ResourceRepository;
 import com.jpassbolt.api.repository.SecretRepository;
+import com.jpassbolt.api.service.email.event.ResourceCreatedEvent;
+import com.jpassbolt.api.service.email.event.ResourceDeletedEvent;
+import com.jpassbolt.api.service.email.event.ResourceUpdatedEvent;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
 
@@ -36,6 +42,7 @@ public class ResourceService {
     private final FolderRepository folderRepository;
     private final MetadataValidationSupport metadataValidationSupport;
     private final MetadataTypesSettingsService metadataTypesSettingsService;
+    private final ApplicationEventPublisher eventPublisher;
 
     /** PHP v5 resource undecryptable-metadata message (note: "can not"). */
     private static final String RESOURCE_METADATA_NOT_DECRYPTABLE =
@@ -135,14 +142,20 @@ public class ResourceService {
         ownerPermission.setType(Permission.OWNER);
         permissionRepository.save(ownerPermission);
 
-        // Create secrets if provided
+        // Create secrets if provided, capturing the creator's own ciphertext for
+        // the (default-off) show_secret notification block.
+        String creatorSecret = null;
         if (request.getSecrets() != null) {
             for (ResourceDto.CreateRequest.SecretData secretData : request.getSecrets()) {
+                String secretUserId = secretData.getUserId() != null ? secretData.getUserId() : userId;
                 Secret secret = new Secret();
                 secret.setResourceId(savedResource.getId());
-                secret.setUserId(secretData.getUserId() != null ? secretData.getUserId() : userId);
+                secret.setUserId(secretUserId);
                 secret.setData(secretData.getData());
                 secretRepository.save(secret);
+                if (userId.equals(secretUserId)) {
+                    creatorSecret = secretData.getData();
+                }
             }
         }
 
@@ -156,6 +169,18 @@ public class ResourceService {
         relation.setUserId(userId);
         relation.setFolderParentId(request.getFolderParentId());
         foldersRelationRepository.save(relation);
+
+        // Notify the creator (ResourceCreateEmailRedactor, gate send.password.create,
+        // default off). v5 resources carry null v4 columns → generic wording.
+        eventPublisher.publishEvent(new ResourceCreatedEvent(
+                savedResource.getId(),
+                savedResource.getName(),
+                savedResource.getUsername(),
+                savedResource.getUri(),
+                savedResource.getDescription(),
+                savedResource.getMetadata() != null,
+                userId,
+                creatorSecret));
 
         return savedResource;
     }
@@ -309,7 +334,9 @@ public class ResourceService {
                     }
                     resource.setModifiedBy(userId);
 
-                    // Update secrets if provided
+                    // Update secrets if provided, capturing each re-written
+                    // ciphertext by user for the (default-off) show_secret block.
+                    Map<String, String> secretsByUserId = new LinkedHashMap<>();
                     if (request.getSecrets() != null) {
                         for (ResourceDto.CreateRequest.SecretData secretData : request.getSecrets()) {
                             String targetUserId = secretData.getUserId() != null ? secretData.getUserId() : userId;
@@ -326,10 +353,26 @@ public class ResourceService {
                                 secret.setData(secretData.getData());
                                 secretRepository.save(secret);
                             }
+                            secretsByUserId.put(targetUserId, secretData.getData());
                         }
                     }
 
-                    return resourceRepository.save(resource);
+                    Resource saved = resourceRepository.save(resource);
+
+                    // Notify everyone with access (ResourceUpdateEmailRedactor,
+                    // gate send.password.update, default on). v5 resources carry
+                    // null v4 columns → generic wording.
+                    eventPublisher.publishEvent(new ResourceUpdatedEvent(
+                            saved.getId(),
+                            saved.getName(),
+                            saved.getUsername(),
+                            saved.getUri(),
+                            saved.getDescription(),
+                            saved.getMetadata() != null,
+                            userId,
+                            secretsByUserId));
+
+                    return saved;
                 });
     }
 
@@ -342,6 +385,34 @@ public class ResourceService {
      */
     @Transactional
     public boolean deleteResource(String id, String userId) {
+        return softDelete(id, userId, true);
+    }
+
+    /**
+     * Soft delete on the CASCADE path (a folder deletion sweeping its children),
+     * which sends no password-delete notification.
+     *
+     * <p>
+     * This mirrors the reference exactly. PHP's {@code ResourceDeleteEmailRedactor}
+     * subscribes to {@code ResourcesDeleteController::DELETE_SUCCESS_EVENT_NAME}
+     * only, while {@code FoldersDeleteService::deleteResource} calls
+     * {@code ResourcesTable::softDelete()} directly and never goes through that
+     * controller — so deleting a folder with 20 shared passwords mails each
+     * recipient exactly ONE folder-delete notice, not one notice plus twenty
+     * "X deleted the password Y" mails.
+     * </p>
+     *
+     * <p>
+     * The distinction has to live here because this service publishes the event:
+     * routing the cascade through {@link #deleteResource} would fan out a mail
+     * storm official Passbolt never produces.
+     * </p>
+     */
+    public boolean deleteResourceCascaded(String id, String userId) {
+        return softDelete(id, userId, false);
+    }
+
+    private boolean softDelete(String id, String userId, boolean notify) {
         return resourceRepository.findById(id)
                 .filter(r -> !r.getDeleted())
                 .map(resource -> {
@@ -354,6 +425,25 @@ public class ResourceService {
                     // Drop the resource from every user's folder tree (PHP
                     // ResourcesEventListener afterResourceSoftDeleted).
                     foldersRelationRepository.deleteByForeignId(id);
+
+                    // Notify everyone who had access except the deleter
+                    // (ResourceDeleteEmailRedactor, gate send.password.delete,
+                    // default on). Soft delete keeps the permission rows, so the
+                    // redactor re-resolves recipients post-commit and excludes the
+                    // actor there. v5 resources carry null v4 columns → generic
+                    // wording. Suppressed on the cascade path — see
+                    // deleteResourceCascaded for why the reference sends nothing
+                    // there.
+                    if (notify) {
+                        eventPublisher.publishEvent(new ResourceDeletedEvent(
+                                resource.getId(),
+                                resource.getName(),
+                                resource.getUsername(),
+                                resource.getUri(),
+                                resource.getDescription(),
+                                resource.getMetadata() != null,
+                                userId));
+                    }
                     return true;
                 })
                 .orElse(false);
