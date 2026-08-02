@@ -57,6 +57,12 @@ public class RecipientResolver {
         return resolveUsers(permissionService.getUsersIdsHavingAccessTo(resourceId));
     }
 
+    /** Everyone (users + expanded group members) with any permission on a folder. */
+    @Transactional(readOnly = true)
+    public Set<Recipient> resolveUsersWithAccessToFolder(String folderId) {
+        return resolveUsers(permissionService.getUsersIdsHavingAccessToFolder(folderId));
+    }
+
     /** Active (non-soft-deleted) members of a group. */
     @Transactional(readOnly = true)
     public Set<Recipient> resolveGroupMembers(String groupId) {

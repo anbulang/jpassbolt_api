@@ -3,10 +3,12 @@ package com.jpassbolt.api.service;
 import com.jpassbolt.api.dto.ShareDto;
 import com.jpassbolt.api.exception.PassboltApiException;
 import com.jpassbolt.api.exception.ShareValidationException;
+import com.jpassbolt.api.model.Folder;
 import com.jpassbolt.api.model.FoldersRelation;
 import com.jpassbolt.api.model.Permission;
 import com.jpassbolt.api.model.Resource;
 import com.jpassbolt.api.model.Secret;
+import com.jpassbolt.api.service.email.event.FolderSharedEvent;
 import com.jpassbolt.api.service.email.event.ResourceSharedEvent;
 import com.jpassbolt.api.repository.FavoriteRepository;
 import com.jpassbolt.api.repository.FolderRepository;
@@ -130,6 +132,18 @@ public class PermissionService {
     @Transactional(readOnly = true)
     public Set<String> getUsersIdsHavingAccessTo(String resourceId) {
         return usersIdsHavingAccess(toSimPerms(permissionRepository.findByResourceId(resourceId)));
+    }
+
+    /**
+     * All user ids currently having access to a folder: the ACO-scoped twin of
+     * {@link #getUsersIdsHavingAccessTo} (permissions with {@code aco = "Folder"}),
+     * used by the folder notification redactors to resolve recipients (PHP
+     * {@code PermissionsGetUsersIdsHavingAccessToService} is ACO-agnostic).
+     */
+    @Transactional(readOnly = true)
+    public Set<String> getUsersIdsHavingAccessToFolder(String folderId) {
+        return usersIdsHavingAccess(toSimPerms(
+                permissionRepository.findByAcoAndAcoForeignKey(FolderService.FOLDER_ACO, folderId)));
     }
 
     /**
@@ -445,6 +459,22 @@ public class PermissionService {
         for (String lostUserId : removed) {
             foldersRelationRepository.moveUserChildrenToRoot(lostUserId, folderId);
             foldersRelationRepository.deleteByUserIdAndForeignId(lostUserId, folderId);
+        }
+
+        // --- Notification (ShareFolderEmailRedactor): email the users newly
+        // granted access, after the share commits. Snapshot the folder's v4
+        // plaintext name / v5 flag now — the AFTER_COMMIT listener runs detached.
+        // The sharer kept their existing access and is never in 'added', but the
+        // redactor filters them out defensively. Only published when someone
+        // actually gained access. ---
+        if (!added.isEmpty()) {
+            Folder folder = folderRepository.findById(folderId).orElse(null);
+            eventPublisher.publishEvent(new FolderSharedEvent(
+                    folderId,
+                    folder == null ? null : folder.getName(),
+                    folder != null && folder.getMetadata() != null,
+                    userId,
+                    new LinkedHashSet<>(added)));
         }
     }
 

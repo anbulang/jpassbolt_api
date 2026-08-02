@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<!--
+  Sent to every user who had access when a folder is deleted (DeleteFolderEmailRedactor).
+  Variables: title (pre-localized shell title); intro (pre-localized body line,
+  self/other × named/generic resolved in the redactor). No `link` — the folder no
+  longer exists, so the CTA/fallback blocks are suppressed. Only the `content`
+  fragment is pulled into the shared shell.
+-->
+<body th:replace="~{_layout :: shell(${title}, ~{::content})}">
+<div th:fragment="content">
+  <p th:text="${intro}">A folder you had access to was deleted.</p>
+</div>
+</body>
+</html>

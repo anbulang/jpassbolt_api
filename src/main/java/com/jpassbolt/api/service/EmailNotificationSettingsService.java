@@ -66,9 +66,11 @@ public class EmailNotificationSettingsService {
      * The authoritative key set + defaults, mirroring PHP
      * {@code CoreNotificationSettingsDefinition::buildSchema} (25 keys) plus the
      * one key the SelfRegistration feature plugin contributes
-     * ({@code send_admin_user_register_complete}) = 26 boolean keys, already in
-     * the flattened snake_case form the API emits. Iteration order is the PHP
-     * {@code addField} order (LinkedHashMap) for a stable response shape.
+     * ({@code send_admin_user_register_complete}) and the four the Folders plugin
+     * contributes ({@code send_folder_create/update/delete/share}) = 30 boolean
+     * keys, already in the flattened snake_case form the API emits. Iteration
+     * order is the PHP {@code addField} order (LinkedHashMap) for a stable
+     * response shape.
      */
     public static final Map<String, Boolean> DEFAULTS = buildDefaults();
 
@@ -110,6 +112,12 @@ public class EmailNotificationSettingsService {
         d.put("send_password_share", true);
         d.put("send_password_update", true);
         d.put("send_password_delete", true);
+        // folder controls (PHP Passbolt/Folders redactors). create defaults OFF
+        // like passwords; update/delete/share default ON.
+        d.put("send_folder_create", false);
+        d.put("send_folder_update", true);
+        d.put("send_folder_delete", true);
+        d.put("send_folder_share", true);
         // user controls
         d.put("send_user_create", true);
         d.put("send_user_recover", true);
@@ -122,7 +130,7 @@ public class EmailNotificationSettingsService {
      * overlaid with whatever is stored in
      * {@code organization_settings(property="emailNotification")} (PHP
      * {@code EmailNotificationSettings::get}, DB-over-defaults). Always returns a
-     * complete, flattened {@code Map<String,Object>} of all 25 boolean keys.
+     * complete, flattened {@code Map<String,Object>} of all 30 boolean keys.
      *
      * @return a non-null, complete flattened settings map
      */
