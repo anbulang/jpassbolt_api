@@ -16,6 +16,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -328,7 +329,7 @@ public class MetadataKeyService {
         if (expired == null) {
             throw badRequest("A expired date is required.");
         }
-        if (!expired.isBefore(LocalDateTime.now())) {
+        if (!expired.isBefore(LocalDateTime.now(ZoneOffset.UTC))) {
             throw badRequest("The date should not be set in the future.");
         }
 
@@ -373,7 +374,7 @@ public class MetadataKeyService {
                     "The metadata key is still in use, migrate the remaining items to the new key first.");
         }
 
-        key.setDeleted(LocalDateTime.now());
+        key.setDeleted(LocalDateTime.now(ZoneOffset.UTC));
         key.setModifiedBy(userId);
         metadataKeyRepository.save(key);
 

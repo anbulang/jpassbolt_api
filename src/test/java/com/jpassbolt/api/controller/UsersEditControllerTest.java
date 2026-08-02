@@ -190,6 +190,35 @@ class UsersEditControllerTest {
     }
 
     @Test
+    void testDisabledWithOffset_StoredAsTheSameInstantInUtc() throws Exception {
+        // `disabled` arrives as a STRING on the DTO, so JacksonConfig's
+        // normalising deserializer never sees it — UserService.parseDateTime is
+        // the only inbound converter. It must pin an offset-bearing value to the
+        // same instant in UTC, because that is what the column stores and what
+        // User.isDisabledNow() compares against. Parsing straight to
+        // LocalDateTime would keep 09:00 and shift the suspension by 8 hours.
+        mockMvc.perform(put("/users/" + plainUser.getId() + ".json")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"disabled\":\"2026-08-01T09:00:00+08:00\"}"))
+                .andExpect(status().isOk());
+
+        assertThat(userRepository.findById(plainUser.getId()).orElseThrow().getDisabled())
+                .isEqualTo(LocalDateTime.of(2026, 8, 1, 1, 0));
+    }
+
+    @Test
+    void testDisabledBareLocalString_StoredVerbatim() throws Exception {
+        // No offset = already a UTC wall clock by convention; must not be shifted.
+        mockMvc.perform(put("/users/" + plainUser.getId() + ".json")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"disabled\":\"2026-08-01T09:00:00\"}"))
+                .andExpect(status().isOk());
+
+        assertThat(userRepository.findById(plainUser.getId()).orElseThrow().getDisabled())
+                .isEqualTo(LocalDateTime.of(2026, 8, 1, 9, 0));
+    }
+
+    @Test
     void testLoneDisabledNullOnAlreadyEnabledUser_NoOp() throws Exception {
         // A single-key {"disabled": null} payload must count as "data provided"
         // (previously rejected with "Some user data should be provided.").

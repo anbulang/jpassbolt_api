@@ -278,10 +278,16 @@ class MetadataKeyControllerContractTest extends OpenApiComplianceTest {
 
         // The expired date must be strictly in the PAST (PHP
         // IsDateInPastValidationRule) — use a clearly-past timestamp.
+        // UTC, not the host zone: the value round-trips through Jackson as a
+        // UTC wall clock, so a system-zone now() on any UTC+N host is actually
+        // N hours in the FUTURE and the server (correctly) rejects it. This
+        // test used to pass only because the validator read the clock in the
+        // host zone too — i.e. the API accepted future expiry dates within the
+        // host's UTC offset.
         MetadataKeyDto.ExpireRequest request = MetadataKeyDto.ExpireRequest.builder()
                 .fingerprint(fingerprint)
                 .armoredKey(armoredPublicKey)
-                .expired(java.time.LocalDateTime.now().minusMinutes(1))
+                .expired(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).minusMinutes(1))
                 .build();
 
         mockMvc.perform(put("/metadata/keys/" + key.getId() + ".json")
@@ -302,7 +308,7 @@ class MetadataKeyControllerContractTest extends OpenApiComplianceTest {
         MetadataKeyDto.ExpireRequest request = MetadataKeyDto.ExpireRequest.builder()
                 .fingerprint(fingerprint)
                 .armoredKey(armoredPublicKey)
-                .expired(java.time.LocalDateTime.now().plusDays(1))
+                .expired(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).plusDays(1))
                 .build();
 
         mockMvc.perform(put("/metadata/keys/" + key.getId() + ".json")
@@ -319,7 +325,7 @@ class MetadataKeyControllerContractTest extends OpenApiComplianceTest {
         MetadataKeyDto.ExpireRequest request = MetadataKeyDto.ExpireRequest.builder()
                 .fingerprint(fingerprint)
                 .armoredKey(armoredPublicKey)
-                .expired(java.time.LocalDateTime.now())
+                .expired(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC))
                 .build();
 
         mockMvc.perform(put("/metadata/keys/not-a-uuid.json")
@@ -336,7 +342,7 @@ class MetadataKeyControllerContractTest extends OpenApiComplianceTest {
         MetadataKeyDto.ExpireRequest request = MetadataKeyDto.ExpireRequest.builder()
                 .fingerprint(fingerprint)
                 .armoredKey(armoredPublicKey)
-                .expired(java.time.LocalDateTime.now())
+                .expired(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC))
                 .build();
 
         mockMvc.perform(put("/metadata/keys/" + UUID.randomUUID() + ".json")
@@ -356,7 +362,7 @@ class MetadataKeyControllerContractTest extends OpenApiComplianceTest {
     void testDeleteKeyContract() throws Exception {
         // The key must already be expired and must not be in use to be deletable.
         MetadataKey key = seedActiveKey();
-        key.setExpired(java.time.LocalDateTime.now());
+        key.setExpired(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC));
         metadataKeyRepository.save(key);
 
         mockMvc.perform(delete("/metadata/keys/" + key.getId() + ".json")

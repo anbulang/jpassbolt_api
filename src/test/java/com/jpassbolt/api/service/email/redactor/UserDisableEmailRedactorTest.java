@@ -21,6 +21,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -121,7 +122,7 @@ class UserDisableEmailRedactorTest {
         // Carol (admin) is suspended in the past → the resolver's not-disabled
         // filter removes her from the broadcast, leaving only Ada.
         User carol = userRepository.findById(carolId).orElseThrow();
-        carol.setDisabled(LocalDateTime.now().minusMinutes(1));
+        carol.setDisabled(LocalDateTime.now(ZoneOffset.UTC).minusMinutes(1));
         userRepository.save(carol);
 
         userRedactor.onUserDisabled(new UserDisabledEvent(
@@ -137,7 +138,7 @@ class UserDisableEmailRedactorTest {
         // The recipient IS the disabled user: the snapshot bypasses the
         // resolver's filter (PHP "disabled = tomorrow" workaround).
         User carol = userRepository.findById(carolId).orElseThrow();
-        carol.setDisabled(LocalDateTime.now().minusMinutes(1));
+        carol.setDisabled(LocalDateTime.now(ZoneOffset.UTC).minusMinutes(1));
         userRepository.save(carol);
 
         adminRedactor.onUserDisabled(new UserDisabledEvent(

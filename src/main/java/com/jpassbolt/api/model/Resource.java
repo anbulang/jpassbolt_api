@@ -10,6 +10,7 @@ import lombok.Data;
 import lombok.EqualsAndHashCode;
 
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 
 /**
  * Resource Entity - Represents a password entry's metadata.
@@ -90,6 +91,6 @@ public class Resource extends BaseEntity {
         if (expired == null) {
             return false;
         }
-        return expired.isBefore(LocalDateTime.now());
+        return expired.isBefore(LocalDateTime.now(ZoneOffset.UTC));
     }
 }

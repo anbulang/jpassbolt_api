@@ -15,6 +15,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
@@ -86,7 +87,8 @@ class RecipientResolverTest {
     void resolveUsers_dedupesAndDropsDeletedAndDisabled() {
         User active = saveUser("active@passbolt.com", userRoleId, true, false, null);
         User deleted = saveUser("deleted@passbolt.com", userRoleId, true, true, null);
-        User disabled = saveUser("disabled@passbolt.com", userRoleId, true, false, LocalDateTime.now());
+        User disabled = saveUser("disabled@passbolt.com", userRoleId, true, false,
+                LocalDateTime.now(ZoneOffset.UTC));
 
         Set<Recipient> recipients = resolver.resolveUsers(List.of(
                 active.getId(), active.getId(), deleted.getId(), disabled.getId()));
@@ -99,11 +101,52 @@ class RecipientResolverTest {
     void resolveUsers_keepsUserWithFutureDatedDisable() {
         // `disabled` is a timestamp: a future-dated value means the user is still
         // active now, so they must remain a valid recipient until that moment.
-        User future = saveUser("future@passbolt.com", userRoleId, true, false, LocalDateTime.now().plusDays(1));
+        User future = saveUser("future@passbolt.com", userRoleId, true, false,
+                LocalDateTime.now(ZoneOffset.UTC).plusDays(1));
 
         assertThat(resolver.resolveUsers(List.of(future.getId())))
                 .extracting(Recipient::email)
                 .containsExactly("future@passbolt.com");
+    }
+
+    // -----------------------------------------------------------------------
+    // Timezone regression. `disabled` is written as a UTC wall clock (see
+    // DataInitializer and UserService.parseDateTime, which keeps the fields of
+    // the client's ISO-8601 "…Z" value), so the filter must read the clock in
+    // UTC too. Reading a system-zone now() is wrong by the host's UTC offset,
+    // and the failure is one-sided per host — hence two tests, one for each
+    // direction, so the semantic is pinned wherever the suite runs:
+    //
+    //  - east of UTC (e.g. Asia/Shanghai, +8): system now() runs AHEAD of the
+    //    stored value, so a disable scheduled less than +8h out reads as
+    //    already elapsed and the user stops receiving mail early. Caught by
+    //    resolveUsers_keepsUserDisabledLaterToday.
+    //  - west of UTC (e.g. America/New_York, -4): system now() runs BEHIND, so
+    //    a just-disabled user reads as "disabled in the future" and keeps
+    //    receiving notification mail — including, with show_secret on, their
+    //    own ciphertext. Caught by resolveUsers_dropsUserDisabledMomentsAgo.
+    // -----------------------------------------------------------------------
+
+    @Test
+    void resolveUsers_keepsUserDisabledLaterToday() {
+        // Disable takes effect in one hour → still a recipient right now. Fails
+        // if the filter compares against a system-zone clock on any UTC+N host.
+        User soon = saveUser("soon@passbolt.com", userRoleId, true, false,
+                LocalDateTime.now(ZoneOffset.UTC).plusHours(1));
+
+        assertThat(resolver.resolveUsers(List.of(soon.getId())))
+                .extracting(Recipient::email)
+                .containsExactly("soon@passbolt.com");
+    }
+
+    @Test
+    void resolveUsers_dropsUserDisabledMomentsAgo() {
+        // Disabled one minute ago → must be dropped immediately. Fails if the
+        // filter compares against a system-zone clock on any UTC-N host.
+        User justOff = saveUser("justoff@passbolt.com", userRoleId, true, false,
+                LocalDateTime.now(ZoneOffset.UTC).minusMinutes(1));
+
+        assertThat(resolver.resolveUsers(List.of(justOff.getId()))).isEmpty();
     }
 
     @Test

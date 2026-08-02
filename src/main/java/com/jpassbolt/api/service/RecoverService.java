@@ -123,7 +123,7 @@ public class RecoverService {
 
         User user = userRepository.findByUsername(username.trim().toLowerCase(Locale.ROOT))
                 .filter(u -> !Boolean.TRUE.equals(u.getDeleted()))
-                .filter(u -> u.getDisabled() == null)
+                .filter(u -> !u.isDisabledNow())
                 .orElse(null);
         if (user == null) {
             if (preventEmailEnumeration) {
@@ -166,11 +166,10 @@ public class RecoverService {
             // self-driven (no admin actor), so the body omits the admin line.
             Profile profile = profileRepository.findByUserId(user.getId()).orElse(null);
             // PHP User::isDisabled() is true only when `disabled` is set AND in the
-            // PAST; a future-dated value still counts as active (same now()-check the
+            // PAST; a future-dated value still counts as active (same check the
             // RecipientResolver applies). A plain != null would wrongly suppress the
             // restart invite for a future-dated disable.
-            boolean disabled = user.getDisabled() != null
-                    && !user.getDisabled().isAfter(LocalDateTime.now());
+            boolean disabled = user.isDisabledNow();
             eventPublisher.publishEvent(new UserRegisteredEvent(
                     user.getId(), user.getUsername(),
                     profile == null ? null : profile.getFirstName(),
@@ -352,7 +351,7 @@ public class RecoverService {
         return userRepository.findById(userId)
                 .filter(u -> !Boolean.TRUE.equals(u.getDeleted()))
                 .filter(u -> Boolean.TRUE.equals(u.getActive()))
-                .filter(u -> u.getDisabled() == null)
+                .filter(u -> !u.isDisabledNow())
                 .orElseThrow(() -> new PassboltApiException(HttpStatus.BAD_REQUEST, errorMessage));
     }
 
