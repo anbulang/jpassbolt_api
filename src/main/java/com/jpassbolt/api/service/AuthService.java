@@ -129,7 +129,7 @@ public class AuthService {
                     "There is no user associated with this key.");
         }
 
-        if (user.getDisabled() != null) {
+        if (user.isDisabledNow()) {
             throw new PassboltApiException(HttpStatus.NOT_FOUND,
                     "There is no user associated with this key.");
         }
@@ -243,7 +243,7 @@ public class AuthService {
     public Optional<User> findUserByKeyIdentifier(String keyId) {
         return findGpgKeyByIdentifier(keyId)
                 .flatMap(gpgKey -> userRepository.findById(gpgKey.getUserId()))
-                .filter(user -> user.getActive() && !user.getDeleted() && user.getDisabled() == null);
+                .filter(user -> user.getActive() && !user.getDeleted() && !user.isDisabledNow());
     }
 
     /**

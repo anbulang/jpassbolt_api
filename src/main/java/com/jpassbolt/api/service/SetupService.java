@@ -185,7 +185,7 @@ public class SetupService {
         return userRepository.findById(userId)
                 .filter(u -> !Boolean.TRUE.equals(u.getDeleted()))
                 .filter(u -> !Boolean.TRUE.equals(u.getActive()))
-                .filter(u -> u.getDisabled() == null)
+                .filter(u -> !u.isDisabledNow())
                 .orElseThrow(() -> new PassboltApiException(HttpStatus.BAD_REQUEST, errorMessage));
     }
 

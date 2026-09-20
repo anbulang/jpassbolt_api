@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<!--
+  Sent to the creator when a password is created (ResourceCreateEmailRedactor).
+  Variables: title/intro (pre-localized, named or generic per v4/v5); link (SPA
+  deep link); the default-off content gates showUsername/showUri/showDescription/
+  showSecret with their values resourceUsername/resourceUri/resourceDescription/
+  secret (the creator's own ciphertext). Only the `content` fragment is pulled in.
+-->
+<body th:replace="~{_layout :: shell(${title}, ~{::content})}">
+<div th:fragment="content">
+  <p th:text="${intro}">You added a password.</p>
+  <p style="margin:24px 0;">
+    <a th:href="${link}" th:text="#{email.resource.cta}"
+       style="background:#2a6df4;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:600;display:inline-block;">
+      Open in JPassbolt
+    </a>
+  </p>
+  <!-- Optional field disclosures, all default-off (parity with PHP show_* gates). -->
+  <p th:if="${showUsername == true and resourceUsername != null and !resourceUsername.isEmpty()}"
+     style="color:#555;font-size:13px;">
+    <strong th:text="#{email.field.username}">Username</strong>:
+    <span th:text="${resourceUsername}">user</span>
+  </p>
+  <p th:if="${showUri == true and resourceUri != null and !resourceUri.isEmpty()}"
+     style="color:#555;font-size:13px;word-break:break-all;">
+    <strong th:text="#{email.field.uri}">URL</strong>:
+    <span th:text="${resourceUri}">https://example.com</span>
+  </p>
+  <p th:if="${showDescription == true and resourceDescription != null and !resourceDescription.isEmpty()}"
+     style="color:#555;font-size:13px;">
+    <strong th:text="#{email.field.description}">Description</strong>:
+    <span th:text="${resourceDescription}">...</span>
+  </p>
+  <div th:if="${showSecret == true and secret != null and !secret.isEmpty()}">
+    <p style="color:#555;font-size:13px;margin:12px 0 4px;">
+      <strong th:text="#{email.field.secret}">Encrypted password</strong>:
+    </p>
+    <pre style="background:#f6f6f6;border:1px solid #eee;border-radius:6px;padding:12px;font-size:11px;white-space:pre-wrap;word-break:break-all;"
+         th:text="${secret}">-----BEGIN PGP MESSAGE-----</pre>
+  </div>
+  <p style="color:#888;font-size:12px;word-break:break-all;"
+     th:text="#{email.button.fallback(${link})}">
+    Or open this link: ...
+  </p>
+</div>
+</body>
+</html>

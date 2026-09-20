@@ -18,6 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.UUID;
 import java.util.regex.Pattern;
@@ -109,7 +110,7 @@ public class JwtAuthService {
 
         // findUser: must exist, be active, not deleted, not disabled (404)
         User user = userRepository.findById(userId)
-                .filter(u -> u.getActive() && !u.getDeleted() && u.getDisabled() == null)
+                .filter(u -> u.getActive() && !u.getDeleted() && !u.isDisabledNow())
                 .orElseThrow(() -> new PassboltApiException(HttpStatus.NOT_FOUND,
                         "The user does not exist or is not active or has been deleted."));
 
@@ -168,9 +169,17 @@ public class JwtAuthService {
         }
 
         // Cleanup expired verify tokens (PHP VerifyTokenCreateService —
-        // physical delete of rows older than the verify token lifetime)
+        // physical delete of rows older than the verify token lifetime).
+        //
+        // The cutoff MUST be computed in UTC: `created` is written by BaseEntity
+        // as a UTC wall clock, and LocalDateTime carries no zone of its own. A
+        // system-zone now() shifts the cutoff by the host's UTC offset, and here
+        // that is not a rounding error — on any host east of UTC by more than the
+        // (1 hour) token lifetime the cutoff lands in the FUTURE, so every
+        // cleanup wipes the replay-protection trace of tokens that are still
+        // valid, including other users' brand-new ones.
         tokenRepository.deleteByTypeAndCreatedBefore(TYPE_VERIFY_TOKEN,
-                LocalDateTime.now().minusHours(verifyTokenExpiryHours));
+                LocalDateTime.now(ZoneOffset.UTC).minusHours(verifyTokenExpiryHours));
 
         // Persist the verify token (replay protection trace)
         AuthenticationToken verifyTokenRow = new AuthenticationToken();
@@ -321,7 +330,7 @@ public class JwtAuthService {
                 .filter(u -> !u.getDeleted())
                 .orElseThrow(() -> new PassboltApiException(HttpStatus.BAD_REQUEST,
                         "The user does not exist or has been deleted."));
-        if (!user.getActive() || user.getDisabled() != null) {
+        if (!user.getActive() || user.isDisabledNow()) {
             throw new PassboltApiException(HttpStatus.BAD_REQUEST,
                     "The user is deactivated.");
         }
@@ -335,7 +344,7 @@ public class JwtAuthService {
         // Expired: the table has no expiry column — created + lifetime
         // (PHP AuthenticationToken::isExpired with refresh_token.expiry)
         if (token.getCreated() != null
-                && token.getCreated().isBefore(LocalDateTime.now().minusDays(refreshTokenExpiryDays))) {
+                && token.getCreated().isBefore(LocalDateTime.now(ZoneOffset.UTC).minusDays(refreshTokenExpiryDays))) {
             throw new PassboltApiException(HttpStatus.BAD_REQUEST,
                     "Expired refresh token provided.");
         }

@@ -139,6 +139,33 @@ class AuthControllerTest {
     }
 
     @Test
+    void testLoginStage1_FutureDatedSuspension_DoesNotLockTheAccountYet() throws Exception {
+        // `disabled` is a TIMESTAMP, not a boolean flag: PHP User::isDisabled()
+        // is "set AND in the past" (User.php:94-99) and GpgAuthenticator.php:395
+        // gates on exactly that. Scheduling a suspension for next week must
+        // therefore leave the account fully usable until it takes effect — the
+        // auth/refresh/recovery/setup gates here used to test `disabled != null`
+        // and locked the user out the instant the date was written.
+        testUser.setDisabled(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).plusDays(7));
+        userRepository.save(testUser);
+
+        AuthDto.LoginRequest request = new AuthDto.LoginRequest();
+        AuthDto.DataWrapper data = new AuthDto.DataWrapper();
+        AuthDto.GpgAuth gpgAuth = new AuthDto.GpgAuth();
+        gpgAuth.setKeyid(testFingerprint);
+        data.setGpgAuth(gpgAuth);
+        request.setData(data);
+
+        mockMvc.perform(post("/auth/login.json")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isOk())
+                .andExpect(header().string("X-GPGAuth-Progress", "stage1"))
+                .andExpect(header().exists("X-GPGAuth-User-Auth-Token"))
+                .andExpect(header().doesNotExist("X-GPGAuth-Error"));
+    }
+
+    @Test
     void testFullLoginFlow() throws Exception {
         // Stage 1: Get encrypted token
         AuthDto.LoginRequest request1 = new AuthDto.LoginRequest();
@@ -204,8 +231,13 @@ class AuthControllerTest {
                 .andExpect(jsonPath("$.header.message").value("There is no user associated with this key."))
                 .andReturn();
 
-        // Disabled account: registered key, but the user is disabled
-        testUser.setDisabled(java.time.LocalDateTime.now());
+        // Disabled account: registered key, but the user is disabled. The value
+        // must be a PAST instant IN UTC — `disabled` is a timestamp, not a flag
+        // (PHP User::isDisabled = "set AND in the past"), and the column stores a
+        // UTC wall clock. A host-zone now() on a UTC+N box is N hours in the
+        // future, i.e. a suspension that has not taken effect yet, and the login
+        // would correctly be allowed.
+        testUser.setDisabled(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).minusMinutes(1));
         userRepository.save(testUser);
 
         AuthDto.LoginRequest disabledRequest = new AuthDto.LoginRequest();

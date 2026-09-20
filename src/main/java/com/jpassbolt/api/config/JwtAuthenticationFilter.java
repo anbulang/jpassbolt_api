@@ -67,7 +67,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 // Resolve the user: must exist, be active, not deleted, not
                 // disabled (PHP plugin re-checks the user on every request).
                 userRepository.findById(userId)
-                        .filter(u -> !u.getDeleted() && u.getActive() && u.getDisabled() == null)
+                        .filter(u -> !u.getDeleted() && u.getActive() && !u.isDisabledNow())
                         .ifPresent(user -> {
                             UserDetails userDetails = new User(user.getUsername(), "", Collections.emptyList());
                             UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(

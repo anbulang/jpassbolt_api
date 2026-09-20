@@ -276,7 +276,7 @@ public class MfaService {
         boolean valid = Boolean.TRUE.equals(authToken.getActive())
                 && userId.equals(authToken.getUserId())
                 && authToken.getCreated() != null
-                && authToken.getCreated().isAfter(LocalDateTime.now().minusDays(MFA_TOKEN_MAX_DURATION_DAYS));
+                && authToken.getCreated().isAfter(LocalDateTime.now(ZoneOffset.UTC).minusDays(MFA_TOKEN_MAX_DURATION_DAYS));
         if (!valid && Boolean.TRUE.equals(authToken.getActive())) {
             authToken.setActive(false);
             authenticationTokenRepository.save(authToken);

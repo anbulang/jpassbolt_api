@@ -8,8 +8,12 @@ import com.jpassbolt.api.model.Permission;
 import com.jpassbolt.api.repository.FolderRepository;
 import com.jpassbolt.api.repository.FoldersRelationRepository;
 import com.jpassbolt.api.repository.PermissionRepository;
+import com.jpassbolt.api.service.email.event.FolderCreatedEvent;
+import com.jpassbolt.api.service.email.event.FolderDeletedEvent;
+import com.jpassbolt.api.service.email.event.FolderUpdatedEvent;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -18,6 +22,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Service for managing folders (PHP plugin Passbolt/Folders, v4 behaviour).
@@ -52,6 +57,8 @@ public class FolderService {
     private final ResourceService resourceService;
     private final MetadataValidationSupport metadataValidationSupport;
     private final MetadataTypesSettingsService metadataTypesSettingsService;
+    private final PermissionService permissionService;
+    private final ApplicationEventPublisher eventPublisher;
 
     /**
      * Get all folders the user has at least READ access to (aco = "Folder"),
@@ -178,6 +185,11 @@ public class FolderService {
         relation.setFolderParentId(folderParentId);
         foldersRelationRepository.save(relation);
 
+        // Notify the creator (CreateFolderEmailRedactor, gate send.folder.create,
+        // default off). v5 folders carry a null name (name lives in the metadata
+        // blob) → the redactor uses the generic wording.
+        eventPublisher.publishEvent(new FolderCreatedEvent(saved.getId(), saved.getName(), isV5, userId));
+
         return saved;
     }
 
@@ -218,7 +230,16 @@ public class FolderService {
             folder.setName(request.getName());
         }
         folder.setModifiedBy(userId);
-        return folderRepository.save(folder);
+        Folder saved = folderRepository.save(folder);
+
+        // Notify everyone with access (UpdateFolderEmailRedactor, gate
+        // send.folder.update, default on). isV5 tracks the payload shape; a v5
+        // update nulls the plaintext name, so getName() is null and the redactor
+        // uses the generic wording.
+        boolean isV5 = request.getMetadata() != null;
+        eventPublisher.publishEvent(new FolderUpdatedEvent(saved.getId(), saved.getName(), isV5, userId));
+
+        return saved;
     }
 
     /**
@@ -288,7 +309,20 @@ public class FolderService {
         if (!userHasFolderAccess(id, userId, Permission.UPDATE)) {
             throw new PassboltApiException(HttpStatus.FORBIDDEN, "You are not allowed to delete this folder.");
         }
+
+        // Snapshot the notification recipients + folder identity BEFORE deletion:
+        // the delete physically removes the folder's permission rows, so the
+        // AFTER_COMMIT redactor could no longer resolve "who had access". v5
+        // folders carry a null name → the redactor uses the generic wording.
+        Set<String> recipientUserIds = permissionService.getUsersIdsHavingAccessToFolder(id);
+        String folderName = folder.getName();
+        boolean isV5 = folder.getMetadata() != null;
+
         deleteFolderNode(folder, cascade, userId);
+
+        // Notify everyone who had access (DeleteFolderEmailRedactor, gate
+        // send.folder.delete, default on). No live link — the folder is gone.
+        eventPublisher.publishEvent(new FolderDeletedEvent(id, folderName, isV5, userId, recipientUserIds));
     }
 
     private void deleteFolderNode(Folder folder, boolean cascade, String userId) {
@@ -323,7 +357,12 @@ public class FolderService {
                         .ifPresent(childFolder -> deleteFolderNode(childFolder, true, userId));
             } else if (FoldersRelation.FOREIGN_MODEL_RESOURCE.equals(childModel)) {
                 // Soft delete (reuses the favorites cascade) + drop tree rows.
-                resourceService.deleteResource(childId, userId);
+                // The cascade variant deliberately sends no password-delete mail:
+                // PHP's FoldersDeleteService::deleteResource bypasses
+                // ResourcesDeleteController, which is the only event
+                // ResourceDeleteEmailRedactor subscribes to. Recipients get the
+                // single folder-delete notice, not one mail per child.
+                resourceService.deleteResourceCascaded(childId, userId);
                 foldersRelationRepository.deleteByForeignId(childId);
             }
         }

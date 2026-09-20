@@ -13,7 +13,6 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -57,6 +56,12 @@ public class RecipientResolver {
         return resolveUsers(permissionService.getUsersIdsHavingAccessTo(resourceId));
     }
 
+    /** Everyone (users + expanded group members) with any permission on a folder. */
+    @Transactional(readOnly = true)
+    public Set<Recipient> resolveUsersWithAccessToFolder(String folderId) {
+        return resolveUsers(permissionService.getUsersIdsHavingAccessToFolder(folderId));
+    }
+
     /** Active (non-soft-deleted) members of a group. */
     @Transactional(readOnly = true)
     public Set<Recipient> resolveGroupMembers(String groupId) {
@@ -89,10 +94,10 @@ public class RecipientResolver {
         List<User> users = userRepository.findAllById(ids).stream()
                 .filter(u -> !Boolean.TRUE.equals(u.getDeleted()))
                 // `disabled` is a timestamp, not a flag: a future-dated value means
-                // the user is still active until then, so only a past/now disable
-                // excludes them (PHP UsersFindersTrait::findNotDisabled —
-                // "disabled IS NULL OR disabled > now()").
-                .filter(u -> u.getDisabled() == null || u.getDisabled().isAfter(LocalDateTime.now()))
+                // the user is still active until then (PHP User::isDisabled() /
+                // UsersFindersTrait::findNotDisabled). See User.isDisabledNow()
+                // for why the clock has to be read in UTC.
+                .filter(u -> !u.isDisabledNow())
                 .toList();
         if (users.isEmpty()) {
             return Set.of();

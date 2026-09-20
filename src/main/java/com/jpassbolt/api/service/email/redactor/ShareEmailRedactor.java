@@ -65,8 +65,17 @@ public class ShareEmailRedactor {
             return;
         }
 
-        String actorName = recipientResolver.resolveUser(event.actorId())
-                .map(Recipient::fullName).orElse("");
+        // PHP uses the operator's FIRST name in both the subject
+        // (ShareEmailRedactor::createShareEmail, `$owner->profile->first_name`)
+        // and the body (templates/email/html/LU/resource_share.php). This used to
+        // read fullName, which put "Ada Lovelace shared…" next to the six folder /
+        // resource CUD mails' "Ada edited…" in the same inbox.
+        String actorName = RedactorSupport.actorFirstName(recipientResolver, event.actorId());
+
+        // v4 rows carry the plaintext name (named wording); a v5 row's name lives
+        // in encrypted metadata and arrives null (generic wording) — the same
+        // branch the folder/resource CUD redactors take.
+        boolean named = event.resourceName() != null && !event.resourceName().isEmpty();
 
         Map<String, Object> effective = settings.get();
         boolean showUsername = isOn(effective, "show_username");
@@ -91,7 +100,10 @@ public class ShareEmailRedactor {
             vars.put("secret", showSecret && event.secretsByUserId() != null
                     ? event.secretsByUserId().get(recipient.userId()) : null);
 
-            String subject = templates.subject("email.resource.share.subject", recipient.locale(), actorName);
+            String subject = named
+                    ? templates.subject("email.resource.share.subject.named", recipient.locale(),
+                            actorName, event.resourceName())
+                    : templates.subject("email.resource.share.subject.generic", recipient.locale(), actorName);
             String html = templates.render("lu/resource_share", recipient.locale(), vars);
             return new EmailMessage(recipient.email(), subject, html);
         });

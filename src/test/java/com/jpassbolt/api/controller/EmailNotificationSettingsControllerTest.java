@@ -151,11 +151,16 @@ class EmailNotificationSettingsControllerTest {
                 .andExpect(jsonPath("$.body.send_password_share").value(true))
                 .andExpect(jsonPath("$.body.send_password_update").value(true))
                 .andExpect(jsonPath("$.body.send_password_delete").value(true))
+                // folder controls (create off, update/delete/share on)
+                .andExpect(jsonPath("$.body.send_folder_create").value(false))
+                .andExpect(jsonPath("$.body.send_folder_update").value(true))
+                .andExpect(jsonPath("$.body.send_folder_delete").value(true))
+                .andExpect(jsonPath("$.body.send_folder_share").value(true))
                 .andExpect(jsonPath("$.body.send_user_create").value(true))
                 .andExpect(jsonPath("$.body.send_user_recover").value(true))
                 .andExpect(jsonPath("$.body.send_user_recoverComplete").value(true))
-                // exactly the 25 declared keys, no more, no less
-                .andExpect(jsonPath("$.body.length()").value(26));
+                // exactly the declared keys, no more, no less (+4 folder controls)
+                .andExpect(jsonPath("$.body.length()").value(30));
     }
 
     // ------------------------------------------------------------------
@@ -176,7 +181,7 @@ class EmailNotificationSettingsControllerTest {
                 // other keys keep their defaults
                 .andExpect(jsonPath("$.body.purify_subject").value(false))
                 .andExpect(jsonPath("$.body.send_password_share").value(true))
-                .andExpect(jsonPath("$.body.length()").value(26));
+                .andExpect(jsonPath("$.body.length()").value(30));
 
         // a single organization_settings row was written under the right property
         OrganizationSetting row = organizationSettingRepository
@@ -191,7 +196,7 @@ class EmailNotificationSettingsControllerTest {
                 .andExpect(jsonPath("$.body.send_password_create").value(true))
                 .andExpect(jsonPath("$.body.show_comment").value(false))
                 .andExpect(jsonPath("$.body.send_user_create").value(true))
-                .andExpect(jsonPath("$.body.length()").value(26));
+                .andExpect(jsonPath("$.body.length()").value(30));
     }
 
     @Test
@@ -203,7 +208,7 @@ class EmailNotificationSettingsControllerTest {
                 .andExpect(jsonPath("$.body.send_password_create").value(true))
                 // the unknown key is dropped from the effective settings
                 .andExpect(jsonPath("$.body.not_a_real_setting").doesNotExist())
-                .andExpect(jsonPath("$.body.length()").value(26));
+                .andExpect(jsonPath("$.body.length()").value(30));
 
         // and is not persisted either
         OrganizationSetting row = organizationSettingRepository

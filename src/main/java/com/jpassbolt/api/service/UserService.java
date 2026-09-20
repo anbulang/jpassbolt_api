@@ -20,6 +20,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.LinkedHashMap;
@@ -195,8 +197,7 @@ public class UserService {
         // value still counts as active, matching RecipientResolver). At create the
         // user is never disabled, but compute it consistently so the guard never
         // diverges from the rest of the codebase.
-        boolean disabled = user.getDisabled() != null
-                && !user.getDisabled().isAfter(LocalDateTime.now());
+        boolean disabled = user.isDisabledNow();
         eventPublisher.publishEvent(new UserRegisteredEvent(
                 user.getId(), user.getUsername(),
                 profilePayload.getFirstName().trim(), profilePayload.getLastName().trim(),
@@ -360,9 +361,23 @@ public class UserService {
      */
     private LocalDateTime parseDateTime(String value) {
         try {
-            return LocalDateTime.parse(value, DateTimeFormatter.ISO_DATE_TIME);
-        } catch (DateTimeParseException e) {
-            return null;
+            // Offset-bearing (RFC3339): pin to the SAME INSTANT in UTC. The
+            // column stores a UTC wall clock (see User.isDisabledNow), and this
+            // is the only inbound write path for it — the field is declared
+            // String on the DTO, so JacksonConfig's normalising deserializer
+            // never sees it. Parsing straight to LocalDateTime would keep the
+            // caller's local fields and silently discard the offset, shifting
+            // the suspension by the caller's UTC offset.
+            return OffsetDateTime.parse(value, DateTimeFormatter.ISO_OFFSET_DATE_TIME)
+                    .withOffsetSameInstant(ZoneOffset.UTC)
+                    .toLocalDateTime();
+        } catch (DateTimeParseException ignored) {
+            try {
+                // Bare ISO local: already a UTC wall clock by convention.
+                return LocalDateTime.parse(value, DateTimeFormatter.ISO_DATE_TIME);
+            } catch (DateTimeParseException e) {
+                return null;
+            }
         }
     }
 

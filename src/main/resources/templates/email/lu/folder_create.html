@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<!--
+  Sent to a user who just created a folder (CreateFolderEmailRedactor).
+  Variables: title (pre-localized shell title); intro (pre-localized body line,
+  named or generic depending on v4/v5); link (SPA deep link to the folder).
+  Only the `content` fragment is pulled into the shared shell.
+-->
+<body th:replace="~{_layout :: shell(${title}, ~{::content})}">
+<div th:fragment="content">
+  <p th:text="${intro}">You added a folder.</p>
+  <p style="margin:24px 0;">
+    <a th:href="${link}" th:text="#{email.folder.cta}"
+       style="background:#2a6df4;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:600;display:inline-block;">
+      Open in JPassbolt
+    </a>
+  </p>
+  <p style="color:#888;font-size:12px;word-break:break-all;"
+     th:text="#{email.button.fallback(${link})}">
+    Or open this link: ...
+  </p>
+</div>
+</body>
+</html>
